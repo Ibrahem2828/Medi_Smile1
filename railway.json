@@ -1,0 +1,8 @@
+{
+  "build": {
+    "systemPackages": [
+      "libjpeg-dev",
+      "zlib1g-dev"
+    ]
+  }
+}
