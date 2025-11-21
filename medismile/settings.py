@@ -9,7 +9,15 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-secret-key")
 DEBUG = os.getenv("DEBUG", "True") == "True"
 # ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "*").split(",")
+
 ALLOWED_HOSTS = ["*", "medismile1-production.up.railway.app"]
+
+ALLOWED_HOSTS = [
+"*"
+, 
+"medismile1-production.up.railway.app"
+]
+ 
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
