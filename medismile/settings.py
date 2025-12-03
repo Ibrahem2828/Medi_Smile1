@@ -195,7 +195,6 @@ DATABASES = {
 }
 
 
-
 # --- Password validation ---
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -238,15 +237,14 @@ LOGGING = {
         "verbose": {"format": "{levelname} {asctime} {module} {message}", "style": "{"},
     },
     "handlers": {
-        "file": {
-            "level": "INFO",
-            "class": "logging.FileHandler",
-            "filename": BASE_DIR / "logs/django.log",
+        "console": {
+            "class": "logging.StreamHandler",
             "formatter": "verbose",
         },
     },
     "root": {
-        "handlers": ["file"],
+        "handlers": ["console"],
         "level": "INFO",
     },
 }
+
