@@ -2,6 +2,7 @@ from rest_framework import serializers
 from .models import Notification
 from apps.accounts.serializers import UserSerializer
 from apps.appointments.serializers import AppointmentSerializer
+from medismile.utils.auth import resolve_request_user
 
 
 class NotificationSerializer(serializers.ModelSerializer):
@@ -26,11 +27,12 @@ class NotificationCreateSerializer(serializers.ModelSerializer):
     
     appointment_id = serializers.UUIDField(write_only=True)
     recipient_id = serializers.UUIDField(write_only=True)
+    sender_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
     
     class Meta:
         model = Notification
         fields = [
-            'notification_type', 'appointment_id', 'recipient_id',
+            'notification_type', 'appointment_id', 'recipient_id', 'sender_id',
             'title', 'message', 'proposed_changes'
         ]
     
@@ -38,6 +40,7 @@ class NotificationCreateSerializer(serializers.ModelSerializer):
         """Create a new notification."""
         appointment_id = validated_data.pop('appointment_id')
         recipient_id = validated_data.pop('recipient_id')
+        sender_id = validated_data.pop('sender_id', None)
         
         # Get appointment
         from apps.appointments.models import Appointment
@@ -47,8 +50,15 @@ class NotificationCreateSerializer(serializers.ModelSerializer):
         from apps.accounts.models import User
         recipient = User.objects.get(id=recipient_id)
         
+        request = self.context.get('request')
+        sender = resolve_request_user(request) if request else None
+        if sender is None:
+            if not sender_id:
+                raise serializers.ValidationError({'sender_id': 'This field is required when authentication is disabled.'})
+            sender = User.objects.get(id=sender_id)
+        
         return Notification.objects.create(
-            sender=self.context['request'].user,
+            sender=sender,
             recipient=recipient,
             appointment=appointment,
             **validated_data
@@ -67,6 +77,11 @@ class NotificationUpdateSerializer(serializers.ModelSerializer):
         if 'status' in data and data['status'] not in ['accepted', 'rejected']:
             raise serializers.ValidationError("Status must be 'accepted' or 'rejected'")
         return data
+
+
+
+
+
 
 
 

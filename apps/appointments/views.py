@@ -9,6 +9,9 @@ from .models import Appointment
 from .serializers import AppointmentSerializer, AppointmentCreateSerializer, AppointmentUpdateSerializer
 from apps.accounts.permissions import IsPatient, IsStudent, IsSupervisor
 from apps.notifications.utils import notify_appointment_status_change
+from apps.accounts.models import User
+from medismile.utils.auth import resolve_request_user, require_request_user
+from medismile.utils.auth import resolve_request_user
 
 
 class AppointmentListView(generics.ListCreateAPIView):
@@ -19,30 +22,37 @@ class AppointmentListView(generics.ListCreateAPIView):
     permission_classes = [AllowAny]  # مؤقتاً للسماح بالوصول بدون مصادقة
     
     def get_queryset(self):
-        """Get appointments based on user role."""
-        user = self.request.user
+        """Get appointments based on user role or provided filters."""
+        user = resolve_request_user(self.request)
         status_filter = self.request.query_params.get('status')
+        patient_id = self.request.query_params.get('patient_id')
+        doctor_id = self.request.query_params.get('user_id')
+        case_id = self.request.query_params.get('case_id')
         
-        if user.role == 'patient':
-            appointments = Appointment.objects.filter(patient=user)
-        elif user.role == 'supervisor':
-            # Supervisor sees appointments related to cases they supervise
-            from apps.cases.models import Case
-            supervised_case_ids = Case.objects.filter(supervisor=user).values_list('id', flat=True)
-            appointments = Appointment.objects.filter(case_id__in=supervised_case_ids)
-        elif user.role in ['university_admin', 'tech_support']:
-            appointments = Appointment.objects.all()
+        if user:
+            if user.role == 'patient':
+                appointments = Appointment.objects.filter(patient=user)
+            elif user.role == 'supervisor':
+                from apps.cases.models import Case
+                supervised_case_ids = Case.objects.filter(supervisor=user).values_list('id', flat=True)
+                appointments = Appointment.objects.filter(case_id__in=supervised_case_ids)
+            elif user.role in ['university_admin', 'tech_support']:
+                appointments = Appointment.objects.all()
+            else:
+                appointments = Appointment.objects.filter(user=user)
         else:
-            # For any user (student, doctor, staff, etc.)
-            appointments = Appointment.objects.filter(user=user)
+            appointments = Appointment.objects.all()
+            if patient_id:
+                appointments = appointments.filter(patient_id=patient_id)
+            if doctor_id:
+                appointments = appointments.filter(user_id=doctor_id)
+            if case_id:
+                appointments = appointments.filter(case_id=case_id)
         
-        # Filter by status if provided
         if status_filter:
             appointments = appointments.filter(status=status_filter)
         
-        # Filter out archived appointments by default
         appointments = appointments.filter(is_archived=False)
-        
         return appointments
     
     def get_serializer_class(self):
@@ -94,7 +104,9 @@ def confirm_appointment(request, appointment_id):
             'error': _('Appointment not found')
         }, status=status.HTTP_404_NOT_FOUND)
     
-    user = request.user
+    user, error = require_request_user(request, error_key='user_id')
+    if error:
+        return error
     
     # Check if user is authorized to confirm
     if user.role == 'patient' and appointment.patient != user:
@@ -144,7 +156,9 @@ def complete_appointment(request, appointment_id):
             'error': _('Appointment not found')
         }, status=status.HTTP_404_NOT_FOUND)
     
-    user = request.user
+    user, error = require_request_user(request, error_key='user_id')
+    if error:
+        return error
     
     # Check if user is authorized to complete
     if appointment.user != user:
@@ -189,7 +203,9 @@ def cancel_appointment(request, appointment_id):
             'error': _('Appointment not found')
         }, status=status.HTTP_404_NOT_FOUND)
     
-    user = request.user
+    user, error = require_request_user(request, error_key='user_id')
+    if error:
+        return error
     
     # Check if user is authorized to cancel
     if user.role == 'patient' and appointment.patient != user:
@@ -239,7 +255,9 @@ def start_appointment(request, appointment_id):
             'error': _('Appointment not found')
         }, status=status.HTTP_404_NOT_FOUND)
     
-    user = request.user
+    user, error = require_request_user(request, error_key='user_id')
+    if error:
+        return error
     
     # Check if user is authorized to start
     if appointment.user != user:
@@ -281,7 +299,9 @@ def mark_no_show(request, appointment_id):
             'error': _('Appointment not found')
         }, status=status.HTTP_404_NOT_FOUND)
     
-    user = request.user
+    user, error = require_request_user(request, error_key='user_id')
+    if error:
+        return error
     
     # Check if user is authorized
     if appointment.user != user:

@@ -2,6 +2,7 @@ from rest_framework import serializers
 from .models import Content, ContentLike, ContentComment
 from apps.accounts.serializers import UserSerializer
 from apps.universities.serializers import UniversitySerializer
+from medismile.utils.auth import resolve_request_user
 
 
 class ContentCommentSerializer(serializers.ModelSerializer):
@@ -59,8 +60,9 @@ class ContentSerializer(serializers.ModelSerializer):
     
     def get_is_liked(self, obj):
         """Check if the current user has liked the content."""
-        user = self.context['request'].user
-        if user.is_authenticated:
+        request = self.context.get('request')
+        user = resolve_request_user(request) if request else None
+        if user:
             return obj.likes.filter(user=user).exists()
         return False
 
@@ -85,7 +87,11 @@ class ContentCreateSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         """Create a new content."""
-        validated_data['author'] = self.context['request'].user
+        request = self.context.get('request')
+        user = resolve_request_user(request) if request else None
+        if not user:
+            raise serializers.ValidationError({'user_id': 'User identification is required'})
+        validated_data['author'] = user
         return super().create(validated_data)
 
 
@@ -119,5 +125,9 @@ class ContentCommentCreateSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         """Create a new content comment."""
-        validated_data['user'] = self.context['request'].user
+        request = self.context.get('request')
+        user = resolve_request_user(request) if request else None
+        if not user:
+            raise serializers.ValidationError({'user_id': 'User identification is required'})
+        validated_data['user'] = user
         return super().create(validated_data)

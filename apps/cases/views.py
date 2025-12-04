@@ -12,8 +12,10 @@ from .serializers import (
     CaseAssignmentRequestSerializer, CaseAssignmentRequestCreateSerializer,
     CaseAssignmentRequestUpdateSerializer
 )
+from django.db.models import Q
 from apps.accounts.permissions import IsPatient, IsStudent, IsSupervisor
 from medismile.utils.permissions import RoleBasedPermission
+from medismile.utils.auth import resolve_request_user, require_request_user
 
 
 class CaseListView(generics.ListCreateAPIView):
@@ -24,19 +26,36 @@ class CaseListView(generics.ListCreateAPIView):
     permission_classes = [AllowAny]  # مؤقتاً للسماح بالوصول بدون مصادقة
     
     def get_queryset(self):
-        """Get cases based on user role."""
-        user = self.request.user
+        """Get cases based on user role or explicit filters while auth is disabled."""
+        user = resolve_request_user(self.request)
+        patient_id = self.request.query_params.get('patient_id')
+        student_id = self.request.query_params.get('student_id')
+        supervisor_id = self.request.query_params.get('supervisor_id')
+        is_public = self.request.query_params.get('is_public')
         
-        if user.role == 'patient':
-            return Case.objects.filter(patient=user)
-        elif user.role == 'student':
-            return Case.objects.filter(student=user) | Case.objects.filter(is_public=True)
-        elif user.role == 'supervisor':
-            return Case.objects.filter(supervisor=user)
-        elif user.role in ['university_admin', 'tech_support']:
-            return Case.objects.all()
+        if user:
+            if user.role == 'patient':
+                queryset = Case.objects.filter(patient=user)
+            elif user.role == 'student':
+                queryset = Case.objects.filter(Q(student=user) | Q(is_public=True))
+            elif user.role == 'supervisor':
+                queryset = Case.objects.filter(supervisor=user)
+            elif user.role in ['university_admin', 'tech_support']:
+                queryset = Case.objects.all()
+            else:
+                queryset = Case.objects.none()
+        else:
+            queryset = Case.objects.all()
+            if patient_id:
+                queryset = queryset.filter(patient_id=patient_id)
+            if student_id:
+                queryset = queryset.filter(student_id=student_id)
+            if supervisor_id:
+                queryset = queryset.filter(supervisor_id=supervisor_id)
+            if is_public is not None:
+                queryset = queryset.filter(is_public=is_public.lower() == 'true')
         
-        return Case.objects.none()
+        return queryset
     
     def get_serializer_class(self):
         """Return appropriate serializer class based on request method."""
@@ -48,13 +67,14 @@ class CaseListView(generics.ListCreateAPIView):
         """Create a new case and add to history."""
         with transaction.atomic():
             case = serializer.save()
+            actor = resolve_request_user(self.request)
             
             # Add to history
             CaseHistory.objects.create(
                 case=case,
                 action='created',
                 description=f"Case '{case.title}' was created",
-                performed_by=self.request.user
+                performed_by=actor
             )
 
 
@@ -86,14 +106,14 @@ class CaseDetailView(generics.RetrieveUpdateDestroyAPIView):
                     case=case,
                     action='status_changed',
                     description=f"Case status changed from '{old_case.status}' to '{case.status}'",
-                    performed_by=self.request.user
+                    performed_by=resolve_request_user(self.request)
                 )
             else:
                 CaseHistory.objects.create(
                     case=case,
                     action='updated',
                     description=f"Case '{case.title}' was updated",
-                    performed_by=self.request.user
+                    performed_by=resolve_request_user(self.request)
                 )
 
 
@@ -106,17 +126,29 @@ class CaseAssignmentRequestListView(generics.ListCreateAPIView):
     
     def get_queryset(self):
         """Get assignment requests based on user role."""
-        user = self.request.user
+        user = resolve_request_user(self.request)
         case_id = self.kwargs.get('case_id')
+        student_id = self.request.query_params.get('student_id')
+        supervisor_id = self.request.query_params.get('supervisor_id')
         
-        if user.role == 'student':
-            return CaseAssignmentRequest.objects.filter(student=user, case_id=case_id)
-        elif user.role == 'supervisor':
-            return CaseAssignmentRequest.objects.filter(case__supervisor=user, case_id=case_id)
-        elif user.role in ['university_admin', 'tech_support']:
-            return CaseAssignmentRequest.objects.filter(case_id=case_id)
+        queryset = CaseAssignmentRequest.objects.all()
+        if case_id:
+            queryset = queryset.filter(case_id=case_id)
         
-        return CaseAssignmentRequest.objects.none()
+        if user:
+            if user.role == 'student':
+                queryset = queryset.filter(student=user)
+            elif user.role == 'supervisor':
+                queryset = queryset.filter(case__supervisor=user)
+            elif user.role not in ['university_admin', 'tech_support']:
+                queryset = CaseAssignmentRequest.objects.none()
+        else:
+            if student_id:
+                queryset = queryset.filter(student_id=student_id)
+            if supervisor_id:
+                queryset = queryset.filter(case__supervisor_id=supervisor_id)
+        
+        return queryset
     
     def get_serializer_class(self):
         """Return appropriate serializer class based on request method."""
@@ -167,7 +199,7 @@ class CaseAssignmentRequestDetailView(generics.RetrieveUpdateAPIView):
                     case=case,
                     action='assigned',
                     description=f"Case assigned to student '{assignment_request.student.username}'",
-                    performed_by=self.request.user
+                    performed_by=resolve_request_user(self.request)
                 )
 
 
@@ -183,6 +215,10 @@ def request_case_assignment(request, case_id):
             'error': _('Case not found')
         }, status=status.HTTP_404_NOT_FOUND)
     
+    user, error = require_request_user(request, error_key='student_id')
+    if error:
+        return error
+    
     # Check if case is open
     if case.status != 'open':
         return Response({
@@ -190,7 +226,7 @@ def request_case_assignment(request, case_id):
         }, status=status.HTTP_400_BAD_REQUEST)
     
     # Check if request already exists
-    if CaseAssignmentRequest.objects.filter(case=case, student=request.user).exists():
+    if CaseAssignmentRequest.objects.filter(case=case, student=user).exists():
         return Response({
             'error': _('Assignment request already exists')
         }, status=status.HTTP_400_BAD_REQUEST)
@@ -198,7 +234,7 @@ def request_case_assignment(request, case_id):
     # Create assignment request
     assignment_request = CaseAssignmentRequest.objects.create(
         case=case,
-        student=request.user,
+        student=user,
         message=request.data.get('message', '')
     )
     
@@ -221,8 +257,12 @@ def supervisor_case_action(request, case_id):
             'error': _('Case not found')
         }, status=status.HTTP_404_NOT_FOUND)
     
+    user, error = require_request_user(request, error_key='user_id')
+    if error:
+        return error
+    
     # Check if supervisor is assigned to the case
-    if case.supervisor != request.user:
+    if case.supervisor != user:
         return Response({
             'error': _('You are not assigned as supervisor to this case')
         }, status=status.HTTP_403_FORBIDDEN)
@@ -268,7 +308,7 @@ def supervisor_case_action(request, case_id):
                 case=case,
                 action='assigned',
                 description=f"Case assigned to student '{student.username}'",
-                performed_by=request.user
+                performed_by=user
             )
             
             return Response({

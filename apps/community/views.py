@@ -129,10 +129,12 @@ def like_content(request, content_id):
             'error': _('Content not found')
         }, status=status.HTTP_404_NOT_FOUND)
     
+    user = request.user
+    
     # Check if user already liked the content
     like, created = ContentLike.objects.get_or_create(
         content=content,
-        user=request.user
+        user=user
     )
     
     if not created:

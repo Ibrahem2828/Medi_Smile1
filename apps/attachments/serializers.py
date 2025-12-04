@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import Attachment
 from apps.accounts.serializers import UserSerializer
+from medismile.utils.auth import resolve_request_user
 
 
 class AttachmentSerializer(serializers.ModelSerializer):
@@ -74,13 +75,18 @@ class AttachmentCreateSerializer(serializers.ModelSerializer):
             file_type = 'document'
         
         # Create attachment
+        request = self.context.get('request')
+        user = resolve_request_user(request) if request else None
+        if not user:
+            raise serializers.ValidationError({'user_id': 'User identification is required'})
+        
         attachment = Attachment.objects.create(
             file=file,
             original_filename=file.name,
             file_type=file_type,
             file_size=file.size,
             mime_type=mime_type,
-            uploaded_by=self.context['request'].user,
+            uploaded_by=user,
             **validated_data
         )
         

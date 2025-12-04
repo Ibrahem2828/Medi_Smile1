@@ -11,7 +11,9 @@ from .serializers import (
 )
 from .utils import create_appointment_notification
 from apps.appointments.models import Appointment
+from apps.accounts.models import User
 from apps.accounts.permissions import IsPatient, IsStudent
+from medismile.utils.auth import resolve_request_user, require_request_user
 
 
 class NotificationPagination(PageNumberPagination):
@@ -30,16 +32,21 @@ class NotificationListView(generics.ListCreateAPIView):
     permission_classes = [AllowAny]  # مؤقتاً للسماح بالوصول بدون مصادقة
     
     def get_queryset(self):
-        """Get notifications for the current user."""
-        user = self.request.user
+        """Get notifications for the current user or by explicit filters."""
+        user = resolve_request_user(self.request)
+        recipient_id = self.request.query_params.get('recipient_id')
         notification_type = self.request.query_params.get('type')
         status_filter = self.request.query_params.get('status')
         is_read = self.request.query_params.get('is_read')
         appointment_id = self.request.query_params.get('appointment_id')
         sender_id = self.request.query_params.get('sender_id')
         
-        # Get notifications where user is recipient
-        notifications = Notification.objects.filter(recipient=user)
+        if recipient_id:
+            notifications = Notification.objects.filter(recipient_id=recipient_id)
+        elif user:
+            notifications = Notification.objects.filter(recipient=user)
+        else:
+            notifications = Notification.objects.all()
         
         # Filter by type
         if notification_type:
@@ -91,10 +98,11 @@ class NotificationDetailView(generics.RetrieveUpdateAPIView):
     
     def retrieve(self, request, *args, **kwargs):
         """Mark notification as read when retrieved."""
+        acting_user = resolve_request_user(request)
         instance = self.get_object()
         
         # Check if user is the recipient
-        if instance.recipient != request.user:
+        if acting_user and instance.recipient != acting_user:
             return Response({
                 'error': _('You are not authorized to view this notification')
             }, status=status.HTTP_403_FORBIDDEN)
@@ -180,7 +188,9 @@ def request_appointment_update(request, appointment_id):
             'error': _('Appointment not found')
         }, status=status.HTTP_404_NOT_FOUND)
     
-    user = request.user
+    user, error = require_request_user(request, error_key='user_id')
+    if error:
+        return error
     
     # Check if user is part of the appointment
     if user.role == 'patient' and appointment.patient != user:
@@ -225,8 +235,15 @@ def request_appointment_update(request, appointment_id):
 @permission_classes([AllowAny])  # مؤقتاً للسماح بالوصول بدون مصادقة
 def unread_notifications_count(request):
     """Get count of unread notifications for current user."""
-    user = request.user
-    count = Notification.objects.filter(recipient=user, is_read=False).count()
+    user = resolve_request_user(request)
+    recipient_id = request.query_params.get('recipient_id')
+    
+    if recipient_id:
+        count = Notification.objects.filter(recipient_id=recipient_id, is_read=False).count()
+    elif user:
+        count = Notification.objects.filter(recipient=user, is_read=False).count()
+    else:
+        count = Notification.objects.filter(is_read=False).count()
     
     return Response({
         'unread_count': count
@@ -245,7 +262,9 @@ def request_appointment_cancel(request, appointment_id):
             'error': _('Appointment not found')
         }, status=status.HTTP_404_NOT_FOUND)
     
-    user = request.user
+    user, error = require_request_user(request, error_key='user_id')
+    if error:
+        return error
     
     # Check if user is part of the appointment
     if user.role == 'patient' and appointment.patient != user:
@@ -294,8 +313,15 @@ def request_appointment_cancel(request, appointment_id):
 @permission_classes([AllowAny])  # مؤقتاً للسماح بالوصول بدون مصادقة
 def mark_all_as_read(request):
     """Mark all notifications as read for current user."""
-    user = request.user
-    Notification.objects.filter(recipient=user, is_read=False).update(is_read=True)
+    user = resolve_request_user(request)
+    recipient_id = request.data.get('recipient_id') or request.query_params.get('recipient_id')
+    
+    if recipient_id:
+        Notification.objects.filter(recipient_id=recipient_id, is_read=False).update(is_read=True)
+    elif user:
+        Notification.objects.filter(recipient=user, is_read=False).update(is_read=True)
+    else:
+        Notification.objects.all().update(is_read=True)
     
     return Response({
         'message': _('All notifications marked as read')
@@ -314,10 +340,10 @@ def toggle_read_status(request, notification_id):
             'error': _('Notification not found')
         }, status=status.HTTP_404_NOT_FOUND)
     
-    user = request.user
+    user = resolve_request_user(request)
     
-    # Check if user is the recipient
-    if notification.recipient != user:
+    # Check if user is the recipient when user context is available
+    if user and notification.recipient != user:
         return Response({
             'error': _('You are not authorized to modify this notification')
         }, status=status.HTTP_403_FORBIDDEN)
@@ -345,10 +371,10 @@ def delete_notification(request, notification_id):
             'error': _('Notification not found')
         }, status=status.HTTP_404_NOT_FOUND)
     
-    user = request.user
+    user = resolve_request_user(request)
     
-    # Check if user is the recipient
-    if notification.recipient != user:
+    # Check if user is the recipient when user context is available
+    if user and notification.recipient != user:
         return Response({
             'error': _('You are not authorized to delete this notification')
         }, status=status.HTTP_403_FORBIDDEN)
@@ -365,7 +391,20 @@ def delete_notification(request, notification_id):
 @permission_classes([AllowAny])  # مؤقتاً للسماح بالوصول بدون مصادقة
 def update_fcm_token(request):
     """Update FCM token for current user."""
-    user = request.user
+    user = resolve_request_user(request)
+    if not user:
+        user_id = request.data.get('user_id')
+        if user_id:
+            try:
+                user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                return Response({
+                    'error': _('User not found')
+                }, status=status.HTTP_404_NOT_FOUND)
+        else:
+            return Response({
+                'error': _('user_id is required when authentication is disabled')
+            }, status=status.HTTP_400_BAD_REQUEST)
     fcm_token = request.data.get('fcm_token')
     
     if not fcm_token:

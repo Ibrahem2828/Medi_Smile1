@@ -1,6 +1,8 @@
 from rest_framework import serializers
 from .models import Case, CaseHistory, CaseAssignmentRequest
 from apps.accounts.serializers import UserSerializer
+from apps.accounts.models import User
+from medismile.utils.auth import resolve_request_user
 
 
 class CaseHistorySerializer(serializers.ModelSerializer):
@@ -52,15 +54,32 @@ class CaseSerializer(serializers.ModelSerializer):
 class CaseCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating a case."""
     
+    patient_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
+    
     class Meta:
         model = Case
         fields = [
-            'title', 'description', 'priority', 'is_public'
+            'title', 'description', 'priority', 'is_public', 'patient_id'
         ]
     
     def create(self, validated_data):
         """Create a new case."""
-        validated_data['patient'] = self.context['request'].user
+        patient_id = validated_data.pop('patient_id', None)
+        request = self.context.get('request')
+        request_user = resolve_request_user(request) if request else None
+        
+        patient = None
+        if request_user and request_user.role == 'patient':
+            patient = request_user
+        elif patient_id:
+            patient = User.objects.get(id=patient_id, role='patient')
+        
+        if not patient:
+            raise serializers.ValidationError({
+                'patient_id': 'Valid patient is required to create a case.'
+            })
+        
+        validated_data['patient'] = patient
         return super().create(validated_data)
 
 
@@ -77,15 +96,32 @@ class CaseUpdateSerializer(serializers.ModelSerializer):
 class CaseAssignmentRequestCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating a case assignment request."""
     
+    student_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
+    
     class Meta:
         model = CaseAssignmentRequest
         fields = [
-            'case', 'message'
+            'case', 'message', 'student_id'
         ]
     
     def create(self, validated_data):
         """Create a new case assignment request."""
-        validated_data['student'] = self.context['request'].user
+        student_id = validated_data.pop('student_id', None)
+        request = self.context.get('request')
+        request_user = resolve_request_user(request) if request else None
+        
+        student = None
+        if request_user and request_user.role == 'student':
+            student = request_user
+        elif student_id:
+            student = User.objects.get(id=student_id, role='student')
+        
+        if not student:
+            raise serializers.ValidationError({
+                'student_id': 'Valid student is required to request assignment.'
+            })
+        
+        validated_data['student'] = student
         return super().create(validated_data)
 
 

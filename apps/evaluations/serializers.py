@@ -3,6 +3,7 @@ from django.utils.translation import gettext_lazy as _
 from .models import Evaluation
 from apps.accounts.serializers import UserSerializer
 from apps.appointments.serializers import AppointmentSerializer
+from medismile.utils.auth import resolve_request_user
 
 
 class EvaluationSerializer(serializers.ModelSerializer):
@@ -44,7 +45,11 @@ class EvaluationCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({'rating': _('Rating must be between 1 and 10')})
         
         evaluator_type = data.get('evaluator_type')
-        user = self.context['request'].user
+        request = self.context.get('request')
+        user = resolve_request_user(request) if request else None
+        
+        if not user:
+            raise serializers.ValidationError({'evaluator_type': _('User identification is required')})
         
         # Validate evaluator type matches user role
         if evaluator_type == 'patient' and user.role != 'patient':
@@ -96,8 +101,12 @@ class EvaluationCreateSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         """Create a new evaluation."""
-        user = self.context['request'].user
+        request = self.context.get('request')
+        user = resolve_request_user(request) if request else None
         evaluator_type = validated_data.get('evaluator_type')
+        
+        if not user:
+            raise serializers.ValidationError({'evaluator_type': _('User identification is required')})
         
         patient_id = validated_data.pop('patient_id', None)
         student_id = validated_data.pop('student_id', None)
