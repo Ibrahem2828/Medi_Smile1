@@ -90,9 +90,7 @@
 # }
 import os
 from pathlib import Path
-from dotenv import load_dotenv
 
-load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -184,16 +182,24 @@ CHANNEL_LAYERS = {
 #         'PORT': os.environ.get('DB_PORT', '5432'),
 #     }
 # }
+
+from dotenv import load_dotenv
 import dj_database_url
 
+load_dotenv()
+
+DATABASE_URL = (
+    f"postgresql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}"
+    f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
+)
+
 DATABASES = {
-    'default': dj_database_url.config(
-        default=os.environ.get("DATABASE_URL"),
+    'default': dj_database_url.parse(
+        DATABASE_URL,
         conn_max_age=600,
         ssl_require=True
     )
 }
-
 
 # --- Password validation ---
 AUTH_PASSWORD_VALIDATORS = [
@@ -247,4 +253,3 @@ LOGGING = {
         "level": "INFO",
     },
 }
-
