@@ -16,6 +16,9 @@ class Notification(models.Model):
         ('appointment_confirmed', _('Appointment Confirmed')),
         ('appointment_cancelled', _('Appointment Cancelled')),
         ('appointment_completed', _('Appointment Completed')),
+        ('content_approval_request', _('Content Approval Request')),
+        ('content_approved', _('Content Approved')),
+        ('content_rejected', _('Content Rejected')),
     )
     
     STATUS_CHOICES = (
@@ -50,6 +53,15 @@ class Notification(models.Model):
         null=True,
         blank=True
     )
+    # For content approval notifications
+    content = models.ForeignKey(
+        'community.Content',
+        on_delete=models.CASCADE,
+        related_name='notifications',
+        verbose_name=_('Content'),
+        null=True,
+        blank=True
+    )
     title = models.CharField(max_length=200, verbose_name=_('Title'))
     message = models.TextField(verbose_name=_('Message'))
     status = models.CharField(
@@ -73,6 +85,9 @@ class Notification(models.Model):
     
     def __str__(self):
         return f"{self.title} - {self.recipient.username}"
+
+
+
 
 
 

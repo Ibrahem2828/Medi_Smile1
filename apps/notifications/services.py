@@ -114,6 +114,7 @@ def send_notification_to_user(
         'notification_id': str(notification.id),
         'notification_type': notification.notification_type,
         'appointment_id': str(notification.appointment.id) if notification.appointment else '',
+        'content_id': str(notification.content.id) if notification.content else '',
         'status': notification.status,
     }
     
@@ -123,6 +124,9 @@ def send_notification_to_user(
         body=notification.message,
         data=data
     )
+
+
+
 
 
 

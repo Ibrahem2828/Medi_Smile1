@@ -40,15 +40,18 @@ class ContentSerializer(serializers.ModelSerializer):
     comments_count = serializers.SerializerMethodField()
     is_liked = serializers.SerializerMethodField()
     
+    approved_by = UserSerializer(read_only=True)
+    
     class Meta:
         model = Content
         fields = [
             'id', 'title', 'description', 'content_type', 'category',
             'file', 'url', 'author', 'university', 'tags', 
-            'is_public', 'is_featured', 'view_count', 'created_at', 
+            'is_public', 'is_featured', 'status', 'approved_by', 
+            'rejection_reason', 'approved_at', 'view_count', 'created_at', 
             'updated_at', 'likes_count', 'comments_count', 'is_liked'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'view_count']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'view_count', 'status', 'approved_by', 'approved_at']
     
     def get_likes_count(self, obj):
         """Get the count of likes for the content."""
@@ -92,6 +95,14 @@ class ContentCreateSerializer(serializers.ModelSerializer):
         if not user:
             raise serializers.ValidationError({'user_id': 'User identification is required'})
         validated_data['author'] = user
+        
+        # If author is a student, set status to pending for supervisor approval
+        if user.role == 'student':
+            validated_data['status'] = 'pending'
+        else:
+            # Other roles (supervisor, admin, etc.) are auto-approved
+            validated_data['status'] = 'approved'
+        
         return super().create(validated_data)
 
 

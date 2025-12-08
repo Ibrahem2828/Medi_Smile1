@@ -46,6 +46,42 @@ class Content(models.Model):
     tags = models.CharField(max_length=500, blank=True, null=True, verbose_name=_('Tags'))
     is_public = models.BooleanField(default=True, verbose_name=_('Is Public'))
     is_featured = models.BooleanField(default=False, verbose_name=_('Is Featured'))
+    
+    # Approval system for student posts
+    STATUS_CHOICES = (
+        ('pending', _('Pending Approval')),
+        ('approved', _('Approved')),
+        ('rejected', _('Rejected')),
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='approved',
+        verbose_name=_('Status'),
+        help_text=_('For students: requires supervisor approval. Others: auto-approved.')
+    )
+    approved_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='approved_content',
+        limit_choices_to={'role__in': ['supervisor', 'university_admin', 'tech_support']},
+        verbose_name=_('Approved By'),
+        help_text=_('Supervisor or admin who approved/rejected this content')
+    )
+    rejection_reason = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name=_('Rejection Reason'),
+        help_text=_('Reason for rejection if status is rejected')
+    )
+    approved_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name=_('Approved At')
+    )
+    
     view_count = models.PositiveIntegerField(default=0, verbose_name=_('View Count'))
     created_at = models.DateTimeField(auto_now_add=True, verbose_name=_('Created At'))
     updated_at = models.DateTimeField(auto_now=True, verbose_name=_('Updated At'))
@@ -55,6 +91,10 @@ class Content(models.Model):
         verbose_name = _('Content')
         verbose_name_plural = _('Content')
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', 'author']),
+            models.Index(fields=['status', 'created_at']),
+        ]
     
     def __str__(self):
         return self.title

@@ -111,6 +111,123 @@ def notify_appointment_status_change(
     )
 
 
+def create_content_approval_notification(content):
+    """
+    Create notification to supervisors when a student creates content.
+    
+    Args:
+        content: Content object created by student
+    """
+    from apps.accounts.models import User
+    
+    # Get all supervisors from the same university
+    supervisors = User.objects.filter(role='supervisor')
+    
+    if content.university:
+        # Filter supervisors from same university
+        supervisors = supervisors.filter(
+            supervisorprofile__university=content.university
+        )
+    
+    if not supervisors.exists():
+        # If no supervisors, notify university admins
+        supervisors = User.objects.filter(
+            role='university_admin',
+            universityadminprofile__university=content.university
+        ) if content.university else User.objects.filter(role='university_admin')
+    
+    # Create notification for each supervisor/admin
+    notifications = []
+    for supervisor in supervisors:
+        notification = Notification.objects.create(
+            sender=content.author,
+            recipient=supervisor,
+            notification_type='content_approval_request',
+            content=content,
+            title=_('New Content Approval Request'),
+            message=_('Student {student_name} has created a new post "{title}" that requires your approval.').format(
+                student_name=content.author.get_full_name() or content.author.username,
+                title=content.title
+            ),
+            status='pending'
+        )
+        
+        # Send push notification
+        try:
+            send_notification_to_user(supervisor, notification)
+        except Exception as e:
+            print(f"Error sending push notification: {e}")
+        
+        notifications.append(notification)
+    
+    return notifications
+
+
+def create_content_approved_notification(content, approved_by):
+    """
+    Create notification to student when content is approved.
+    
+    Args:
+        content: Content object that was approved
+        approved_by: User who approved the content
+    """
+    notification = Notification.objects.create(
+        sender=approved_by,
+        recipient=content.author,
+        notification_type='content_approved',
+        content=content,
+        title=_('Content Approved'),
+        message=_('Your post "{title}" has been approved and is now visible to the community.').format(
+            title=content.title
+        ),
+        status='accepted'
+    )
+    
+    # Send push notification
+    try:
+        send_notification_to_user(content.author, notification)
+    except Exception as e:
+        print(f"Error sending push notification: {e}")
+    
+    return notification
+
+
+def create_content_rejected_notification(content, rejected_by, rejection_reason):
+    """
+    Create notification to student when content is rejected.
+    
+    Args:
+        content: Content object that was rejected
+        rejected_by: User who rejected the content
+        rejection_reason: Reason for rejection
+    """
+    message = _('Your post "{title}" has been rejected.').format(title=content.title)
+    if rejection_reason:
+        message += f" {_('Reason')}: {rejection_reason}"
+    
+    notification = Notification.objects.create(
+        sender=rejected_by,
+        recipient=content.author,
+        notification_type='content_rejected',
+        content=content,
+        title=_('Content Rejected'),
+        message=message,
+        status='rejected',
+        response_message=rejection_reason
+    )
+    
+    # Send push notification
+    try:
+        send_notification_to_user(content.author, notification)
+    except Exception as e:
+        print(f"Error sending push notification: {e}")
+    
+    return notification
+
+
+
+
+
 
 
 

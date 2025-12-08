@@ -88,6 +88,7 @@
 #         },
 #     },
 # }
+
 import os
 from pathlib import Path
 
@@ -182,24 +183,19 @@ CHANNEL_LAYERS = {
 #         'PORT': os.environ.get('DB_PORT', '5432'),
 #     }
 # }
-
-from dotenv import load_dotenv
+# --- Database: PostgreSQL on Railway ---
+import os
 import dj_database_url
 
-load_dotenv()
-
-DATABASE_URL = (
-    f"postgresql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}"
-    f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
-)
-
+# استخدام DATABASE_URL مباشرة من Railway
 DATABASES = {
-    'default': dj_database_url.parse(
-        DATABASE_URL,
+    "default": dj_database_url.parse(
+        os.environ.get("postgresql://postgres:dOzrFwhUEfZMKPFgHNplNEmrwnViUHHg@postgres.railway.internal:5432/railway"),   # Railway يحقن المتغير تلقائياً
         conn_max_age=600,
-        ssl_require=True
+        ssl_require=False                 # يجب أن يكون False للاتصال الداخلي
     )
 }
+
 
 # --- Password validation ---
 AUTH_PASSWORD_VALIDATORS = [
