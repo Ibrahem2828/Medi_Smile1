@@ -187,12 +187,11 @@ CHANNEL_LAYERS = {
 import os
 import dj_database_url
 
-# استخدام DATABASE_URL مباشرة من Railway
 DATABASES = {
     "default": dj_database_url.parse(
-        os.environ.get("postgresql://postgres:dOzrFwhUEfZMKPFgHNplNEmrwnViUHHg@postgres.railway.internal:5432/railway"),   # Railway يحقن المتغير تلقائياً
+        os.environ.get("DATABASE_URL"),  # اسم المتغير فقط
         conn_max_age=600,
-        ssl_require=False                 # يجب أن يكون False للاتصال الداخلي
+        ssl_require=False
     )
 }
 
