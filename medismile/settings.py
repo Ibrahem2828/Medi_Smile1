@@ -125,6 +125,7 @@ INSTALLED_APPS = [
     "apps.attachments",
     "apps.audit",
     "apps.notifications",
+    "apps.reports",
 ]
 
 MIDDLEWARE = [
@@ -184,17 +185,31 @@ CHANNEL_LAYERS = {
 #     }
 # }
 # --- Database: PostgreSQL on Railway ---
+
+# import os
+# import dj_database_url
+
+# DATABASES = {
+#     "default": dj_database_url.parse(
+#         os.getenv("DATABASE_URL"),
+#         conn_max_age=600,
+#         ssl_require=True   # الآن نحتاج SSL لأننا نتصل عبر public proxy
+#     )
+# }
+
 import os
+from dotenv import load_dotenv
 import dj_database_url
+
+load_dotenv()  # تحميل .env عند العمل محلياً
 
 DATABASES = {
     "default": dj_database_url.parse(
-        os.environ.get("DATABASE_URL"),  # اسم المتغير فقط
+        os.environ.get("DATABASE_URL"),
         conn_max_age=600,
-        ssl_require=False
+        ssl_require=True  # مهم لأن الاتصال يتم عبر public proxy
     )
 }
-
 
 # --- Password validation ---
 AUTH_PASSWORD_VALIDATORS = [
