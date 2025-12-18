@@ -1,5 +1,5 @@
 from rest_framework import generics, permissions, status
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from django.utils.translation import gettext_lazy as _
@@ -19,8 +19,7 @@ class ContentListView(generics.ListCreateAPIView):
     """API view for listing and creating content."""
     
     serializer_class = ContentSerializer
-    # permission_classes = [permissions.IsAuthenticated]  # معلق مؤقتاً - تم تعطيل المصادقة
-    permission_classes = [AllowAny]  # مؤقتاً للسماح بالوصول بدون مصادقة
+    permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
         """Get content based on filters."""
@@ -88,8 +87,7 @@ class ContentDetailView(generics.RetrieveUpdateDestroyAPIView):
     
     queryset = Content.objects.all()
     serializer_class = ContentSerializer
-    # permission_classes = [permissions.IsAuthenticated]  # معلق مؤقتاً - تم تعطيل المصادقة
-    permission_classes = [AllowAny]  # مؤقتاً للسماح بالوصول بدون مصادقة
+    permission_classes = [IsAuthenticated]
     
     def get_serializer_class(self):
         """Return appropriate serializer class based on request method."""
@@ -100,10 +98,8 @@ class ContentDetailView(generics.RetrieveUpdateDestroyAPIView):
     def get_permissions(self):
         """Get permissions based on request method."""
         if self.request.method in ['PUT', 'PATCH', 'DELETE']:
-            # return [permissions.IsAuthenticated(), IsStudent() | IsSupervisor() | IsUniversityAdmin()]  # معلق مؤقتاً
-            return [AllowAny()]  # مؤقتاً للسماح بالوصول بدون مصادقة
-        # return [permissions.IsAuthenticated()]  # معلق مؤقتاً
-        return [AllowAny()]  # مؤقتاً للسماح بالوصول بدون مصادقة
+            return [IsAuthenticated(), IsStudent() | IsSupervisor() | IsUniversityAdmin()]
+        return [IsAuthenticated()]
     
     def retrieve(self, request, *args, **kwargs):
         """Increment view count when retrieving content."""
@@ -119,8 +115,7 @@ class ContentCommentListView(generics.ListCreateAPIView):
     """API view for listing and creating content comments."""
     
     serializer_class = ContentCommentSerializer
-    # permission_classes = [permissions.IsAuthenticated]  # معلق مؤقتاً - تم تعطيل المصادقة
-    permission_classes = [AllowAny]  # مؤقتاً للسماح بالوصول بدون مصادقة
+    permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
         """Get comments for a specific content."""
@@ -140,8 +135,7 @@ class ContentCommentListView(generics.ListCreateAPIView):
 
 
 @api_view(['POST'])
-# @permission_classes([permissions.IsAuthenticated])  # معلق مؤقتاً - تم تعطيل المصادقة
-@permission_classes([AllowAny])  # مؤقتاً للسماح بالوصول بدون مصادقة
+@permission_classes([IsAuthenticated])
 def like_content(request, content_id):
     """Like or unlike content."""
     try:
@@ -176,8 +170,7 @@ def like_content(request, content_id):
 
 
 @api_view(['GET'])
-# @permission_classes([permissions.IsAuthenticated])  # معلق مؤقتاً - تم تعطيل المصادقة
-@permission_classes([AllowAny])  # مؤقتاً للسماح بالوصول بدون مصادقة
+@permission_classes([IsAuthenticated])
 def trending_content(request):
     """Get trending content based on views and likes."""
     # Get content with most views and likes in the last 7 days
@@ -199,7 +192,7 @@ def trending_content(request):
 
 
 @api_view(['GET'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated, IsSupervisor | IsUniversityAdmin])
 def pending_content(request):
     """Get pending content for supervisor approval."""
     user, error = require_request_user(request, error_key='user_id')
@@ -225,7 +218,7 @@ def pending_content(request):
 
 
 @api_view(['POST'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated, IsSupervisor | IsUniversityAdmin])
 def approve_content(request, content_id):
     """Approve a pending content."""
     user, error = require_request_user(request, error_key='user_id')
@@ -271,7 +264,7 @@ def approve_content(request, content_id):
 
 
 @api_view(['POST'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated, IsSupervisor | IsUniversityAdmin])
 def reject_content(request, content_id):
     """Reject a pending content."""
     user, error = require_request_user(request, error_key='user_id')

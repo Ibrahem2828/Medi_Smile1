@@ -41,3 +41,21 @@ class ReportModelTest(TestCase):
         self.assertIsNotNone(report.generated_at)
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

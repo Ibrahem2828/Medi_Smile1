@@ -7,3 +7,21 @@ class ReportsConfig(AppConfig):
     verbose_name = 'Reports'
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

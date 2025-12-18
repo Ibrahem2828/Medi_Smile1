@@ -1,5 +1,5 @@
 from rest_framework import generics, permissions, status
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from django.utils.translation import gettext_lazy as _
@@ -14,7 +14,7 @@ class ReportListView(generics.ListCreateAPIView):
     """API view for listing and creating reports."""
     
     serializer_class = ReportSerializer
-    permission_classes = [AllowAny]  # مؤقتاً للسماح بالوصول بدون مصادقة
+    permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
         """Get reports based on user role or provided filters."""
@@ -68,7 +68,7 @@ class ReportDetailView(generics.RetrieveUpdateDestroyAPIView):
     
     queryset = Report.objects.all()
     serializer_class = ReportSerializer
-    permission_classes = [AllowAny]  # مؤقتاً للسماح بالوصول بدون مصادقة
+    permission_classes = [IsAuthenticated]
     
     def get_serializer_class(self):
         """Return appropriate serializer class based on request method."""
@@ -78,7 +78,7 @@ class ReportDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 
 @api_view(['GET'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def student_reports(request, student_id):
     """Get all reports for a specific student."""
     user, error = require_request_user(request, error_key='user_id')
@@ -106,7 +106,7 @@ def student_reports(request, student_id):
 
 
 @api_view(['GET'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated, IsUniversityAdmin | IsTechSupport])
 def university_reports(request, university_id):
     """Get all reports for a specific university."""
     user, error = require_request_user(request, error_key='user_id')
@@ -130,5 +130,17 @@ def university_reports(request, university_id):
     reports = Report.objects.filter(university=university, is_active=True)
     serializer = ReportSerializer(reports, many=True)
     return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+
+
+
+
+
+
+
+
+
+
 
 

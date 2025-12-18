@@ -104,3 +104,21 @@ class Report(models.Model):
         return f"{self.get_report_type_display()} - {self.student.username} ({self.university.name})"
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

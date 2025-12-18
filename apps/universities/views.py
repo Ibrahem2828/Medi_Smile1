@@ -1,5 +1,5 @@
 from rest_framework import generics, status
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from django.core.exceptions import ValidationError
@@ -8,6 +8,7 @@ from .serializers import (
     UniversityListSerializer, UniversityDetailSerializer, UniversityCreateSerializer,
     CourseListSerializer, CourseDetailSerializer, CourseCreateSerializer
 )
+from apps.accounts.permissions import IsUniversityAdmin
 
 
 class APIResponse:
@@ -36,7 +37,7 @@ class UniversityListView(generics.ListAPIView):
     """API view to list all universities."""
     queryset = University.objects.filter(is_active=True)
     serializer_class = UniversityListSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     
     def list(self, request, *args, **kwargs):
         try:
@@ -50,7 +51,7 @@ class UniversityListView(generics.ListAPIView):
 class UniversityCreateView(generics.CreateAPIView):
     """API view to create a new university."""
     serializer_class = UniversityCreateSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated, IsUniversityAdmin]
     
     def create(self, request, *args, **kwargs):
         try:
@@ -72,7 +73,7 @@ class UniversityDetailView(generics.RetrieveAPIView):
     """API view to retrieve university details."""
     queryset = University.objects.all()
     serializer_class = UniversityDetailSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     lookup_field = 'pk'
     
     def retrieve(self, request, *args, **kwargs):
@@ -88,7 +89,7 @@ class UniversityUpdateView(generics.UpdateAPIView):
     """API view to update university details."""
     queryset = University.objects.all()
     serializer_class = UniversityDetailSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated, IsUniversityAdmin]
     lookup_field = 'pk'
     
     def update(self, request, *args, **kwargs):
@@ -108,7 +109,7 @@ class UniversityUpdateView(generics.UpdateAPIView):
 class UniversityDeleteView(generics.DestroyAPIView):
     """API view to delete a university."""
     queryset = University.objects.all()
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated, IsUniversityAdmin]
     lookup_field = 'pk'
     
     def delete(self, request, *args, **kwargs):
@@ -126,7 +127,7 @@ class UniversityDeleteView(generics.DestroyAPIView):
 class UniversityCoursesView(generics.ListAPIView):
     """API view to list courses for a specific university."""
     serializer_class = CourseListSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
         """Get courses for the specified university."""
@@ -148,7 +149,7 @@ class CourseCreateView(generics.CreateAPIView):
     """API view to create a new course."""
     queryset = Course.objects.all()
     serializer_class = CourseCreateSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated, IsUniversityAdmin]
     
     def create(self, request, *args, **kwargs):
         try:
@@ -183,7 +184,7 @@ class CourseDetailView(generics.RetrieveAPIView):
     """API view to retrieve course details."""
     queryset = Course.objects.all()
     serializer_class = CourseDetailSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     lookup_field = 'pk'
     
     def retrieve(self, request, *args, **kwargs):
@@ -199,7 +200,7 @@ class CourseUpdateView(generics.UpdateAPIView):
     """API view to update course details."""
     queryset = Course.objects.all()
     serializer_class = CourseDetailSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated, IsUniversityAdmin]
     lookup_field = 'pk'
     
     def update(self, request, *args, **kwargs):
@@ -219,7 +220,7 @@ class CourseUpdateView(generics.UpdateAPIView):
 class CourseDeleteView(generics.DestroyAPIView):
     """API view to delete a course."""
     queryset = Course.objects.all()
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated, IsUniversityAdmin]
     lookup_field = 'pk'
     
     def delete(self, request, *args, **kwargs):

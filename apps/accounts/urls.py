@@ -1,7 +1,7 @@
 # accounts/urls.py
 from django.urls import path
 from .views import (
-    # LoginView, LogoutView,
+    LoginView, LogoutView,
     PatientListView, PatientCreateView, PatientDetailView, PatientUpdateView, PatientDeleteView,
     StudentListView, StudentCreateView, StudentDetailView, StudentUpdateView, StudentDeleteView,
     SupervisorListView, SupervisorCreateView, SupervisorDetailView, SupervisorUpdateView, SupervisorDeleteView,
@@ -10,9 +10,9 @@ from .views import (
 )
 
 urlpatterns = [
-    # Authentication (disabled temporarily)
-    # path('login/', LoginView.as_view(), name='login'),
-    # path('logout/', LogoutView.as_view(), name='logout'),
+    # Authentication
+    path('login/', LoginView.as_view(), name='login'),
+    path('logout/', LogoutView.as_view(), name='logout'),
 
     # Patients
     path('patients/', PatientListView.as_view(), name='patient-list'),

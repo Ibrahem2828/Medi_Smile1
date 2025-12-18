@@ -59,7 +59,8 @@ class CaseCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Case
         fields = [
-            'title', 'description', 'priority', 'is_public', 'patient_id'
+            'title', 'description', 'priority', 'is_public', 'patient_id',
+            'supervisor','student'
         ]
     
     def create(self, validated_data):
@@ -89,7 +90,8 @@ class CaseUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Case
         fields = [
-            'title', 'description', 'status', 'priority', 'is_public'
+            'title', 'description', 'status', 'priority', 'is_public',
+            "student","supervisor"
         ]
 
 

@@ -1,5 +1,5 @@
 from rest_framework import generics, permissions, status
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from django.utils.translation import gettext_lazy as _
@@ -22,8 +22,7 @@ class CaseListView(generics.ListCreateAPIView):
     """API view for listing and creating cases."""
     
     serializer_class = CaseSerializer
-    # permission_classes = [permissions.IsAuthenticated]  # معلق مؤقتاً - تم تعطيل المصادقة
-    permission_classes = [AllowAny]  # مؤقتاً للسماح بالوصول بدون مصادقة
+    permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
         """Get cases based on user role or explicit filters while auth is disabled."""
@@ -83,16 +82,13 @@ class CaseDetailView(generics.RetrieveUpdateDestroyAPIView):
     
     queryset = Case.objects.all()
     serializer_class = CaseSerializer
-    # permission_classes = [permissions.IsAuthenticated]  # معلق مؤقتاً - تم تعطيل المصادقة
-    permission_classes = [AllowAny]  # مؤقتاً للسماح بالوصول بدون مصادقة
+    permission_classes = [IsAuthenticated]
     
     def get_permissions(self):
         """Get permissions based on request method."""
         if self.request.method in ['PUT', 'PATCH', 'DELETE']:
-            # return [permissions.IsAuthenticated(), IsPatient()]  # معلق مؤقتاً
-            return [AllowAny()]  # مؤقتاً للسماح بالوصول بدون مصادقة
-        # return [permissions.IsAuthenticated()]  # معلق مؤقتاً
-        return [AllowAny()]  # مؤقتاً للسماح بالوصول بدون مصادقة
+            return [IsAuthenticated(), IsPatient()]
+        return [IsAuthenticated()]
     
     def perform_update(self, serializer):
         """Update a case and add to history."""
@@ -121,8 +117,7 @@ class CaseAssignmentRequestListView(generics.ListCreateAPIView):
     """API view for listing and creating case assignment requests."""
     
     serializer_class = CaseAssignmentRequestSerializer
-    # permission_classes = [permissions.IsAuthenticated]  # معلق مؤقتاً - تم تعطيل المصادقة
-    permission_classes = [AllowAny]  # مؤقتاً للسماح بالوصول بدون مصادقة
+    permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
         """Get assignment requests based on user role."""
@@ -173,8 +168,7 @@ class CaseAssignmentRequestDetailView(generics.RetrieveUpdateAPIView):
     
     queryset = CaseAssignmentRequest.objects.all()
     serializer_class = CaseAssignmentRequestSerializer
-    # permission_classes = [permissions.IsAuthenticated, IsSupervisor]  # معلق مؤقتاً - تم تعطيل المصادقة
-    permission_classes = [AllowAny]  # مؤقتاً للسماح بالوصول بدون مصادقة
+    permission_classes = [IsAuthenticated, IsSupervisor]
     
     def get_serializer_class(self):
         """Return appropriate serializer class based on request method."""
@@ -204,8 +198,7 @@ class CaseAssignmentRequestDetailView(generics.RetrieveUpdateAPIView):
 
 
 @api_view(['POST'])
-# @permission_classes([permissions.IsAuthenticated, IsStudent])  # معلق مؤقتاً - تم تعطيل المصادقة
-@permission_classes([AllowAny])  # مؤقتاً للسماح بالوصول بدون مصادقة
+@permission_classes([IsAuthenticated, IsStudent])
 def request_case_assignment(request, case_id):
     """Request assignment to a case."""
     try:
@@ -246,8 +239,7 @@ def request_case_assignment(request, case_id):
 
 
 @api_view(['POST'])
-# @permission_classes([permissions.IsAuthenticated, IsSupervisor])  # معلق مؤقتاً - تم تعطيل المصادقة
-@permission_classes([AllowAny])  # مؤقتاً للسماح بالوصول بدون مصادقة
+@permission_classes([IsAuthenticated, IsSupervisor])
 def supervisor_case_action(request, case_id):
     """Supervisor action on a case (accept/reject student assignment)."""
     try:

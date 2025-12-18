@@ -1,10 +1,10 @@
-from rest_framework import generics, status
-from rest_framework.permissions import AllowAny  # , IsAuthenticated
+from rest_framework import generics, status, permissions
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-# from rest_framework.views import APIView
-# from rest_framework_simplejwt.exceptions import TokenError
-# from rest_framework_simplejwt.tokens import RefreshToken
-# from django.contrib.auth.models import update_last_login
+from rest_framework.views import APIView
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.contrib.auth.models import update_last_login
 from django.shortcuts import get_object_or_404
 from django.core.exceptions import ValidationError
 from .models import (
@@ -17,8 +17,9 @@ from .serializers import (
     SupervisorListSerializer, SupervisorDetailSerializer, SupervisorCreateSerializer, SupervisorUpdateSerializer,
     UniversityAdminListSerializer, UniversityAdminDetailSerializer, UniversityAdminCreateSerializer, UniversityAdminUpdateSerializer,
     TechSupportListSerializer, TechSupportDetailSerializer, TechSupportCreateSerializer, TechSupportUpdateSerializer,
-    # LoginSerializer, LogoutSerializer, UserSerializer
+    LoginSerializer, LogoutSerializer, UserSerializer
 )
+from .permissions import IsPatient, IsStudent, IsSupervisor, IsUniversityAdmin, IsTechSupport
 
 class APIResponse:
     """Standardized API response format."""
@@ -39,9 +40,10 @@ class APIResponse:
             "errors": errors
         }, status=status_code)
 
-"""
+# ==================== AUTHENTICATION VIEWS ==================== #
+
 class LoginView(APIView):
-    \"\"\"API view to authenticate users and return JWT tokens.\"\"\"
+    """API view to authenticate users and return JWT tokens."""
     permission_classes = [AllowAny]
 
     def post(self, request, *args, **kwargs):
@@ -65,7 +67,7 @@ class LoginView(APIView):
         return APIResponse.success("تم تسجيل الدخول بنجاح.", data, status.HTTP_200_OK)
 
 class LogoutView(APIView):
-    \"\"\"API view to blacklist refresh token and log the user out.\"\"\"
+    """API view to blacklist refresh token and log the user out."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
@@ -83,7 +85,6 @@ class LogoutView(APIView):
             return APIResponse.error("رمز التحديث غير صالح أو منتهي.", status_code=status.HTTP_400_BAD_REQUEST)
 
         return APIResponse.success("تم تسجيل الخروج بنجاح.", status_code=status.HTTP_205_RESET_CONTENT)
-"""
 
 # ==================== PATIENT VIEWS ==================== #
 
@@ -91,7 +92,7 @@ class PatientListView(generics.ListAPIView):
     """API view to list all patients."""
     queryset = PatientProfile.objects.select_related('user').all()
     serializer_class = PatientListSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     
     def list(self, request, *args, **kwargs):
         try:
@@ -104,7 +105,7 @@ class PatientListView(generics.ListAPIView):
 class PatientCreateView(generics.CreateAPIView):
     """API view to create a new patient."""
     serializer_class = PatientCreateSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [AllowAny]  # Register is public
     
     def create(self, request, *args, **kwargs):
         try:
@@ -128,7 +129,7 @@ class PatientDetailView(generics.RetrieveAPIView):
     """API view to retrieve patient details."""
     queryset = PatientProfile.objects.select_related('user')
     serializer_class = PatientDetailSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     lookup_field = 'user_id'
     lookup_url_kwarg = 'user_id'
     
@@ -143,7 +144,7 @@ class PatientDetailView(generics.RetrieveAPIView):
 class PatientUpdateView(generics.UpdateAPIView):
     """API view to update patient details."""
     serializer_class = PatientUpdateSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated, IsPatient]
     lookup_field = 'user_id'
     lookup_url_kwarg = 'user_id'
     
@@ -167,7 +168,7 @@ class PatientUpdateView(generics.UpdateAPIView):
 
 class PatientDeleteView(generics.DestroyAPIView):
     """API view to delete a patient."""
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated, IsPatient]
     lookup_field = 'user_id'
     lookup_url_kwarg = 'user_id'
     
@@ -192,7 +193,7 @@ class StudentListView(generics.ListAPIView):
     """API view to list all students."""
     queryset = StudentProfile.objects.select_related('user', 'university').all()
     serializer_class = StudentListSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     
     def list(self, request, *args, **kwargs):
         try:
@@ -205,7 +206,7 @@ class StudentListView(generics.ListAPIView):
 class StudentCreateView(generics.CreateAPIView):
     """API view to create a new student."""
     serializer_class = StudentCreateSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [AllowAny]  # Register is public
     
     def create(self, request, *args, **kwargs):
         try:
@@ -229,7 +230,7 @@ class StudentDetailView(generics.RetrieveAPIView):
     """API view to retrieve student details."""
     queryset = StudentProfile.objects.select_related('user', 'university')
     serializer_class = StudentDetailSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     lookup_field = 'user_id'
     lookup_url_kwarg = 'user_id'
     
@@ -244,7 +245,7 @@ class StudentDetailView(generics.RetrieveAPIView):
 class StudentUpdateView(generics.UpdateAPIView):
     """API view to update student details."""
     serializer_class = StudentUpdateSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated, IsStudent]
     lookup_field = 'user_id'
     lookup_url_kwarg = 'user_id'
     
@@ -268,7 +269,7 @@ class StudentUpdateView(generics.UpdateAPIView):
 
 class StudentDeleteView(generics.DestroyAPIView):
     """API view to delete a student."""
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated, IsStudent]
     lookup_field = 'user_id'
     lookup_url_kwarg = 'user_id'
     
@@ -293,7 +294,7 @@ class SupervisorListView(generics.ListAPIView):
     """API view to list all supervisors."""
     queryset = SupervisorProfile.objects.select_related('user', 'university').all()
     serializer_class = SupervisorListSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     
     def list(self, request, *args, **kwargs):
         try:
@@ -306,7 +307,7 @@ class SupervisorListView(generics.ListAPIView):
 class SupervisorCreateView(generics.CreateAPIView):
     """API view to create a new supervisor."""
     serializer_class = SupervisorCreateSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [AllowAny]  # Register is public
     
     def create(self, request, *args, **kwargs):
         try:
@@ -330,7 +331,7 @@ class SupervisorDetailView(generics.RetrieveAPIView):
     """API view to retrieve supervisor details."""
     queryset = SupervisorProfile.objects.select_related('user', 'university')
     serializer_class = SupervisorDetailSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     lookup_field = 'user_id'
     lookup_url_kwarg = 'user_id'
     
@@ -345,7 +346,7 @@ class SupervisorDetailView(generics.RetrieveAPIView):
 class SupervisorUpdateView(generics.UpdateAPIView):
     """API view to update supervisor details."""
     serializer_class = SupervisorUpdateSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated, IsSupervisor]
     lookup_field = 'user_id'
     lookup_url_kwarg = 'user_id'
     
@@ -369,7 +370,7 @@ class SupervisorUpdateView(generics.UpdateAPIView):
 
 class SupervisorDeleteView(generics.DestroyAPIView):
     """API view to delete a supervisor."""
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated, IsSupervisor]
     lookup_field = 'user_id'
     lookup_url_kwarg = 'user_id'
     
@@ -394,7 +395,7 @@ class UniversityAdminListView(generics.ListAPIView):
     """API view to list all university admins."""
     queryset = UniversityAdminProfile.objects.select_related('user', 'university').all()
     serializer_class = UniversityAdminListSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated, IsUniversityAdmin]
     
     def list(self, request, *args, **kwargs):
         try:
@@ -407,7 +408,7 @@ class UniversityAdminListView(generics.ListAPIView):
 class UniversityAdminCreateView(generics.CreateAPIView):
     """API view to create a new university admin."""
     serializer_class = UniversityAdminCreateSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated, IsUniversityAdmin]
     
     def create(self, request, *args, **kwargs):
         try:
@@ -431,7 +432,7 @@ class UniversityAdminDetailView(generics.RetrieveAPIView):
     """API view to retrieve university admin details."""
     queryset = UniversityAdminProfile.objects.select_related('user', 'university')
     serializer_class = UniversityAdminDetailSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     lookup_field = 'user_id'
     lookup_url_kwarg = 'user_id'
     
@@ -446,7 +447,7 @@ class UniversityAdminDetailView(generics.RetrieveAPIView):
 class UniversityAdminUpdateView(generics.UpdateAPIView):
     """API view to update university admin details."""
     serializer_class = UniversityAdminUpdateSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated, IsUniversityAdmin]
     lookup_field = 'user_id'
     lookup_url_kwarg = 'user_id'
     
@@ -470,7 +471,7 @@ class UniversityAdminUpdateView(generics.UpdateAPIView):
 
 class UniversityAdminDeleteView(generics.DestroyAPIView):
     """API view to delete a university admin."""
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated, IsUniversityAdmin]
     lookup_field = 'user_id'
     lookup_url_kwarg = 'user_id'
     
@@ -495,7 +496,7 @@ class TechSupportListView(generics.ListAPIView):
     """API view to list all tech support."""
     queryset = TechSupportProfile.objects.select_related('user').all()
     serializer_class = TechSupportListSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated, IsTechSupport]
     
     def list(self, request, *args, **kwargs):
         try:
@@ -508,7 +509,7 @@ class TechSupportListView(generics.ListAPIView):
 class TechSupportCreateView(generics.CreateAPIView):
     """API view to create a new tech support."""
     serializer_class = TechSupportCreateSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated, IsTechSupport]
     
     def create(self, request, *args, **kwargs):
         try:
@@ -532,7 +533,7 @@ class TechSupportDetailView(generics.RetrieveAPIView):
     """API view to retrieve tech support details."""
     queryset = TechSupportProfile.objects.select_related('user')
     serializer_class = TechSupportDetailSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     lookup_field = 'user_id'
     lookup_url_kwarg = 'user_id'
     
@@ -547,7 +548,7 @@ class TechSupportDetailView(generics.RetrieveAPIView):
 class TechSupportUpdateView(generics.UpdateAPIView):
     """API view to update tech support details."""
     serializer_class = TechSupportUpdateSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated, IsTechSupport]
     lookup_field = 'user_id'
     lookup_url_kwarg = 'user_id'
     
@@ -571,7 +572,7 @@ class TechSupportUpdateView(generics.UpdateAPIView):
 
 class TechSupportDeleteView(generics.DestroyAPIView):
     """API view to delete a tech support."""
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated, IsTechSupport]
     lookup_field = 'user_id'
     lookup_url_kwarg = 'user_id'
     

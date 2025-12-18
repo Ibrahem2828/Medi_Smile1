@@ -1,5 +1,5 @@
 from rest_framework import viewsets, permissions, status
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.contrib.auth import get_user_model
@@ -13,8 +13,7 @@ User = get_user_model()
 class RoomViewSet(viewsets.ModelViewSet):
     queryset = Room.objects.all()
     serializer_class = RoomSerializer
-    # permission_classes = [permissions.IsAuthenticated]  # معلق مؤقتاً - تم تعطيل المصادقة
-    permission_classes = [AllowAny]  # مؤقتاً للسماح بالوصول بدون مصادقة
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         user = self.request.user
@@ -50,8 +49,7 @@ class RoomViewSet(viewsets.ModelViewSet):
 class MessageViewSet(viewsets.ModelViewSet):
     queryset = Message.objects.all()
     serializer_class = MessageSerializer
-    # permission_classes = [permissions.IsAuthenticated]  # معلق مؤقتاً - تم تعطيل المصادقة
-    permission_classes = [AllowAny]  # مؤقتاً للسماح بالوصول بدون مصادقة
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         user = self.request.user

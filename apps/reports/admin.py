@@ -23,3 +23,21 @@ class ReportAdmin(admin.ModelAdmin):
     )
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,5 +1,5 @@
 from rest_framework import generics, permissions, status
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
@@ -28,8 +28,7 @@ class NotificationListView(generics.ListCreateAPIView):
     
     serializer_class = NotificationSerializer
     pagination_class = NotificationPagination
-    # permission_classes = [permissions.IsAuthenticated]  # معلق مؤقتاً - تم تعطيل المصادقة
-    permission_classes = [AllowAny]  # مؤقتاً للسماح بالوصول بدون مصادقة
+    permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
         """Get notifications for the current user or by explicit filters."""
@@ -87,8 +86,7 @@ class NotificationDetailView(generics.RetrieveUpdateAPIView):
     
     queryset = Notification.objects.all()
     serializer_class = NotificationSerializer
-    # permission_classes = [permissions.IsAuthenticated]  # معلق مؤقتاً - تم تعطيل المصادقة
-    permission_classes = [AllowAny]  # مؤقتاً للسماح بالوصول بدون مصادقة
+    permission_classes = [IsAuthenticated]
     
     def get_serializer_class(self):
         """Return appropriate serializer class based on request method."""
@@ -177,8 +175,7 @@ class NotificationDetailView(generics.RetrieveUpdateAPIView):
 
 
 @api_view(['POST'])
-# @permission_classes([permissions.IsAuthenticated])  # معلق مؤقتاً - تم تعطيل المصادقة
-@permission_classes([AllowAny])  # مؤقتاً للسماح بالوصول بدون مصادقة
+@permission_classes([IsAuthenticated])
 def request_appointment_update(request, appointment_id):
     """Request appointment update from patient/student."""
     try:
@@ -231,8 +228,7 @@ def request_appointment_update(request, appointment_id):
 
 
 @api_view(['GET'])
-# @permission_classes([permissions.IsAuthenticated])  # معلق مؤقتاً - تم تعطيل المصادقة
-@permission_classes([AllowAny])  # مؤقتاً للسماح بالوصول بدون مصادقة
+@permission_classes([IsAuthenticated])
 def unread_notifications_count(request):
     """Get count of unread notifications for current user."""
     user = resolve_request_user(request)
@@ -251,8 +247,7 @@ def unread_notifications_count(request):
 
 
 @api_view(['POST'])
-# @permission_classes([permissions.IsAuthenticated])  # معلق مؤقتاً - تم تعطيل المصادقة
-@permission_classes([AllowAny])  # مؤقتاً للسماح بالوصول بدون مصادقة
+@permission_classes([IsAuthenticated])
 def request_appointment_cancel(request, appointment_id):
     """Request appointment cancellation from patient/student."""
     try:
@@ -309,8 +304,7 @@ def request_appointment_cancel(request, appointment_id):
 
 
 @api_view(['POST'])
-# @permission_classes([permissions.IsAuthenticated])  # معلق مؤقتاً - تم تعطيل المصادقة
-@permission_classes([AllowAny])  # مؤقتاً للسماح بالوصول بدون مصادقة
+@permission_classes([IsAuthenticated])
 def mark_all_as_read(request):
     """Mark all notifications as read for current user."""
     user = resolve_request_user(request)
@@ -329,8 +323,7 @@ def mark_all_as_read(request):
 
 
 @api_view(['POST'])
-# @permission_classes([permissions.IsAuthenticated])  # معلق مؤقتاً - تم تعطيل المصادقة
-@permission_classes([AllowAny])  # مؤقتاً للسماح بالوصول بدون مصادقة
+@permission_classes([IsAuthenticated])
 def toggle_read_status(request, notification_id):
     """Toggle read status of a notification."""
     try:
@@ -360,8 +353,7 @@ def toggle_read_status(request, notification_id):
 
 
 @api_view(['DELETE'])
-# @permission_classes([permissions.IsAuthenticated])  # معلق مؤقتاً - تم تعطيل المصادقة
-@permission_classes([AllowAny])  # مؤقتاً للسماح بالوصول بدون مصادقة
+@permission_classes([IsAuthenticated])
 def delete_notification(request, notification_id):
     """Delete a notification."""
     try:
@@ -387,8 +379,7 @@ def delete_notification(request, notification_id):
 
 
 @api_view(['POST'])
-# @permission_classes([permissions.IsAuthenticated])  # معلق مؤقتاً - تم تعطيل المصادقة
-@permission_classes([AllowAny])  # مؤقتاً للسماح بالوصول بدون مصادقة
+@permission_classes([IsAuthenticated])
 def update_fcm_token(request):
     """Update FCM token for current user."""
     user = resolve_request_user(request)

@@ -1,5 +1,5 @@
 from rest_framework import generics, permissions
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from django.utils.translation import gettext_lazy as _
@@ -9,14 +9,14 @@ from apps.accounts import models
 from .models import AuditLog
 from .serializers import AuditLogSerializer
 from apps.accounts.permissions import IsUniversityAdmin, IsTechSupport
+from rest_framework.permissions import IsAuthenticated
 
 
 class AuditLogListView(generics.ListAPIView):
     """API view for listing audit logs."""
     
     serializer_class = AuditLogSerializer
-    # permission_classes = [permissions.IsAuthenticated, IsUniversityAdmin | IsTechSupport]  # معلق مؤقتاً - تم تعطيل المصادقة
-    permission_classes = [AllowAny]  # مؤقتاً للسماح بالوصول بدون مصادقة
+    permission_classes = [IsAuthenticated, IsUniversityAdmin | IsTechSupport]
     
     def get_queryset(self):
         """Get audit logs based on filters."""
@@ -64,8 +64,7 @@ class AuditLogListView(generics.ListAPIView):
 
 
 @api_view(['GET'])
-# @permission_classes([permissions.IsAuthenticated, IsUniversityAdmin | IsTechSupport])  # معلق مؤقتاً - تم تعطيل المصادقة
-@permission_classes([AllowAny])  # مؤقتاً للسماح بالوصول بدون مصادقة
+@permission_classes([IsAuthenticated, IsUniversityAdmin | IsTechSupport])
 def audit_statistics(request):
     """Get audit statistics."""
     # Get count of logs by action

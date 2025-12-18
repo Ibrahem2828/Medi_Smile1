@@ -94,3 +94,21 @@ class ReportUpdateSerializer(serializers.ModelSerializer):
         ]
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

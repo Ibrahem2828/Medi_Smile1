@@ -1,5 +1,5 @@
 from rest_framework import generics, permissions, status
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from django.utils.translation import gettext_lazy as _
@@ -18,8 +18,7 @@ class AppointmentListView(generics.ListCreateAPIView):
     """API view for listing and creating appointments."""
     
     serializer_class = AppointmentSerializer
-    # permission_classes = [permissions.IsAuthenticated]  # معلق مؤقتاً - تم تعطيل المصادقة
-    permission_classes = [AllowAny]  # مؤقتاً للسماح بالوصول بدون مصادقة
+    permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
         """Get appointments based on user role or provided filters."""
@@ -71,8 +70,7 @@ class AppointmentDetailView(generics.RetrieveUpdateDestroyAPIView):
     
     queryset = Appointment.objects.all()
     serializer_class = AppointmentSerializer
-    # permission_classes = [permissions.IsAuthenticated]  # معلق مؤقتاً - تم تعطيل المصادقة
-    permission_classes = [AllowAny]  # مؤقتاً للسماح بالوصول بدون مصادقة
+    permission_classes = [IsAuthenticated]
     
     def get_serializer_class(self):
         """Return appropriate serializer class based on request method."""
@@ -82,19 +80,13 @@ class AppointmentDetailView(generics.RetrieveUpdateDestroyAPIView):
     
     def get_permissions(self):
         """Get permissions based on request method."""
-        if self.request.method in ['PUT', 'PATCH']:
-            # return [permissions.IsAuthenticated()]  # معلق مؤقتاً
-            return [AllowAny()]  # مؤقتاً للسماح بالوصول بدون مصادقة
-        elif self.request.method == 'DELETE':
-            # return [permissions.IsAuthenticated(), IsPatient()]  # معلق مؤقتاً
-            return [AllowAny()]  # مؤقتاً للسماح بالوصول بدون مصادقة
-        # return [permissions.IsAuthenticated()]  # معلق مؤقتاً
-        return [AllowAny()]  # مؤقتاً للسماح بالوصول بدون مصادقة
+        if self.request.method == 'DELETE':
+            return [IsAuthenticated(), IsPatient()]
+        return [IsAuthenticated()]
 
 
 @api_view(['POST'])
-# @permission_classes([permissions.IsAuthenticated])  # معلق مؤقتاً - تم تعطيل المصادقة
-@permission_classes([AllowAny])  # مؤقتاً للسماح بالوصول بدون مصادقة
+@permission_classes([IsAuthenticated])
 def confirm_appointment(request, appointment_id):
     """Confirm an appointment."""
     try:
@@ -145,8 +137,7 @@ def confirm_appointment(request, appointment_id):
 
 
 @api_view(['POST'])
-# @permission_classes([permissions.IsAuthenticated])  # معلق مؤقتاً - تم تعطيل المصادقة
-@permission_classes([AllowAny])  # مؤقتاً للسماح بالوصول بدون مصادقة
+@permission_classes([IsAuthenticated])
 def complete_appointment(request, appointment_id):
     """Complete an appointment."""
     try:
@@ -192,8 +183,7 @@ def complete_appointment(request, appointment_id):
 
 
 @api_view(['POST'])
-# @permission_classes([permissions.IsAuthenticated])  # معلق مؤقتاً - تم تعطيل المصادقة
-@permission_classes([AllowAny])  # مؤقتاً للسماح بالوصول بدون مصادقة
+@permission_classes([IsAuthenticated])
 def cancel_appointment(request, appointment_id):
     """Cancel an appointment."""
     try:
@@ -244,8 +234,7 @@ def cancel_appointment(request, appointment_id):
 
 
 @api_view(['POST'])
-# @permission_classes([permissions.IsAuthenticated])  # معلق مؤقتاً - تم تعطيل المصادقة
-@permission_classes([AllowAny])  # مؤقتاً للسماح بالوصول بدون مصادقة
+@permission_classes([IsAuthenticated])
 def start_appointment(request, appointment_id):
     """Start an appointment (change status to in_progress)."""
     try:
@@ -288,8 +277,7 @@ def start_appointment(request, appointment_id):
 
 
 @api_view(['POST'])
-# @permission_classes([permissions.IsAuthenticated])  # معلق مؤقتاً - تم تعطيل المصادقة
-@permission_classes([AllowAny])  # مؤقتاً للسماح بالوصول بدون مصادقة
+@permission_classes([IsAuthenticated])
 def mark_no_show(request, appointment_id):
     """Mark an appointment as no show."""
     try:

@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from django.contrib.auth import get_user_model  # authenticate
+from django.contrib.auth import get_user_model, authenticate
 from django.contrib.auth.password_validation import validate_password
 from .models import (
     PatientProfile, StudentProfile, SupervisorProfile,
@@ -8,10 +8,9 @@ from .models import (
 
 User = get_user_model()
 
-"""
-# Authentication Serializers (disabled temporarily)
+# Authentication Serializers
 class LoginSerializer(serializers.Serializer):
-    \"\"\"Serializer to handle user login via email and password.\"\"\"
+    """Serializer to handle user login via email and password."""
 
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, trim_whitespace=False)
@@ -22,22 +21,30 @@ class LoginSerializer(serializers.Serializer):
 
         if not email or not password:
             raise serializers.ValidationError(
-                {\"detail\": \"البريد الإلكتروني وكلمة المرور مطلوبان.\"}
+                {"detail": "البريد الإلكتروني وكلمة المرور مطلوبان."}
             )
 
-        user = authenticate(request=self.context.get('request'), email=email, password=password)
+        user = authenticate(request=self.context.get('request'), username=email, password=password)
+        
+        # If username authentication fails, try email authentication
+        if user is None:
+            try:
+                user_obj = User.objects.get(email=email)
+                user = authenticate(request=self.context.get('request'), username=user_obj.username, password=password)
+            except User.DoesNotExist:
+                pass
 
         if user is None:
-            raise serializers.ValidationError({\"detail\": \"بيانات الدخول غير صحيحة.\"})
+            raise serializers.ValidationError({"detail": "بيانات الدخول غير صحيحة."})
 
         if not user.is_active:
-            raise serializers.ValidationError({\"detail\": \"الحساب غير مفعل. برجاء التواصل مع الدعم.\"})
+            raise serializers.ValidationError({"detail": "الحساب غير مفعل. برجاء التواصل مع الدعم."})
 
         attrs['user'] = user
         return attrs
 
 class LogoutSerializer(serializers.Serializer):
-    \"\"\"Serializer to handle logout by blacklisting refresh token.\"\"\"
+    """Serializer to handle logout by blacklisting refresh token."""
 
     refresh = serializers.CharField()
 
@@ -45,11 +52,10 @@ class LogoutSerializer(serializers.Serializer):
         refresh_token = attrs.get('refresh')
 
         if not refresh_token:
-            raise serializers.ValidationError({\"detail\": \"Token غير موجود.\"})
+            raise serializers.ValidationError({"detail": "Token غير موجود."})
 
         attrs['refresh_token'] = refresh_token
         return attrs
-"""
 
 # Create Serializers
 class PatientCreateSerializer(serializers.ModelSerializer):

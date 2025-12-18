@@ -1,5 +1,5 @@
 from rest_framework import generics, permissions, status
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from django.utils.translation import gettext_lazy as _
@@ -14,8 +14,7 @@ class AIDiagnosisListView(generics.ListAPIView):
     """API view for listing AI diagnoses."""
     
     serializer_class = AIDiagnosisSerializer
-    # permission_classes = [permissions.IsAuthenticated]  # معلق مؤقتاً - تم تعطيل المصادقة
-    permission_classes = [AllowAny]  # مؤقتاً للسماح بالوصول بدون مصادقة
+    permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
         """Get AI diagnoses based on user role."""
@@ -42,13 +41,11 @@ class AIDiagnosisDetailView(generics.RetrieveAPIView):
     
     queryset = AIDiagnosis.objects.all()
     serializer_class = AIDiagnosisSerializer
-    # permission_classes = [permissions.IsAuthenticated]  # معلق مؤقتاً - تم تعطيل المصادقة
-    permission_classes = [AllowAny]  # مؤقتاً للسماح بالوصول بدون مصادقة
+    permission_classes = [IsAuthenticated]
 
 
 @api_view(['POST'])
-# @permission_classes([permissions.IsAuthenticated, IsPatient])  # معلق مؤقتاً - تم تعطيل المصادقة
-@permission_classes([AllowAny])  # مؤقتاً للسماح بالوصول بدون مصادقة
+@permission_classes([IsAuthenticated, IsPatient])
 def analyze_symptoms(request):
     """Analyze symptoms using AI."""
     serializer = AIRequestSerializer(data=request.data)

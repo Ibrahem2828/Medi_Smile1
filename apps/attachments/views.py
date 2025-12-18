@@ -1,5 +1,5 @@
 from rest_framework import generics, permissions, status
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from django.utils.translation import gettext_lazy as _
@@ -13,8 +13,7 @@ class AttachmentListView(generics.ListCreateAPIView):
     """API view for listing and creating attachments."""
     
     serializer_class = AttachmentSerializer
-    # permission_classes = [permissions.IsAuthenticated]  # معلق مؤقتاً - تم تعطيل المصادقة
-    permission_classes = [AllowAny]  # مؤقتاً للسماح بالوصول بدون مصادقة
+    permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
         """Get attachments based on user role and filters."""
@@ -85,16 +84,13 @@ class AttachmentDetailView(generics.RetrieveDestroyAPIView):
     
     queryset = Attachment.objects.all()
     serializer_class = AttachmentSerializer
-    # permission_classes = [permissions.IsAuthenticated]  # معلق مؤقتاً - تم تعطيل المصادقة
-    permission_classes = [AllowAny]  # مؤقتاً للسماح بالوصول بدون مصادقة
+    permission_classes = [IsAuthenticated]
     
     def get_permissions(self):
         """Get permissions based on request method."""
         if self.request.method == 'DELETE':
-            # return [permissions.IsAuthenticated(), IsPatient() | IsStudent() | IsSupervisor()]  # معلق مؤقتاً
-            return [AllowAny()]  # مؤقتاً للسماح بالوصول بدون مصادقة
-        # return [permissions.IsAuthenticated()]  # معلق مؤقتاً
-        return [AllowAny()]  # مؤقتاً للسماح بالوصول بدون مصادقة
+            return [IsAuthenticated(), IsPatient() | IsStudent() | IsSupervisor()]
+        return [IsAuthenticated()]
     
     def get_object(self):
         """Get attachment if user has permission."""
@@ -121,8 +117,7 @@ class AttachmentDetailView(generics.RetrieveDestroyAPIView):
 
 
 @api_view(['GET'])
-# @permission_classes([permissions.IsAuthenticated])  # معلق مؤقتاً - تم تعطيل المصادقة
-@permission_classes([AllowAny])  # مؤقتاً للسماح بالوصول بدون مصادقة
+@permission_classes([IsAuthenticated])
 def download_attachment(request, attachment_id):
     """Download an attachment."""
     try:
@@ -168,8 +163,7 @@ def download_attachment(request, attachment_id):
 
 
 @api_view(['GET'])
-# @permission_classes([permissions.IsAuthenticated])  # معلق مؤقتاً - تم تعطيل المصادقة
-@permission_classes([AllowAny])  # مؤقتاً للسماح بالوصول بدون مصادقة
+@permission_classes([IsAuthenticated])
 def preview_attachment(request, attachment_id):
     """Preview an attachment (for images only)."""
     try:
