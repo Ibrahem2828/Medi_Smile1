@@ -1,321 +1,315 @@
 import os
-import subprocess
 import tarfile
+import subprocess
+import logging
 from datetime import datetime
+from typing import Optional, Dict
+
 from django.conf import settings
 from django.utils import timezone
+
 from .models import Backup
-import logging
 
 logger = logging.getLogger(__name__)
 
 
+# ============================================================
+# Backup Service
+# ============================================================
+
 class BackupService:
-    """خدمة النسخ الاحتياطي"""
-    
-    def __init__(self, storage_type='local', backup_directory=None):
+    """
+    Core service responsible for:
+    - Database backups
+    - Media files backups
+    - Full backups
+    - Restore operations
+    - Cleanup jobs
+
+    Designed to be used by:
+    - API views
+    - Celery tasks
+    - Cron jobs
+    """
+
+    def __init__(
+        self,
+        storage_type: str = Backup.StorageType.LOCAL,
+        backup_directory: Optional[str] = None,
+    ):
         self.storage_type = storage_type
-        self.backup_directory = backup_directory or self._get_default_backup_directory()
-        self._ensure_backup_directory()
-    
-    def _get_default_backup_directory(self):
-        """الحصول على المجلد الافتراضي للنسخ الاحتياطي"""
-        backup_dir = os.path.join(settings.BASE_DIR, 'backups')
-        return backup_dir
-    
-    def _ensure_backup_directory(self):
-        """التأكد من وجود مجلد النسخ الاحتياطي"""
+        self.backup_directory = backup_directory or self._default_backup_directory()
+        self._ensure_directories()
+
+    # --------------------------------------------------------
+    # Directories
+    # --------------------------------------------------------
+
+    def _default_backup_directory(self) -> str:
+        return os.path.join(settings.BASE_DIR, "backups")
+
+    def _ensure_directories(self) -> None:
         os.makedirs(self.backup_directory, exist_ok=True)
-        os.makedirs(os.path.join(self.backup_directory, 'database'), exist_ok=True)
-        os.makedirs(os.path.join(self.backup_directory, 'files'), exist_ok=True)
-    
-    def backup_database(self, backup_instance=None):
-        """إنشاء نسخة احتياطية لقاعدة البيانات"""
+        os.makedirs(os.path.join(self.backup_directory, "database"), exist_ok=True)
+        os.makedirs(os.path.join(self.backup_directory, "files"), exist_ok=True)
+
+    # --------------------------------------------------------
+    # Database Backup
+    # --------------------------------------------------------
+
+    def backup_database(self, backup: Optional[Backup] = None) -> Dict:
+        """
+        Create PostgreSQL database backup using pg_dump.
+        """
         try:
-            db_settings = settings.DATABASES['default']
-            db_name = db_settings['NAME']
-            db_user = db_settings['USER']
-            db_password = db_settings['PASSWORD']
-            db_host = db_settings['HOST']
-            db_port = db_settings['PORT']
-            
-            # إنشاء اسم الملف
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            backup_filename = f"db_backup_{timestamp}.dump"
-            backup_path = os.path.join(self.backup_directory, 'database', backup_filename)
-            
-            # بناء أمر pg_dump
+            db = settings.DATABASES["default"]
+
+            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            filename = f"db_backup_{timestamp}.dump"
+            path = os.path.join(self.backup_directory, "database", filename)
+
             env = os.environ.copy()
-            env['PGPASSWORD'] = db_password
-            
-            pg_dump_cmd = [
-                'pg_dump',
-                '-h', db_host,
-                '-p', str(db_port),
-                '-U', db_user,
-                '-d', db_name,
-                '-F', 'c',  # Custom format (compressed)
-                '-f', backup_path,
+            env["PGPASSWORD"] = db.get("PASSWORD", "")
+
+            command = [
+                "pg_dump",
+                "-h", db.get("HOST") or "localhost",
+                "-p", str(db.get("PORT") or 5432),
+                "-U", db.get("USER"),
+                "-d", db.get("NAME"),
+                "-F", "c",
+                "-f", path,
             ]
-            
-            # تنفيذ النسخ الاحتياطي
-            process = subprocess.run(
-                pg_dump_cmd,
+
+            subprocess.run(
+                command,
                 env=env,
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
             )
-            
-            # الحصول على حجم الملف
-            file_size = os.path.getsize(backup_path) if os.path.exists(backup_path) else 0
-            
-            if backup_instance:
-                backup_instance.database_backup_path = backup_path
-                backup_instance.database_size = file_size
-                backup_instance.save()
-            
-            logger.info(f"Database backup completed: {backup_path}")
-            return {
-                'success': True,
-                'path': backup_path,
-                'size': file_size
-            }
-            
-        except subprocess.CalledProcessError as e:
-            error_msg = f"Database backup failed: {e.stderr}"
-            logger.error(error_msg)
-            
-            if backup_instance:
-                backup_instance.error_message = error_msg
-                backup_instance.status = 'failed'
-                backup_instance.save()
-            
-            return {
-                'success': False,
-                'error': error_msg
-            }
-        except Exception as e:
-            error_msg = f"Database backup error: {str(e)}"
-            logger.error(error_msg)
-            
-            if backup_instance:
-                backup_instance.error_message = error_msg
-                backup_instance.status = 'failed'
-                backup_instance.save()
-            
-            return {
-                'success': False,
-                'error': error_msg
-            }
-    
-    def backup_files(self, backup_instance=None):
-        """إنشاء نسخة احتياطية للملفات"""
+
+            size = os.path.getsize(path)
+
+            if backup:
+                backup.database_backup_path = path
+                backup.database_size = size
+                backup.save(update_fields=["database_backup_path", "database_size"])
+
+            logger.info("Database backup completed: %s", path)
+            return {"success": True, "path": path, "size": size}
+
+        except subprocess.CalledProcessError as exc:
+            error = f"Database backup failed: {exc.stderr}"
+            logger.error(error)
+            self._mark_failed(backup, error)
+            return {"success": False, "error": error}
+
+        except Exception as exc:
+            error = f"Database backup error: {exc}"
+            logger.exception(error)
+            self._mark_failed(backup, error)
+            return {"success": False, "error": error}
+
+    # --------------------------------------------------------
+    # Files Backup
+    # --------------------------------------------------------
+
+    def backup_files(self, backup: Optional[Backup] = None) -> Dict:
+        """
+        Create compressed tar.gz backup of MEDIA_ROOT.
+        """
         try:
             media_root = settings.MEDIA_ROOT
-            
-            if not os.path.exists(media_root):
-                return {
-                    'success': True,
-                    'path': None,
-                    'size': 0,
-                    'message': 'Media directory does not exist'
-                }
-            
-            # إنشاء اسم الملف
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            backup_filename = f"files_backup_{timestamp}.tar.gz"
-            backup_path = os.path.join(self.backup_directory, 'files', backup_filename)
-            
-            # إنشاء ملف tar.gz
-            total_size = 0
-            with tarfile.open(backup_path, 'w:gz') as tar:
-                for root, dirs, files in os.walk(media_root):
+            if not media_root or not os.path.exists(media_root):
+                return {"success": True, "path": None, "size": 0}
+
+            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            filename = f"files_backup_{timestamp}.tar.gz"
+            path = os.path.join(self.backup_directory, "files", filename)
+
+            total_original_size = 0
+
+            with tarfile.open(path, "w:gz") as tar:
+                for root, _, files in os.walk(media_root):
                     for file in files:
-                        file_path = os.path.join(root, file)
-                        arcname = os.path.relpath(file_path, media_root)
-                        tar.add(file_path, arcname=arcname)
-                        total_size += os.path.getsize(file_path)
-            
-            # الحصول على حجم الملف المضغوط
-            compressed_size = os.path.getsize(backup_path) if os.path.exists(backup_path) else 0
-            
-            if backup_instance:
-                backup_instance.files_backup_path = backup_path
-                backup_instance.files_size = compressed_size
-                backup_instance.save()
-            
-            logger.info(f"Files backup completed: {backup_path}")
+                        full_path = os.path.join(root, file)
+                        arcname = os.path.relpath(full_path, media_root)
+                        tar.add(full_path, arcname=arcname)
+                        total_original_size += os.path.getsize(full_path)
+
+            compressed_size = os.path.getsize(path)
+
+            if backup:
+                backup.files_backup_path = path
+                backup.files_size = compressed_size
+                backup.save(update_fields=["files_backup_path", "files_size"])
+
+            logger.info("Files backup completed: %s", path)
             return {
-                'success': True,
-                'path': backup_path,
-                'size': compressed_size,
-                'original_size': total_size
+                "success": True,
+                "path": path,
+                "size": compressed_size,
+                "original_size": total_original_size,
             }
-            
-        except Exception as e:
-            error_msg = f"Files backup error: {str(e)}"
-            logger.error(error_msg)
-            
-            if backup_instance:
-                backup_instance.error_message = error_msg
-                backup_instance.status = 'failed'
-                backup_instance.save()
-            
-            return {
-                'success': False,
-                'error': error_msg
-            }
-    
-    def create_full_backup(self, description=None):
-        """إنشاء نسخة احتياطية كاملة (قاعدة البيانات + الملفات)"""
+
+        except Exception as exc:
+            error = f"Files backup error: {exc}"
+            logger.exception(error)
+            self._mark_failed(backup, error)
+            return {"success": False, "error": error}
+
+    # --------------------------------------------------------
+    # Full Backup
+    # --------------------------------------------------------
+
+    def create_full_backup(
+        self,
+        *,
+        created_by=None,
+        trigger_source=Backup.TriggerSource.MANUAL,
+        description: Optional[str] = None,
+    ) -> Backup:
+        """
+        Execute full backup (database + files).
+        """
+
         backup = Backup.objects.create(
-            backup_type='full',
-            status='in_progress',
+            backup_type=Backup.BackupType.FULL,
+            status=Backup.Status.IN_PROGRESS,
             started_at=timezone.now(),
+            created_by=created_by,
+            trigger_source=trigger_source,
             description=description,
             storage_type=self.storage_type,
-            storage_path=self.backup_directory
+            storage_path=self.backup_directory,
         )
-        
+
         try:
-            # نسخ قاعدة البيانات
             db_result = self.backup_database(backup)
-            if not db_result['success']:
-                backup.status = 'failed'
-                backup.error_message = db_result.get('error', 'Database backup failed')
-                backup.save()
+            if not db_result["success"]:
                 return backup
-            
-            # نسخ الملفات
+
             files_result = self.backup_files(backup)
-            if not files_result['success']:
-                backup.status = 'failed'
-                backup.error_message = files_result.get('error', 'Files backup failed')
-                backup.save()
+            if not files_result["success"]:
                 return backup
-            
-            # تحديث المعلومات النهائية
+
             backup.total_size = backup.database_size + backup.files_size
-            backup.status = 'completed'
+            backup.status = Backup.Status.COMPLETED
             backup.completed_at = timezone.now()
-            backup.save()
-            
-            logger.info(f"Full backup completed: {backup.id}")
+            backup.save(update_fields=["total_size", "status", "completed_at"])
+
+            logger.info("Full backup completed: %s", backup.id)
             return backup
-            
-        except Exception as e:
-            error_msg = f"Full backup error: {str(e)}"
-            logger.error(error_msg)
-            backup.status = 'failed'
-            backup.error_message = error_msg
-            backup.completed_at = timezone.now()
-            backup.save()
+
+        except Exception as exc:
+            error = f"Full backup error: {exc}"
+            logger.exception(error)
+            self._mark_failed(backup, error)
             return backup
-    
-    def restore_database(self, backup_path):
-        """استعادة قاعدة البيانات من نسخة احتياطية"""
+
+    # --------------------------------------------------------
+    # Restore Operations
+    # --------------------------------------------------------
+
+    def restore_database(self, backup_path: str) -> Dict:
         try:
-            db_settings = settings.DATABASES['default']
-            db_name = db_settings['NAME']
-            db_user = db_settings['USER']
-            db_password = db_settings['PASSWORD']
-            db_host = db_settings['HOST']
-            db_port = db_settings['PORT']
-            
+            db = settings.DATABASES["default"]
+
             env = os.environ.copy()
-            env['PGPASSWORD'] = db_password
-            
-            pg_restore_cmd = [
-                'pg_restore',
-                '-h', db_host,
-                '-p', str(db_port),
-                '-U', db_user,
-                '-d', db_name,
-                '-c',  # Clean (drop) existing objects
+            env["PGPASSWORD"] = db.get("PASSWORD", "")
+
+            command = [
+                "pg_restore",
+                "-h", db.get("HOST") or "localhost",
+                "-p", str(db.get("PORT") or 5432),
+                "-U", db.get("USER"),
+                "-d", db.get("NAME"),
+                "-c",
                 backup_path,
             ]
-            
-            process = subprocess.run(
-                pg_restore_cmd,
+
+            subprocess.run(
+                command,
                 env=env,
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
             )
-            
-            logger.info(f"Database restored from: {backup_path}")
-            return {
-                'success': True,
-                'message': 'Database restored successfully'
-            }
-            
-        except Exception as e:
-            error_msg = f"Database restore error: {str(e)}"
-            logger.error(error_msg)
-            return {
-                'success': False,
-                'error': error_msg
-            }
-    
-    def restore_files(self, backup_path, extract_to=None):
-        """استعادة الملفات من نسخة احتياطية"""
+
+            logger.info("Database restored from %s", backup_path)
+            return {"success": True}
+
+        except Exception as exc:
+            error = f"Database restore error: {exc}"
+            logger.exception(error)
+            return {"success": False, "error": error}
+
+    def restore_files(self, backup_path: str, extract_to: Optional[str] = None) -> Dict:
         try:
             extract_to = extract_to or settings.MEDIA_ROOT
-            
-            # التأكد من وجود المجلد
             os.makedirs(extract_to, exist_ok=True)
-            
-            # استخراج الملفات
-            with tarfile.open(backup_path, 'r:gz') as tar:
-                tar.extractall(extract_to)
-            
-            logger.info(f"Files restored from: {backup_path}")
-            return {
-                'success': True,
-                'message': 'Files restored successfully'
-            }
-            
-        except Exception as e:
-            error_msg = f"Files restore error: {str(e)}"
-            logger.error(error_msg)
-            return {
-                'success': False,
-                'error': error_msg
-            }
-    
-    def cleanup_old_backups(self, days_to_keep=30):
-        """حذف النسخ الاحتياطية القديمة (أكثر من عدد محدد من الأيام)"""
-        try:
-            cutoff_date = timezone.now() - timezone.timedelta(days=days_to_keep)
-            old_backups = Backup.objects.filter(
-                created_at__lt=cutoff_date,
-                status='completed'
-            )
-            
-            deleted_count = 0
-            for backup in old_backups:
-                backup.delete()  # سيحذف الملفات تلقائيًا
-                deleted_count += 1
-            
-            logger.info(f"Cleaned up {deleted_count} old backups")
-            return {
-                'success': True,
-                'deleted_count': deleted_count
-            }
-            
-        except Exception as e:
-            error_msg = f"Cleanup error: {str(e)}"
-            logger.error(error_msg)
-            return {
-                'success': False,
-                'error': error_msg
-            }
 
+            with tarfile.open(backup_path, "r:gz") as tar:
+                tar.extractall(extract_to)
+
+            logger.info("Files restored from %s", backup_path)
+            return {"success": True}
+
+        except Exception as exc:
+            error = f"Files restore error: {exc}"
+            logger.exception(error)
+            return {"success": False, "error": error}
+
+    # --------------------------------------------------------
+    # Cleanup
+    # --------------------------------------------------------
+
+    def cleanup_old_backups(self, days_to_keep: int = 30) -> Dict:
+        try:
+            cutoff = timezone.now() - timezone.timedelta(days=days_to_keep)
+            backups = Backup.objects.filter(
+                created_at__lt=cutoff,
+                status=Backup.Status.COMPLETED,
+            )
+
+            count = backups.count()
+            for backup in backups:
+                backup.delete()
+
+            logger.info("Deleted %s old backups", count)
+            return {"success": True, "deleted_count": count}
+
+        except Exception as exc:
+            error = f"Cleanup error: {exc}"
+            logger.exception(error)
+            return {"success": False, "error": error}
+
+    # --------------------------------------------------------
+    # Internal Helpers
+    # --------------------------------------------------------
+
+    def _mark_failed(self, backup: Optional[Backup], error: str) -> None:
+        if not backup:
+            return
+        backup.status = Backup.Status.FAILED
+        backup.error_message = error
+        backup.completed_at = timezone.now()
+        backup.save(
+            update_fields=["status", "error_message", "completed_at"]
+        )
+
+
+# ============================================================
+# Celery / Scheduler Entry Point
+# ============================================================
 
 def create_monthly_backup():
-    """دالة لإنشاء نسخة احتياطية شهرية (يتم استدعاؤها من Celery)"""
+    """
+    Monthly automatic backup (used by Celery / Cron).
+    """
     service = BackupService()
-    backup = service.create_full_backup(description="Monthly automatic backup")
-    return backup
-
+    return service.create_full_backup(
+        trigger_source=Backup.TriggerSource.SCHEDULED,
+        description="Monthly automatic backup",
+    )

@@ -3,18 +3,49 @@ from .views import (
     SupportTicketListView,
     SupportTicketDetailView,
     SupportTicketResponseListView,
-    SupportTicketStatsView
+    SupportTicketStatsView,
 )
 
-app_name = 'support'
+app_name = "support"
 
 urlpatterns = [
-    # Support Tickets
-    path('tickets/', SupportTicketListView.as_view(), name='ticket-list'),
-    path('tickets/<uuid:ticket_id>/', SupportTicketDetailView.as_view(), name='ticket-detail'),
-    path('tickets/<uuid:ticket_id>/responses/', SupportTicketResponseListView.as_view(), name='ticket-responses'),
-    
-    # Statistics (tech support only)
-    path('stats/', SupportTicketStatsView.as_view(), name='ticket-stats'),
-]
 
+    # =========================================================
+    # Support Tickets (Core)
+    # =========================================================
+
+    # List tickets / Create new ticket
+    path(
+        "tickets/",
+        SupportTicketListView.as_view(),
+        name="ticket-list",
+    ),
+
+    # Retrieve / Update ticket (tech support only for update)
+    path(
+        "tickets/<uuid:ticket_id>/",
+        SupportTicketDetailView.as_view(),
+        name="ticket-detail",
+    ),
+
+    # =========================================================
+    # Ticket Responses (Conversation)
+    # =========================================================
+
+    # List responses / Add response to ticket
+    path(
+        "tickets/<uuid:ticket_id>/responses/",
+        SupportTicketResponseListView.as_view(),
+        name="ticket-response-list",
+    ),
+
+    # =========================================================
+    # Analytics & Dashboard (Tech Support)
+    # =========================================================
+
+    path(
+        "analytics/overview/",
+        SupportTicketStatsView.as_view(),
+        name="ticket-stats",
+    ),
+]

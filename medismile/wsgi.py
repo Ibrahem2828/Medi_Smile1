@@ -1,9 +1,14 @@
 """
 WSGI config for medismile project.
 
-It exposes the WSGI callable as a module-level variable named ``application``.
+This module exposes the WSGI callable as a module-level variable named `application`.
 
-For more information on this file, see
+It is used by WSGI servers such as:
+- Gunicorn
+- uWSGI
+- Railway / Heroku-style platforms
+
+Docs:
 https://docs.djangoproject.com/en/5.2/howto/deployment/wsgi/
 """
 
@@ -11,6 +16,14 @@ import os
 
 from django.core.wsgi import get_wsgi_application
 
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'medismile.settings')
 
+# ============================================================
+# Django settings
+# ============================================================
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "medismile.settings")
+
+
+# ============================================================
+# WSGI application
+# ============================================================
 application = get_wsgi_application()

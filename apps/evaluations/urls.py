@@ -1,8 +1,21 @@
-from django.urls import path
-from . import views
+# apps/evaluations/urls.py
+
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+
+from .views import EvaluationViewSet, student_evaluation_statistics
+
+router = DefaultRouter()
+router.register(r"", EvaluationViewSet, basename="evaluations")
 
 urlpatterns = [
-    path('', views.EvaluationListView.as_view(), name='evaluation-list'),
-    path('<uuid:pk>/', views.EvaluationDetailView.as_view(), name='evaluation-detail'),
-    path('students/<uuid:student_id>/average-ratings/', views.student_average_ratings, name='student-average-ratings'),
+    # CRUD + actions (list, retrieve, create, update, submit, finalize)
+    path("", include(router.urls)),
+
+    # Student evaluation statistics
+    path(
+        "students/<uuid:student_id>/statistics/",
+        student_evaluation_statistics,
+        name="student-evaluation-statistics",
+    ),
 ]
