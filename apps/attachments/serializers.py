@@ -1,93 +1,188 @@
+# apps/attachments/serializers.py
+
+from __future__ import annotations
+
+from django.utils.translation import gettext_lazy as _
+from django.db import transaction
+
 from rest_framework import serializers
-from .models import Attachment
+
 from apps.accounts.serializers import UserSerializer
 from medismile.utils.auth import resolve_request_user
 
+from apps.cases.models import CaseSession
+from .models import Attachment
+from .storage_backends import (
+    get_storage_backend,
+    generate_attachment_path,
+)
+
+
+# ============================================================
+# Read Serializer
+# ============================================================
 
 class AttachmentSerializer(serializers.ModelSerializer):
-    """Serializer for attachment data."""
-    
+    """
+    Read-only serializer for attachments.
+    Used by:
+    - patient (read-only)
+    - student
+    - supervisor
+    - admin / IT support
+    """
+
     uploaded_by = UserSerializer(read_only=True)
     file_url = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = Attachment
         fields = [
-            'id', 'file', 'original_filename', 'file_type', 'file_size',
-            'mime_type', 'case_id', 'appointment_id', 'message_id',
-            'content_id', 'uploaded_by', 'is_public', 'created_at', 'file_url'
+            "id",
+            "attachment_type",
+            "file_url",
+            "original_filename",
+            "file_size",
+            "mime_type",
+            "case_session",
+            "uploaded_by",
+            "created_at",
         ]
-        read_only_fields = ['id', 'file_size', 'mime_type', 'created_at']
-    
+        read_only_fields = fields
+
     def get_file_url(self, obj):
-        """Get file URL."""
-        if obj.file:
-            return obj.file.url
-        return None
+        if not obj.file_path:
+            return None
+
+        storage = get_storage_backend()
+        return storage.url(obj.file_path)
 
 
-class AttachmentCreateSerializer(serializers.ModelSerializer):
-    """Serializer for creating an attachment."""
-    
-    class Meta:
-        model = Attachment
-        fields = [
-            'file', 'case_id', 'appointment_id', 'message_id',
-            'content_id', 'is_public'
-        ]
-    
-    def validate(self, data):
-        """Validate attachment data."""
-        file = data.get('file')
-        
-        if not file:
-            raise serializers.ValidationError(("File is required"))
-        
-        # Check file size (limit to 10MB)
-        if file.size > 10 * 1024 * 1024:
-            raise serializers.ValidationError(("File size exceeds 10MB limit"))
-        
-        return data
-    
-    def create(self, validated_data):
-        """Create a new attachment."""
-        file = validated_data.get('file')
-        
-        # Determine file type
-        file_type = 'other'
-        mime_type = file.content_type
-        
-        if mime_type.startswith('image/'):
-            file_type = 'image'
-        elif mime_type.startswith('video/'):
-            file_type = 'video'
-        elif mime_type.startswith('audio/'):
-            file_type = 'audio'
-        elif mime_type in [
-            'application/pdf', 'application/msword', 
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'application/vnd.ms-excel',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'application/vnd.ms-powerpoint',
-            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-            'text/plain'
-        ]:
-            file_type = 'document'
-        
-        # Create attachment
-        request = self.context.get('request')
-        user = resolve_request_user(request) if request else None
+# ============================================================
+# Create Serializer
+# ============================================================
+
+class AttachmentCreateSerializer(serializers.Serializer):
+    """
+    Create attachment (student only).
+
+    Rules:
+    - Must be linked to CaseSession
+    - Only assigned student can upload
+    - Session must NOT be approved
+    """
+
+    file = serializers.FileField()
+    case_session_id = serializers.UUIDField()
+    attachment_type = serializers.ChoiceField(
+        choices=Attachment.AttachmentType.choices
+    )
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        user = resolve_request_user(request)
+
         if not user:
-            raise serializers.ValidationError({'user_id': 'User identification is required'})
-        
-        attachment = Attachment.objects.create(
-            file=file,
+            raise serializers.ValidationError(_("Authentication required."))
+
+        if user.role != "student":
+            raise serializers.ValidationError(_("Only students can upload attachments."))
+
+        file = attrs.get("file")
+        session_id = attrs.get("case_session_id")
+        attachment_type = attrs.get("attachment_type")
+
+        # ----------------------------
+        # File validation
+        # ----------------------------
+        if not file:
+            raise serializers.ValidationError(_("File is required."))
+
+        max_size_mb = 10
+        if file.size > max_size_mb * 1024 * 1024:
+            raise serializers.ValidationError(
+                _(f"File size exceeds {max_size_mb}MB limit.")
+            )
+
+        # ----------------------------
+        # Session validation
+        # ----------------------------
+        try:
+            session = (
+                CaseSession.objects
+                .select_related("case", "student")
+                .get(id=session_id)
+            )
+        except CaseSession.DoesNotExist:
+            raise serializers.ValidationError(
+                {"case_session_id": _("Session not found.")}
+            )
+
+        if session.student != user:
+            raise serializers.ValidationError(
+                _("You are not assigned to this session.")
+            )
+
+        if session.status == CaseSession.Status.APPROVED:
+            raise serializers.ValidationError(
+                _("Attachments cannot be added after session approval.")
+            )
+
+        # ----------------------------
+        # Before / After rules
+        # ----------------------------
+        if attachment_type == Attachment.AttachmentType.BEFORE_IMAGE:
+            exists = Attachment.objects.filter(
+                case_session=session,
+                attachment_type=Attachment.AttachmentType.BEFORE_IMAGE,
+            ).exists()
+            if exists:
+                raise serializers.ValidationError(
+                    _("Before image already exists for this session.")
+                )
+
+        if attachment_type == Attachment.AttachmentType.AFTER_IMAGE:
+            if not Attachment.objects.filter(
+                case_session=session,
+                attachment_type=Attachment.AttachmentType.BEFORE_IMAGE,
+            ).exists():
+                raise serializers.ValidationError(
+                    _("Before image must be uploaded first.")
+                )
+
+        attrs["session"] = session
+        attrs["user"] = user
+        return attrs
+
+    @transaction.atomic
+    def create(self, validated_data):
+        file = validated_data["file"]
+        session = validated_data["session"]
+        user = validated_data["user"]
+        attachment_type = validated_data["attachment_type"]
+
+        # ----------------------------
+        # Storage handling
+        # ----------------------------
+        storage = get_storage_backend()
+        file_path = generate_attachment_path(
             original_filename=file.name,
-            file_type=file_type,
-            file_size=file.size,
-            mime_type=mime_type,
-            uploaded_by=user,
-            **validated_data
+            prefix="attachments/sessions",
         )
-        
+
+        storage.save(file_path, file)
+
+        # ----------------------------
+        # Create attachment record
+        # ----------------------------
+        attachment = Attachment.objects.create(
+            case_session=session,
+            attachment_type=attachment_type,
+            file_path=file_path,
+            original_filename=file.name,
+            file_size=file.size,
+            mime_type=file.content_type,
+            uploaded_by=user,
+        )
+
         return attachment

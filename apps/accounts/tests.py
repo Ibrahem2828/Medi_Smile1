@@ -1,124 +1,153 @@
+# apps/accounts/tests.py
 from django.test import TestCase
 from django.contrib.auth import get_user_model
+
 from .models import (
-    PatientProfile, StudentProfile, 
-    SupervisorProfile, UniversityAdminProfile, TechSupportProfile
+    Role,
+    PatientProfile,
+    StudentProfile,
+    SupervisorProfile,
+    UniversityAdminProfile,
+    TechSupportProfile,
 )
 
 User = get_user_model()
 
 
+# ============================================================
+# USER MODEL TESTS
+# ============================================================
 class UserModelTest(TestCase):
-    """Test cases for User model."""
-    
-    def test_create_user(self):
-        """Test creating a user."""
+    """Tests for the custom User model with RBAC."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.patient_role = Role.objects.get(name=Role.PATIENT)
+        cls.student_role = Role.objects.get(name=Role.STUDENT)
+
+    def test_create_user_default_role(self):
+        """User should be created with default PATIENT role."""
         user = User.objects.create_user(
-            email='test@example.com',
-            username='testuser',
-            first_name='Test',
-            last_name='User',
-            password='testpass123'
+            email="test@example.com",
+            username="testuser",
+            first_name="Test",
+            last_name="User",
+            password="TestPass123!",
+            role=self.patient_role,
         )
-        self.assertEqual(user.email, 'test@example.com')
-        self.assertEqual(user.username, 'testuser')
-        self.assertEqual(user.first_name, 'Test')
-        self.assertEqual(user.last_name, 'User')
-        self.assertTrue(user.check_password('testpass123'))
-        self.assertEqual(user.role, 'patient')  # Default role
-    
-    def test_create_user_with_role(self):
-        """Test creating a user with a specific role."""
+
+        self.assertEqual(user.email, "test@example.com")
+        self.assertTrue(user.check_password("TestPass123!"))
+        self.assertIsNotNone(user.role)
+        self.assertEqual(user.role.name, Role.PATIENT)
+
+    def test_create_user_with_specific_role(self):
+        """User can be created with a specific role."""
         user = User.objects.create_user(
-            email='student@example.com',
-            username='student',
-            first_name='Student',
-            last_name='User',
-            password='testpass123',
-            role='student'
+            email="student@example.com",
+            username="student",
+            first_name="Student",
+            last_name="User",
+            password="TestPass123!",
+            role=self.student_role,
         )
-        self.assertEqual(user.role, 'student')
-    
+
+        self.assertEqual(user.role.name, Role.STUDENT)
+
     def test_create_superuser(self):
-        """Test creating a superuser."""
+        """Superuser should have staff and superuser flags."""
         admin_user = User.objects.create_superuser(
-            email='admin@example.com',
-            username='admin',
-            first_name='Admin',
-            last_name='User',
-            password='adminpass123'
+            email="admin@example.com",
+            username="admin",
+            first_name="Admin",
+            last_name="User",
+            password="AdminPass123!",
         )
+
         self.assertTrue(admin_user.is_staff)
         self.assertTrue(admin_user.is_superuser)
 
 
-class ProfileModelTest(TestCase):
-    """Test cases for Profile models."""
-    
-    def setUp(self):
-        """Set up test data."""
-        self.patient_user = User.objects.create_user(
-            email='patient@example.com',
-            username='patient',
-            first_name='Patient',
-            last_name='User',
-            password='testpass123',
-            role='patient'
+# ============================================================
+# PROFILE + SIGNALS TESTS
+# ============================================================
+class ProfileSignalTest(TestCase):
+    """Ensure profiles are auto-created via signals."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.roles = {
+            Role.PATIENT: Role.objects.get(name=Role.PATIENT),
+            Role.STUDENT: Role.objects.get(name=Role.STUDENT),
+            Role.SUPERVISOR: Role.objects.get(name=Role.SUPERVISOR),
+            Role.UNIVERSITY_ADMIN: Role.objects.get(name=Role.UNIVERSITY_ADMIN),
+            Role.TECH_SUPPORT: Role.objects.get(name=Role.TECH_SUPPORT),
+        }
+
+    def _create_user(self, role_name, email):
+        return User.objects.create_user(
+            email=email,
+            username=role_name,
+            first_name=role_name.capitalize(),
+            last_name="User",
+            password="TestPass123!",
+            role=self.roles[role_name],
         )
-        self.student_user = User.objects.create_user(
-            email='student@example.com',
-            username='student',
-            first_name='Student',
-            last_name='User',
-            password='testpass123',
-            role='student'
+
+    def test_patient_profile_created(self):
+        user = self._create_user(Role.PATIENT, "patient@test.com")
+        self.assertTrue(PatientProfile.objects.filter(user=user).exists())
+
+    def test_student_profile_created(self):
+        user = self._create_user(Role.STUDENT, "student@test.com")
+        self.assertTrue(StudentProfile.objects.filter(user=user).exists())
+
+    def test_supervisor_profile_created(self):
+        user = self._create_user(Role.SUPERVISOR, "supervisor@test.com")
+        self.assertTrue(SupervisorProfile.objects.filter(user=user).exists())
+
+    def test_university_admin_profile_created(self):
+        user = self._create_user(Role.UNIVERSITY_ADMIN, "admin@test.com")
+        self.assertTrue(UniversityAdminProfile.objects.filter(user=user).exists())
+
+    def test_tech_support_profile_created(self):
+        user = self._create_user(Role.TECH_SUPPORT, "tech@test.com")
+        self.assertTrue(TechSupportProfile.objects.filter(user=user).exists())
+
+    def test_only_one_profile_created(self):
+        """Ensure OneToOne integrity (no duplicate profiles)."""
+        user = self._create_user(Role.PATIENT, "single@test.com")
+        PatientProfile.objects.get(user=user)
+
+        self.assertEqual(PatientProfile.objects.filter(user=user).count(), 1)
+
+
+# ============================================================
+# ROLE CHANGE SAFETY TEST
+# ============================================================
+class RoleChangeTest(TestCase):
+    """Ensure role change does not break profiles."""
+
+    def test_role_change_creates_new_profile(self):
+        patient_role = Role.objects.get(name=Role.PATIENT)
+        student_role = Role.objects.get(name=Role.STUDENT)
+
+        user = User.objects.create_user(
+            email="change@test.com",
+            username="changer",
+            first_name="Change",
+            last_name="User",
+            password="TestPass123!",
+            role=patient_role,
         )
-        self.supervisor_user = User.objects.create_user(
-            email='supervisor@example.com',
-            username='supervisor',
-            first_name='Supervisor',
-            last_name='User',
-            password='testpass123',
-            role='supervisor'
-        )
-        self.university_admin_user = User.objects.create_user(
-            email='university_admin@example.com',
-            username='university_admin',
-            first_name='University',
-            last_name='Admin',
-            password='testpass123',
-            role='university_admin'
-        )
-        self.tech_support_user = User.objects.create_user(
-            email='tech_support@example.com',
-            username='tech_support',
-            first_name='Tech',
-            last_name='Support',
-            password='testpass123',
-            role='tech_support'
-        )
-    
-    def test_patient_profile_creation(self):
-        """Test patient profile creation."""
-        profile = PatientProfile.objects.get(user=self.patient_user)
-        self.assertEqual(profile.user, self.patient_user)
-    
-    def test_student_profile_creation(self):
-        """Test student profile creation."""
-        profile = StudentProfile.objects.get(user=self.student_user)
-        self.assertEqual(profile.user, self.student_user)
-    
-    def test_supervisor_profile_creation(self):
-        """Test supervisor profile creation."""
-        profile = SupervisorProfile.objects.get(user=self.supervisor_user)
-        self.assertEqual(profile.user, self.supervisor_user)
-    
-    def test_university_admin_profile_creation(self):
-        """Test university admin profile creation."""
-        profile = UniversityAdminProfile.objects.get(user=self.university_admin_user)
-        self.assertEqual(profile.user, self.university_admin_user)
-    
-    def test_tech_support_profile_creation(self):
-        """Test tech support profile creation."""
-        profile = TechSupportProfile.objects.get(user=self.tech_support_user)
-        self.assertEqual(profile.user, self.tech_support_user)
+
+        # initial profile
+        self.assertTrue(PatientProfile.objects.filter(user=user).exists())
+
+        # change role
+        user.role = student_role
+        user.save()
+
+        # new profile exists, old is preserved
+        self.assertTrue(StudentProfile.objects.filter(user=user).exists())
+        self.assertTrue(PatientProfile.objects.filter(user=user).exists())

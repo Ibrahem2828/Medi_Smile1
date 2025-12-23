@@ -1,12 +1,70 @@
+# apps/appointments/urls.py
+
 from django.urls import path
 from . import views
 
+app_name = "appointments"
+
 urlpatterns = [
-    path('', views.AppointmentListView.as_view(), name='appointment-list'),
-    path('<uuid:pk>/', views.AppointmentDetailView.as_view(), name='appointment-detail'),
-    path('<uuid:appointment_id>/confirm/', views.confirm_appointment, name='confirm-appointment'),
-    path('<uuid:appointment_id>/start/', views.start_appointment, name='start-appointment'),
-    path('<uuid:appointment_id>/complete/', views.complete_appointment, name='complete-appointment'),
-    path('<uuid:appointment_id>/cancel/', views.cancel_appointment, name='cancel-appointment'),
-    path('<uuid:appointment_id>/no-show/', views.mark_no_show, name='mark-no-show'),
+
+    # ============================================================
+    # Appointments (List / Create)
+    # ============================================================
+    # GET  : list appointments (role-scoped)
+    # POST : create appointment (student / supervisor)
+    path(
+        "",
+        views.AppointmentListView.as_view(),
+        name="appointment-list",
+    ),
+
+    # ============================================================
+    # Appointment Detail (Retrieve / Update)
+    # ============================================================
+    # GET    : retrieve appointment
+    # PATCH  : update appointment (role-based)
+    path(
+        "<uuid:pk>/",
+        views.AppointmentDetailView.as_view(),
+        name="appointment-detail",
+    ),
+
+    # ============================================================
+    # Appointment State Actions
+    # ============================================================
+
+    # Patient / Student confirm appointment
+    path(
+        "<uuid:appointment_id>/actions/confirm/",
+        views.confirm_appointment,
+        name="appointment-confirm",
+    ),
+
+    # Student starts appointment
+    path(
+        "<uuid:appointment_id>/actions/start/",
+        views.start_appointment,
+        name="appointment-start",
+    ),
+
+    # Student completes appointment
+    path(
+        "<uuid:appointment_id>/actions/complete/",
+        views.complete_appointment,
+        name="appointment-complete",
+    ),
+
+    # Patient or Student cancels appointment
+    path(
+        "<uuid:appointment_id>/actions/cancel/",
+        views.cancel_appointment,
+        name="appointment-cancel",
+    ),
+
+    # Student marks appointment as no-show
+    path(
+        "<uuid:appointment_id>/actions/no-show/",
+        views.mark_no_show,
+        name="appointment-no-show",
+    ),
 ]

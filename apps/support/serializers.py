@@ -1,123 +1,242 @@
 from rest_framework import serializers
+from django.utils.translation import gettext_lazy as _
+from django.utils import timezone
 from django.contrib.auth import get_user_model
+
 from .models import SupportTicket, SupportTicketResponse
 
 User = get_user_model()
 
 
+# ============================================================
+# Basic User Serializer (Lightweight)
+# ============================================================
+
 class UserBasicSerializer(serializers.ModelSerializer):
-    """Basic user serializer for ticket display."""
+    """
+    Lightweight user serializer for support context.
+    """
+
     full_name = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = User
-        fields = ['id', 'email', 'username', 'first_name', 'last_name', 'full_name', 'role']
+        fields = [
+            "id",
+            "email",
+            "username",
+            "first_name",
+            "last_name",
+            "full_name",
+            "role",
+        ]
         read_only_fields = fields
-    
-    def get_full_name(self, obj):
-        return f"{obj.first_name} {obj.last_name}".strip()
 
+    def get_full_name(self, obj):
+        return (f"{obj.first_name} {obj.last_name}").strip()
+
+
+# ============================================================
+# Support Ticket Response
+# ============================================================
 
 class SupportTicketResponseSerializer(serializers.ModelSerializer):
-    """Serializer for support ticket responses."""
-    user = UserBasicSerializer(read_only=True)
-    
+    """
+    Read-only serializer for ticket responses.
+    """
+
+    author = UserBasicSerializer(read_only=True)
+
     class Meta:
         model = SupportTicketResponse
-        fields = ['id', 'ticket', 'user', 'message', 'is_internal', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'user', 'created_at', 'updated_at']
-
-
-class SupportTicketCreateSerializer(serializers.ModelSerializer):
-    """Serializer for creating a support ticket."""
-    
-    class Meta:
-        model = SupportTicket
-        fields = ['category', 'subject', 'message', 'priority']
-    
-    def create(self, validated_data):
-        user = self.context['request'].user
-        validated_data['user'] = user
-        return super().create(validated_data)
-
-
-class SupportTicketListSerializer(serializers.ModelSerializer):
-    """Serializer for listing support tickets."""
-    user = UserBasicSerializer(read_only=True)
-    assigned_to = UserBasicSerializer(read_only=True)
-    response_count = serializers.SerializerMethodField()
-    
-    class Meta:
-        model = SupportTicket
         fields = [
-            'id', 'user', 'category', 'subject', 'priority', 'status',
-            'assigned_to', 'response_count', 'created_at', 'updated_at', 'resolved_at'
+            "id",
+            "author",
+            "message",
+            "is_internal",
+            "created_at",
+            "updated_at",
         ]
         read_only_fields = fields
-    
-    def get_response_count(self, obj):
-        return obj.responses.count()
-
-
-class SupportTicketDetailSerializer(serializers.ModelSerializer):
-    """Serializer for support ticket details with responses."""
-    user = UserBasicSerializer(read_only=True)
-    assigned_to = UserBasicSerializer(read_only=True)
-    responses = SupportTicketResponseSerializer(many=True, read_only=True)
-    
-    class Meta:
-        model = SupportTicket
-        fields = [
-            'id', 'user', 'category', 'subject', 'message', 'priority',
-            'status', 'assigned_to', 'resolution', 'responses',
-            'created_at', 'updated_at', 'resolved_at'
-        ]
-        read_only_fields = ['id', 'user', 'created_at', 'updated_at']
-
-
-class SupportTicketUpdateSerializer(serializers.ModelSerializer):
-    """Serializer for updating a support ticket (admin/tech support only)."""
-    
-    class Meta:
-        model = SupportTicket
-        fields = ['status', 'priority', 'assigned_to', 'resolution']
-    
-    def update(self, instance, validated_data):
-        # If status is changed to resolved, set resolved_at
-        if 'status' in validated_data:
-            if validated_data['status'] == 'resolved' and instance.status != 'resolved':
-                from django.utils import timezone
-                validated_data['resolved_at'] = timezone.now()
-            elif validated_data['status'] != 'resolved':
-                validated_data['resolved_at'] = None
-        
-        return super().update(instance, validated_data)
 
 
 class SupportTicketResponseCreateSerializer(serializers.ModelSerializer):
-    """Serializer for creating a response to a support ticket."""
-    
+    """
+    Create a response for a support ticket.
+    """
+
     class Meta:
         model = SupportTicketResponse
-        fields = ['message', 'is_internal']
+        fields = [
+            "message",
+            "is_internal",
+        ]
         extra_kwargs = {
-            'is_internal': {'default': False}
+            "is_internal": {"required": False, "default": False},
         }
-    
-    def create(self, validated_data):
-        ticket = self.context['ticket']
-        user = self.context['request'].user
-        validated_data['ticket'] = ticket
-        validated_data['user'] = user
-        
-        # Only tech support can create internal notes
-        if validated_data.get('is_internal', False) and user.role != 'tech_support':
-            validated_data['is_internal'] = False
-        
-        # Update ticket status if it's a new response from tech support
-        if user.role == 'tech_support' and ticket.status == 'open':
-            ticket.status = 'in_progress'
-            ticket.save()
-        
-        return super().create(validated_data)
 
+    def validate(self, attrs):
+        request = self.context.get("request")
+        user = request.user if request else None
+
+        if attrs.get("is_internal") and user.role != "tech_support":
+            raise serializers.ValidationError(
+                _("Only technical support can create internal responses.")
+            )
+
+        return attrs
+
+    def create(self, validated_data):
+        ticket: SupportTicket = self.context["ticket"]
+        request = self.context.get("request")
+        user = request.user
+
+        # Auto-move ticket to in_progress if tech replies first
+        if user.role == "tech_support" and ticket.status == SupportTicket.Status.OPEN:
+            ticket.status = SupportTicket.Status.IN_PROGRESS
+            ticket.save(update_fields=["status"])
+
+        return SupportTicketResponse.objects.create(
+            ticket=ticket,
+            author=user,
+            **validated_data,
+        )
+
+
+# ============================================================
+# Support Ticket – Create
+# ============================================================
+
+class SupportTicketCreateSerializer(serializers.ModelSerializer):
+    """
+    Create support ticket (any authenticated user).
+    """
+
+    class Meta:
+        model = SupportTicket
+        fields = [
+            "category",
+            "subject",
+            "description",
+            "priority",
+        ]
+
+    def create(self, validated_data):
+        request = self.context.get("request")
+        user = request.user
+
+        return SupportTicket.objects.create(
+            created_by=user,
+            **validated_data,
+        )
+
+
+# ============================================================
+# Support Ticket – List
+# ============================================================
+
+class SupportTicketListSerializer(serializers.ModelSerializer):
+    """
+    List view for support tickets.
+    """
+
+    created_by = UserBasicSerializer(read_only=True)
+    assigned_to = UserBasicSerializer(read_only=True)
+    responses_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SupportTicket
+        fields = [
+            "id",
+            "created_by",
+            "category",
+            "subject",
+            "priority",
+            "status",
+            "assigned_to",
+            "responses_count",
+            "created_at",
+            "updated_at",
+            "resolved_at",
+        ]
+        read_only_fields = fields
+
+    def get_responses_count(self, obj):
+        return obj.responses.count()
+
+
+# ============================================================
+# Support Ticket – Detail
+# ============================================================
+
+class SupportTicketDetailSerializer(serializers.ModelSerializer):
+    """
+    Detailed ticket view including responses.
+    """
+
+    created_by = UserBasicSerializer(read_only=True)
+    assigned_to = UserBasicSerializer(read_only=True)
+    responses = SupportTicketResponseSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = SupportTicket
+        fields = [
+            "id",
+            "created_by",
+            "category",
+            "subject",
+            "description",
+            "priority",
+            "status",
+            "assigned_to",
+            "resolution",
+            "responses",
+            "created_at",
+            "updated_at",
+            "resolved_at",
+            "closed_at",
+        ]
+        read_only_fields = fields
+
+
+# ============================================================
+# Support Ticket – Update (Tech Support Only)
+# ============================================================
+
+class SupportTicketUpdateSerializer(serializers.ModelSerializer):
+    """
+    Update support ticket (tech support only).
+    """
+
+    class Meta:
+        model = SupportTicket
+        fields = [
+            "status",
+            "priority",
+            "assigned_to",
+            "resolution",
+        ]
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        user = request.user
+
+        if user.role != "tech_support":
+            raise serializers.ValidationError(
+                _("Only technical support can update tickets.")
+            )
+
+        return attrs
+
+    def update(self, instance, validated_data):
+        new_status = validated_data.get("status")
+
+        # Handle resolved timestamp
+        if new_status == SupportTicket.Status.RESOLVED and instance.status != new_status:
+            validated_data["resolved_at"] = timezone.now()
+
+        # Handle closed timestamp
+        if new_status == SupportTicket.Status.CLOSED and instance.status != new_status:
+            validated_data["closed_at"] = timezone.now()
+
+        return super().update(instance, validated_data)

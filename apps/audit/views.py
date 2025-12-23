@@ -1,97 +1,137 @@
-from rest_framework import generics, permissions
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.response import Response
-from django.utils.translation import gettext_lazy as _
-from django.db.models import Q
+# apps/audit/views.py
 
-from apps.accounts import models
+from datetime import timedelta
+
+from django.db.models import Count, Q
+from django.utils import timezone
+from django.utils.translation import gettext_lazy as _
+
+from rest_framework import generics, status
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from django.contrib.contenttypes.models import ContentType
+
 from .models import AuditLog
 from .serializers import AuditLogSerializer
 from apps.accounts.permissions import IsUniversityAdmin, IsTechSupport
-from rest_framework.permissions import IsAuthenticated
 
 
 class AuditLogListView(generics.ListAPIView):
-    """API view for listing audit logs."""
-    
+    """
+    List audit logs with filtering.
+    Accessible only by University Admin and Tech Support.
+    """
+
     serializer_class = AuditLogSerializer
     permission_classes = [IsAuthenticated, IsUniversityAdmin | IsTechSupport]
-    
+
     def get_queryset(self):
-        """Get audit logs based on filters."""
-        queryset = AuditLog.objects.all()
-        
-        # Filter by user
-        user_id = self.request.query_params.get('user_id')
+        queryset = AuditLog.objects.select_related(
+            "user",
+            "university",
+            "content_type",
+        )
+
+        user = self.request.user
+
+        # -------------------------
+        # University scoping
+        # -------------------------
+        if user.role.name == "university_admin":
+            queryset = queryset.filter(university__in=[
+                getattr(user, "student_profile", None) and user.student_profile.university,
+                getattr(user, "supervisor_profile", None) and user.supervisor_profile.university,
+                getattr(user, "universityadmin_profile", None) and user.universityadmin_profile.university,
+            ])
+
+        # -------------------------
+        # Filters
+        # -------------------------
+        user_id = self.request.query_params.get("user_id")
         if user_id:
             queryset = queryset.filter(user_id=user_id)
-        
-        # Filter by action
-        action = self.request.query_params.get('action')
+
+        action = self.request.query_params.get("action")
         if action:
             queryset = queryset.filter(action=action)
-        
-        # Filter by content type
-        content_type = self.request.query_params.get('content_type')
-        if content_type:
-            from django.contrib.contenttypes.models import ContentType
+
+        content_type_param = self.request.query_params.get("content_type")
+        if content_type_param:
             try:
-                ct = ContentType.objects.get(model=content_type)
+                ct = ContentType.objects.get(model=content_type_param)
                 queryset = queryset.filter(content_type=ct)
             except ContentType.DoesNotExist:
-                pass
-        
-        # Filter by date range
-        start_date = self.request.query_params.get('start_date')
-        end_date = self.request.query_params.get('end_date')
-        
+                queryset = queryset.none()
+
+        start_date = self.request.query_params.get("start_date")
+        end_date = self.request.query_params.get("end_date")
+
         if start_date:
-            queryset = queryset.filter(created_at__gte=start_date)
-        
+            queryset = queryset.filter(created_at__date__gte=start_date)
+
         if end_date:
-            queryset = queryset.filter(created_at__lte=end_date)
-        
-        # Search in description
-        search = self.request.query_params.get('search')
+            queryset = queryset.filter(created_at__date__lte=end_date)
+
+        search = self.request.query_params.get("search")
         if search:
             queryset = queryset.filter(
                 Q(description__icontains=search) |
-                Q(additional_data__icontains=search)
+                Q(metadata__icontains=search)
             )
-        
-        return queryset
+
+        return queryset.order_by("-created_at")
 
 
-@api_view(['GET'])
+@api_view(["GET"])
 @permission_classes([IsAuthenticated, IsUniversityAdmin | IsTechSupport])
 def audit_statistics(request):
-    """Get audit statistics."""
-    # Get count of logs by action
-    action_counts = AuditLog.objects.values('action').annotate(count=models.Count('action'))
-    
-    # Get count of logs by user
-    user_counts = AuditLog.objects.values('user__username').annotate(count=models.Count('user')).order_by('-count')[:10]
-    
-    # Get count of logs by day (last 30 days)
-    from django.utils import timezone
-    from datetime import timedelta
-    import datetime
-    
-    thirty_days_ago = timezone.now() - timedelta(days=30)
+    """
+    Aggregate audit statistics.
+    """
+
+    user = request.user
+    queryset = AuditLog.objects.all()
+
+    # University scoping
+    if user.role.name == "university_admin":
+        queryset = queryset.filter(university=getattr(user.universityadmin_profile, "university", None))
+
+    # -------------------------
+    # Aggregations
+    # -------------------------
+    action_counts = list(
+        queryset.values("action")
+        .annotate(count=Count("action"))
+        .order_by("-count")
+    )
+
+    top_users = list(
+        queryset.values("user__email")
+        .annotate(count=Count("user"))
+        .order_by("-count")[:10]
+    )
+
+    # Daily counts (last 30 days)
+    today = timezone.now().date()
     daily_counts = []
-    
+
     for i in range(30):
-        day = thirty_days_ago + timedelta(days=i)
-        next_day = day + timedelta(days=1)
-        count = AuditLog.objects.filter(created_at__gte=day, created_at__lt=next_day).count()
+        day = today - timedelta(days=i)
+        count = queryset.filter(created_at__date=day).count()
         daily_counts.append({
-            'date': day.strftime('%Y-%m-%d'),
-            'count': count
+            "date": day.strftime("%Y-%m-%d"),
+            "count": count,
         })
-    
-    return Response({
-        'action_counts': list(action_counts),
-        'top_users': list(user_counts),
-        'daily_counts': daily_counts
-    })
+
+    daily_counts.reverse()
+
+    return Response(
+        {
+            "action_counts": action_counts,
+            "top_users": top_users,
+            "daily_activity": daily_counts,
+        },
+        status=status.HTTP_200_OK,
+    )

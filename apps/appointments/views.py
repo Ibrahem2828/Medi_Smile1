@@ -1,313 +1,334 @@
-from rest_framework import generics, permissions, status
+# apps/appointments/views.py
+from __future__ import annotations
+
+from django.db import transaction
+from django.db.models import Q
+from django.shortcuts import get_object_or_404
+from django.utils.translation import gettext_lazy as _
+
+from rest_framework import generics, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
-from django.utils.translation import gettext_lazy as _
-from django.utils import timezone
-from datetime import timedelta
-from .models import Appointment
-from .serializers import AppointmentSerializer, AppointmentCreateSerializer, AppointmentUpdateSerializer
-from apps.accounts.permissions import IsPatient, IsStudent, IsSupervisor
-from apps.notifications.utils import notify_appointment_status_change
-from apps.accounts.models import User
-from medismile.utils.auth import resolve_request_user, require_request_user
-from medismile.utils.auth import resolve_request_user
 
+from medismile.utils.auth import resolve_request_user, require_request_user
+from medismile.utils.pagination import StandardResultsSetPagination
+
+from apps.accounts.permissions import IsStudent
+from apps.notifications.utils import notify_appointment_status_change
+
+from .models import Appointment
+from .serializers import (
+    AppointmentSerializer,
+    AppointmentCreateSerializer,
+    AppointmentUpdateSerializer,
+)
+
+
+# ============================================================
+# Unified API Helpers
+# ============================================================
+
+def api_success(message, data=None, status_code=status.HTTP_200_OK):
+    return Response(
+        {
+            "status": "success",
+            "message": message,
+            "data": data,
+        },
+        status=status_code,
+    )
+
+
+def api_error(message, status_code=status.HTTP_400_BAD_REQUEST):
+    return Response(
+        {
+            "status": "error",
+            "message": message,
+        },
+        status=status_code,
+    )
+
+
+# ============================================================
+# Appointment List & Create
+# ============================================================
 
 class AppointmentListView(generics.ListCreateAPIView):
-    """API view for listing and creating appointments."""
-    
-    serializer_class = AppointmentSerializer
+    """
+    List & create appointments.
+
+    Visibility rules:
+    - Patient: own appointments only
+    - Student: appointments of cases assigned to him
+    - Supervisor: appointments of supervised cases
+    - University admin / IT support: full access
+    """
+
     permission_classes = [IsAuthenticated]
-    
+    pagination_class = StandardResultsSetPagination
+
     def get_queryset(self):
-        """Get appointments based on user role or provided filters."""
         user = resolve_request_user(self.request)
-        status_filter = self.request.query_params.get('status')
-        patient_id = self.request.query_params.get('patient_id')
-        doctor_id = self.request.query_params.get('user_id')
-        case_id = self.request.query_params.get('case_id')
-        
-        if user:
-            if user.role == 'patient':
-                appointments = Appointment.objects.filter(patient=user)
-            elif user.role == 'supervisor':
-                from apps.cases.models import Case
-                supervised_case_ids = Case.objects.filter(supervisor=user).values_list('id', flat=True)
-                appointments = Appointment.objects.filter(case_id__in=supervised_case_ids)
-            elif user.role in ['university_admin', 'tech_support']:
-                appointments = Appointment.objects.all()
-            else:
-                appointments = Appointment.objects.filter(user=user)
+
+        qs = (
+            Appointment.objects
+            .select_related("patient", "student", "supervisor", "case", "created_by")
+            .filter(is_archived=False)
+        )
+
+        if not user:
+            return Appointment.objects.none()
+
+        if user.role == "patient":
+            qs = qs.filter(patient=user)
+
+        elif user.role == "student":
+            qs = qs.filter(student=user)
+
+        elif user.role == "supervisor":
+            qs = qs.filter(supervisor=user)
+
+        elif user.role in ["university_admin", "tech_support"]:
+            pass  # full access
+
         else:
-            appointments = Appointment.objects.all()
-            if patient_id:
-                appointments = appointments.filter(patient_id=patient_id)
-            if doctor_id:
-                appointments = appointments.filter(user_id=doctor_id)
-            if case_id:
-                appointments = appointments.filter(case_id=case_id)
-        
+            return Appointment.objects.none()
+
+        # Optional filters
+        status_filter = self.request.query_params.get("status")
+        case_id = self.request.query_params.get("case_id")
+
         if status_filter:
-            appointments = appointments.filter(status=status_filter)
-        
-        appointments = appointments.filter(is_archived=False)
-        return appointments
-    
+            qs = qs.filter(status=status_filter)
+
+        if case_id:
+            qs = qs.filter(case_id=case_id)
+
+        return qs.order_by("-appointment_date")
+
     def get_serializer_class(self):
-        """Return appropriate serializer class based on request method."""
-        if self.request.method == 'POST':
-            return AppointmentCreateSerializer
-        return AppointmentSerializer
-    
+        return (
+            AppointmentCreateSerializer
+            if self.request.method == "POST"
+            else AppointmentSerializer
+        )
+
+    @transaction.atomic
     def perform_create(self, serializer):
-        """Create a new appointment."""
         serializer.save()
 
 
-class AppointmentDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """API view for retrieving, updating and deleting an appointment."""
-    
-    queryset = Appointment.objects.all()
-    serializer_class = AppointmentSerializer
+# ============================================================
+# Appointment Detail & Update
+# ============================================================
+
+class AppointmentDetailView(generics.RetrieveUpdateAPIView):
+    """
+    Retrieve or update an appointment.
+    Deletion is NOT allowed (medical/legal reasons).
+    """
+
+    queryset = (
+        Appointment.objects
+        .select_related("patient", "student", "supervisor", "case", "created_by")
+        .all()
+    )
     permission_classes = [IsAuthenticated]
-    
+
     def get_serializer_class(self):
-        """Return appropriate serializer class based on request method."""
-        if self.request.method in ['PUT', 'PATCH']:
-            return AppointmentUpdateSerializer
-        return AppointmentSerializer
-    
-    def get_permissions(self):
-        """Get permissions based on request method."""
-        if self.request.method == 'DELETE':
-            return [IsAuthenticated(), IsPatient()]
-        return [IsAuthenticated()]
+        return (
+            AppointmentUpdateSerializer
+            if self.request.method in ["PUT", "PATCH"]
+            else AppointmentSerializer
+        )
+
+    def get_object(self):
+        appointment = super().get_object()
+        user = resolve_request_user(self.request)
+
+        if not user:
+            return appointment
+
+        if user.role == "patient" and appointment.patient != user:
+            raise PermissionError(_("Access denied."))
+
+        if user.role == "student" and appointment.student != user:
+            raise PermissionError(_("Access denied."))
+
+        if user.role == "supervisor" and appointment.supervisor != user:
+            raise PermissionError(_("Access denied."))
+
+        return appointment
 
 
-@api_view(['POST'])
+# ============================================================
+# Appointment State Actions
+# ============================================================
+
+@api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@transaction.atomic
 def confirm_appointment(request, appointment_id):
-    """Confirm an appointment."""
-    try:
-        appointment = Appointment.objects.get(id=appointment_id)
-    except Appointment.DoesNotExist:
-        return Response({
-            'error': _('Appointment not found')
-        }, status=status.HTTP_404_NOT_FOUND)
-    
-    user, error = require_request_user(request, error_key='user_id')
+    """
+    Confirm appointment:
+    - Patient confirms attendance
+    - Student confirms scheduling
+    """
+
+    appointment = get_object_or_404(Appointment, id=appointment_id)
+    user, error = require_request_user(request)
     if error:
         return error
-    
-    # Check if user is authorized to confirm
-    if user.role == 'patient' and appointment.patient != user:
-        return Response({
-            'error': _('You are not authorized to confirm this appointment')
-        }, status=status.HTTP_403_FORBIDDEN)
-    
-    if appointment.user != user:
-        return Response({
-            'error': _('You are not authorized to confirm this appointment')
-        }, status=status.HTTP_403_FORBIDDEN)
-    
-    # Check if appointment is in scheduled status
-    if appointment.status != 'scheduled':
-        return Response({
-            'error': _('Appointment cannot be confirmed')
-        }, status=status.HTTP_400_BAD_REQUEST)
-    
-    # Store old status
+
+    if appointment.status != Appointment.Status.SCHEDULED:
+        return api_error(_("Appointment cannot be confirmed."))
+
+    if user not in {appointment.patient, appointment.student}:
+        return api_error(_("Not authorized."), status.HTTP_403_FORBIDDEN)
+
     old_status = appointment.status
-    
-    # Update appointment status
-    appointment.status = 'confirmed'
-    appointment.save()
-    
-    # Send automatic notification
-    try:
-        notify_appointment_status_change(appointment, old_status, 'confirmed', user)
-    except Exception as e:
-        print(f"Error sending notification: {e}")
-    
-    return Response({
-        'message': _('Appointment confirmed successfully'),
-        'appointment': AppointmentSerializer(appointment).data
-    }, status=status.HTTP_200_OK)
+    appointment.status = Appointment.Status.CONFIRMED
+    appointment.save(update_fields=["status"])
+
+    notify_appointment_status_change(
+        appointment, old_status, appointment.status, user
+    )
+
+    return api_success(
+        _("Appointment confirmed successfully."),
+        AppointmentSerializer(appointment).data,
+    )
 
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def complete_appointment(request, appointment_id):
-    """Complete an appointment."""
-    try:
-        appointment = Appointment.objects.get(id=appointment_id)
-    except Appointment.DoesNotExist:
-        return Response({
-            'error': _('Appointment not found')
-        }, status=status.HTTP_404_NOT_FOUND)
-    
-    user, error = require_request_user(request, error_key='user_id')
-    if error:
-        return error
-    
-    # Check if user is authorized to complete
-    if appointment.user != user:
-        return Response({
-            'error': _('You are not authorized to complete this appointment')
-        }, status=status.HTTP_403_FORBIDDEN)
-    
-    # Check if appointment is in confirmed or in_progress status
-    if appointment.status not in ['confirmed', 'in_progress']:
-        return Response({
-            'error': _('Appointment cannot be completed')
-        }, status=status.HTTP_400_BAD_REQUEST)
-    
-    # Store old status
-    old_status = appointment.status
-    
-    # Update appointment status
-    appointment.status = 'completed'
-    appointment.save()
-    
-    # Send automatic notification
-    try:
-        notify_appointment_status_change(appointment, old_status, 'completed', user)
-    except Exception as e:
-        print(f"Error sending notification: {e}")
-    
-    return Response({
-        'message': _('Appointment completed successfully'),
-        'appointment': AppointmentSerializer(appointment).data
-    }, status=status.HTTP_200_OK)
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def cancel_appointment(request, appointment_id):
-    """Cancel an appointment."""
-    try:
-        appointment = Appointment.objects.get(id=appointment_id)
-    except Appointment.DoesNotExist:
-        return Response({
-            'error': _('Appointment not found')
-        }, status=status.HTTP_404_NOT_FOUND)
-    
-    user, error = require_request_user(request, error_key='user_id')
-    if error:
-        return error
-    
-    # Check if user is authorized to cancel
-    if user.role == 'patient' and appointment.patient != user:
-        return Response({
-            'error': _('You are not authorized to cancel this appointment')
-        }, status=status.HTTP_403_FORBIDDEN)
-    
-    if appointment.user != user:
-        return Response({
-            'error': _('You are not authorized to cancel this appointment')
-        }, status=status.HTTP_403_FORBIDDEN)
-    
-    # Check if appointment is in scheduled or confirmed status
-    if appointment.status not in ['scheduled', 'confirmed']:
-        return Response({
-            'error': _('Appointment cannot be cancelled')
-        }, status=status.HTTP_400_BAD_REQUEST)
-    
-    # Store old status
-    old_status = appointment.status
-    
-    # Update appointment status
-    appointment.status = 'cancelled'
-    appointment.save()
-    
-    # Send automatic notification
-    try:
-        notify_appointment_status_change(appointment, old_status, 'cancelled', user)
-    except Exception as e:
-        print(f"Error sending notification: {e}")
-    
-    return Response({
-        'message': _('Appointment cancelled successfully'),
-        'appointment': AppointmentSerializer(appointment).data
-    }, status=status.HTTP_200_OK)
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@api_view(["POST"])
+@permission_classes([IsAuthenticated, IsStudent])
+@transaction.atomic
 def start_appointment(request, appointment_id):
-    """Start an appointment (change status to in_progress)."""
-    try:
-        appointment = Appointment.objects.get(id=appointment_id)
-    except Appointment.DoesNotExist:
-        return Response({
-            'error': _('Appointment not found')
-        }, status=status.HTTP_404_NOT_FOUND)
-    
-    user, error = require_request_user(request, error_key='user_id')
+    """
+    Start appointment (student only).
+    """
+
+    appointment = get_object_or_404(Appointment, id=appointment_id)
+    user, error = require_request_user(request)
     if error:
         return error
-    
-    # Check if user is authorized to start
-    if appointment.user != user:
-        return Response({
-            'error': _('You are not authorized to start this appointment')
-        }, status=status.HTTP_403_FORBIDDEN)
-    
-    # Check if appointment is in confirmed status
-    if appointment.status != 'confirmed':
-        return Response({
-            'error': _('Appointment must be confirmed before starting')
-        }, status=status.HTTP_400_BAD_REQUEST)
-    
-    # Store old status
+
+    if appointment.student != user:
+        return api_error(_("Not authorized."), status.HTTP_403_FORBIDDEN)
+
+    if appointment.status != Appointment.Status.CONFIRMED:
+        return api_error(_("Appointment must be confirmed first."))
+
+    appointment.status = Appointment.Status.IN_PROGRESS
+    appointment.save(update_fields=["status"])
+
+    return api_success(
+        _("Appointment started."),
+        AppointmentSerializer(appointment).data,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated, IsStudent])
+@transaction.atomic
+def complete_appointment(request, appointment_id):
+    """
+    Complete appointment (student only).
+    """
+
+    appointment = get_object_or_404(Appointment, id=appointment_id)
+    user, error = require_request_user(request)
+    if error:
+        return error
+
+    if appointment.student != user:
+        return api_error(_("Not authorized."), status.HTTP_403_FORBIDDEN)
+
+    if appointment.status not in {
+        Appointment.Status.CONFIRMED,
+        Appointment.Status.IN_PROGRESS,
+    }:
+        return api_error(_("Appointment cannot be completed."))
+
     old_status = appointment.status
-    
-    # Update appointment status
-    appointment.status = 'in_progress'
-    appointment.save()
-    
-    # Note: in_progress doesn't have a notification type, but we can create a custom one if needed
-    # For now, we'll skip notification for in_progress
-    
-    return Response({
-        'message': _('Appointment started successfully'),
-        'appointment': AppointmentSerializer(appointment).data
-    }, status=status.HTTP_200_OK)
+    appointment.status = Appointment.Status.COMPLETED
+    appointment.save(update_fields=["status"])
+
+    notify_appointment_status_change(
+        appointment, old_status, appointment.status, user
+    )
+
+    return api_success(
+        _("Appointment completed."),
+        AppointmentSerializer(appointment).data,
+    )
 
 
-@api_view(['POST'])
+@api_view(["POST"])
 @permission_classes([IsAuthenticated])
-def mark_no_show(request, appointment_id):
-    """Mark an appointment as no show."""
-    try:
-        appointment = Appointment.objects.get(id=appointment_id)
-    except Appointment.DoesNotExist:
-        return Response({
-            'error': _('Appointment not found')
-        }, status=status.HTTP_404_NOT_FOUND)
-    
-    user, error = require_request_user(request, error_key='user_id')
+@transaction.atomic
+def cancel_appointment(request, appointment_id):
+    """
+    Cancel appointment:
+    - Patient (own)
+    - Student (own)
+    """
+
+    appointment = get_object_or_404(Appointment, id=appointment_id)
+    user, error = require_request_user(request)
     if error:
         return error
-    
-    # Check if user is authorized
-    if appointment.user != user:
-        return Response({
-            'error': _('You are not authorized to mark this appointment as no show')
-        }, status=status.HTTP_403_FORBIDDEN)
-    
-    # Check if appointment is in confirmed or in_progress status
-    if appointment.status not in ['confirmed', 'in_progress']:
-        return Response({
-            'error': _('Appointment cannot be marked as no show')
-        }, status=status.HTTP_400_BAD_REQUEST)
-    
-    # Update appointment status
-    appointment.status = 'no_show'
-    appointment.save()
-    
-    return Response({
-        'message': _('Appointment marked as no show successfully'),
-        'appointment': AppointmentSerializer(appointment).data
-    }, status=status.HTTP_200_OK)
+
+    if user not in {appointment.patient, appointment.student}:
+        return api_error(_("Not authorized."), status.HTTP_403_FORBIDDEN)
+
+    if appointment.status not in {
+        Appointment.Status.SCHEDULED,
+        Appointment.Status.CONFIRMED,
+    }:
+        return api_error(_("Appointment cannot be cancelled."))
+
+    old_status = appointment.status
+    appointment.status = Appointment.Status.CANCELLED
+    appointment.save(update_fields=["status"])
+
+    notify_appointment_status_change(
+        appointment, old_status, appointment.status, user
+    )
+
+    return api_success(
+        _("Appointment cancelled."),
+        AppointmentSerializer(appointment).data,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated, IsStudent])
+@transaction.atomic
+def mark_no_show(request, appointment_id):
+    """
+    Mark appointment as no-show (student only).
+    """
+
+    appointment = get_object_or_404(Appointment, id=appointment_id)
+    user, error = require_request_user(request)
+    if error:
+        return error
+
+    if appointment.student != user:
+        return api_error(_("Not authorized."), status.HTTP_403_FORBIDDEN)
+
+    if appointment.status not in {
+        Appointment.Status.CONFIRMED,
+        Appointment.Status.IN_PROGRESS,
+    }:
+        return api_error(_("Invalid appointment status."))
+
+    appointment.status = Appointment.Status.NO_SHOW
+    appointment.save(update_fields=["status"])
+
+    return api_success(
+        _("Appointment marked as no-show."),
+        AppointmentSerializer(appointment).data,
+    )
