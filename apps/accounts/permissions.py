@@ -1,7 +1,40 @@
-# apps/accounts/permissions.py
 from rest_framework.permissions import BasePermission, SAFE_METHODS
+from django.core.exceptions import ImproperlyConfigured
 
 from .models import Role
+
+
+# ============================================================
+# Helpers
+# ============================================================
+def get_user_university(user):
+    """
+    Safely extract user's university from profile.
+    Returns None if not applicable.
+    """
+    if not user or not user.is_authenticated:
+        return None
+
+    profile_map = {
+        Role.STUDENT: "studentprofile_profile",
+        Role.SUPERVISOR: "supervisorprofile_profile",
+        Role.UNIVERSITY_ADMIN: "universityadminprofile_profile",
+    }
+
+    attr = profile_map.get(user.role.name)
+    if not attr:
+        return None
+
+    profile = getattr(user, attr, None)
+    return getattr(profile, "university", None) if profile else None
+
+
+def get_object_university(obj):
+    """
+    Extract university from object.
+    Object must expose `university` directly.
+    """
+    return getattr(obj, "university", None)
 
 
 # ============================================================
@@ -9,7 +42,7 @@ from .models import Role
 # ============================================================
 class BaseRolePermission(BasePermission):
     """
-    Base class for role-based permissions.
+    Base RBAC permission.
     Child classes must define `allowed_roles`.
     """
 
@@ -17,6 +50,7 @@ class BaseRolePermission(BasePermission):
 
     def has_permission(self, request, view):
         user = request.user
+
         if not user or not user.is_authenticated:
             return False
 
@@ -54,19 +88,19 @@ class IsTechSupport(BaseRolePermission):
 # ============================================================
 class IsSystemAdmin(BasePermission):
     """
-    High-privilege permission.
-    Used for critical internal APIs (e.g. create IT Support).
+    High privilege permission.
+    Reserved for critical system-level operations.
     """
 
     def has_permission(self, request, view):
         user = request.user
+
         if not user or not user.is_authenticated:
             return False
 
         if not user.role or user.role.name != Role.TECH_SUPPORT:
             return False
 
-        # Extra hardening layer
         return bool(user.is_staff or user.is_superuser)
 
 
@@ -75,42 +109,8 @@ class IsSystemAdmin(BasePermission):
 # ============================================================
 class IsOwner(BasePermission):
     """
-    Allows access only to the owner of the object.
-    The object must have a `user` attribute.
-    """
-
-    def has_object_permission(self, request, view, obj):
-        if not request.user or not request.user.is_authenticated:
-            return False
-
-        return hasattr(obj, "user") and obj.user == request.user
-
-
-class IsOwnerOrReadOnly(BasePermission):
-    """
-    Read-only for everyone with permission,
-    write access only for the owner.
-    """
-
-    def has_object_permission(self, request, view, obj):
-        if request.method in SAFE_METHODS:
-            return True
-
-        if not request.user or not request.user.is_authenticated:
-            return False
-
-        return hasattr(obj, "user") and obj.user == request.user
-
-
-# ============================================================
-# University-scoped Permission
-# ============================================================
-class IsSameUniversity(BasePermission):
-    """
-    Allows access only if the requesting user and the object
-    belong to the same university.
-
-    Object must have `university` attribute or a related profile with it.
+    Object-level permission.
+    Object must have a `user` attribute.
     """
 
     def has_object_permission(self, request, view, obj):
@@ -118,22 +118,59 @@ class IsSameUniversity(BasePermission):
         if not user or not user.is_authenticated:
             return False
 
-        # Extract user's university via profile (student / supervisor / admin)
-        user_university = None
+        if not hasattr(obj, "user"):
+            raise ImproperlyConfigured(
+                "IsOwner requires object with `user` attribute."
+            )
 
-        for attr in (
-            "studentprofile_profile",
-            "supervisorprofile_profile",
-            "universityadminprofile_profile",
-        ):
-            profile = getattr(user, attr, None)
-            if profile and hasattr(profile, "university"):
-                user_university = profile.university
-                break
+        return obj.user == user
 
+
+class IsOwnerOrReadOnly(BasePermission):
+    """
+    Read-only for everyone with access.
+    Write access only for owner.
+    """
+
+    def has_object_permission(self, request, view, obj):
+        if request.method in SAFE_METHODS:
+            return True
+
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+
+        if not hasattr(obj, "user"):
+            raise ImproperlyConfigured(
+                "IsOwnerOrReadOnly requires object with `user` attribute."
+            )
+
+        return obj.user == user
+
+
+# ============================================================
+# University-scoped Permission
+# ============================================================
+class IsSameUniversity(BasePermission):
+    """
+    Object-level permission.
+    Allows access only if user and object
+    belong to the same university.
+    """
+
+    def has_object_permission(self, request, view, obj):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+
+        user_university = get_user_university(user)
         if not user_university:
             return False
 
-        # Check object's university
-        obj_university = getattr(obj, "university", None)
-        return obj_university == user_university
+        obj_university = get_object_university(obj)
+        if not obj_university:
+            raise ImproperlyConfigured(
+                "IsSameUniversity requires object with `university` attribute."
+            )
+
+        return user_university == obj_university

@@ -1,9 +1,9 @@
-# accounts/models.py
 import uuid
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.conf import settings
 from django.utils.translation import gettext_lazy as _
+from django.core.exceptions import ValidationError
 
 
 # ============================================================
@@ -12,8 +12,6 @@ from django.utils.translation import gettext_lazy as _
 class Role(models.Model):
     """
     Central Role model for RBAC.
-    This replaces hard-coded role strings while keeping
-    the same role names used across the system.
     """
 
     PATIENT = "patient"
@@ -38,7 +36,6 @@ class Role(models.Model):
         verbose_name=_("Role Name"),
     )
     description = models.TextField(blank=True, null=True)
-
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -55,14 +52,13 @@ class Role(models.Model):
 # ============================================================
 class User(AbstractUser):
     """
-    Custom user model with UUID primary key and Role-based access control.
+    Custom user model with UUID PK and RBAC via Role FK.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
     email = models.EmailField(_("email address"), unique=True)
 
-    # 🔑 RBAC: Role as FK instead of CharField
     role = models.ForeignKey(
         Role,
         on_delete=models.PROTECT,
@@ -75,7 +71,6 @@ class User(AbstractUser):
         blank=True,
         null=True,
         verbose_name=_("FCM Token"),
-        help_text=_("Firebase Cloud Messaging token for push notifications"),
     )
 
     created_by = models.ForeignKey(
@@ -85,35 +80,27 @@ class User(AbstractUser):
         blank=True,
         related_name="created_users",
         verbose_name=_("Created By"),
-        help_text=_("User who created this account (for audit purposes)"),
     )
 
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name=_("Created At"))
-    updated_at = models.DateTimeField(auto_now=True, verbose_name=_("Updated At"))
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
-    is_active = models.BooleanField(default=True, verbose_name=_("Is Active"))
+    is_active = models.BooleanField(default=True)
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = ["username", "first_name", "last_name"]
 
-    # حل تضارب العلاقات العكسية
+    # Resolve reverse relation conflicts
     groups = models.ManyToManyField(
         "auth.Group",
-        verbose_name=_("groups"),
         blank=True,
-        help_text=_(
-            "The groups this user belongs to. A user will get all permissions "
-            "granted to each of their groups."
-        ),
         related_name="custom_user_groups",
         related_query_name="custom_user",
     )
 
     user_permissions = models.ManyToManyField(
         "auth.Permission",
-        verbose_name=_("user permissions"),
         blank=True,
-        help_text=_("Specific permissions for this user."),
         related_name="custom_user_permissions",
         related_query_name="custom_user",
     )
@@ -122,6 +109,12 @@ class User(AbstractUser):
         db_table = "users"
         verbose_name = _("User")
         verbose_name_plural = _("Users")
+
+    def clean(self):
+        super().clean()
+
+        if not self.role:
+            raise ValidationError(_("User must have a role."))
 
     def __str__(self):
         return self.email
@@ -132,8 +125,8 @@ class User(AbstractUser):
 # ============================================================
 class Profile(models.Model):
     """
-    Base profile model with common fields.
-    Profiles hold data only – permissions are handled by Role.
+    Base abstract profile.
+    Profiles store data only – permissions come from Role.
     """
 
     GENDER_CHOICES = (
@@ -146,7 +139,6 @@ class Profile(models.Model):
         on_delete=models.CASCADE,
         primary_key=True,
         related_name="%(class)s_profile",
-        verbose_name=_("User"),
     )
 
     phone_number = models.CharField(max_length=20, blank=True, null=True)
@@ -165,12 +157,16 @@ class Profile(models.Model):
     class Meta:
         abstract = True
 
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.user.first_name} {self.user.last_name}"
 
 
 # ============================================================
-# Role-specific Profiles
+# Patient Profile
 # ============================================================
 class PatientProfile(Profile):
     medical_history = models.TextField(blank=True, null=True)
@@ -181,10 +177,16 @@ class PatientProfile(Profile):
 
     class Meta:
         db_table = "patient_profiles"
-        verbose_name = _("Patient Profile")
-        verbose_name_plural = _("Patient Profiles")
+
+    def clean(self):
+        super().clean()
+        if self.user.role.name != Role.PATIENT:
+            raise ValidationError(_("PatientProfile requires PATIENT role."))
 
 
+# ============================================================
+# Student Profile
+# ============================================================
 class StudentProfile(Profile):
     university = models.ForeignKey(
         "universities.University",
@@ -199,10 +201,18 @@ class StudentProfile(Profile):
 
     class Meta:
         db_table = "student_profiles"
-        verbose_name = _("Student Profile")
-        verbose_name_plural = _("Student Profiles")
+
+    def clean(self):
+        super().clean()
+        if self.user.role.name != Role.STUDENT:
+            raise ValidationError(_("StudentProfile requires STUDENT role."))
+        if not self.university:
+            raise ValidationError(_("Student must be linked to a university."))
 
 
+# ============================================================
+# Supervisor Profile
+# ============================================================
 class SupervisorProfile(Profile):
     university = models.ForeignKey(
         "universities.University",
@@ -216,10 +226,18 @@ class SupervisorProfile(Profile):
 
     class Meta:
         db_table = "supervisor_profiles"
-        verbose_name = _("Supervisor Profile")
-        verbose_name_plural = _("Supervisor Profiles")
+
+    def clean(self):
+        super().clean()
+        if self.user.role.name != Role.SUPERVISOR:
+            raise ValidationError(_("SupervisorProfile requires SUPERVISOR role."))
+        if not self.university:
+            raise ValidationError(_("Supervisor must be linked to a university."))
 
 
+# ============================================================
+# University Admin Profile
+# ============================================================
 class UniversityAdminProfile(Profile):
     university = models.ForeignKey(
         "universities.University",
@@ -232,15 +250,26 @@ class UniversityAdminProfile(Profile):
 
     class Meta:
         db_table = "university_admin_profiles"
-        verbose_name = _("University Admin Profile")
-        verbose_name_plural = _("University Admin Profiles")
+
+    def clean(self):
+        super().clean()
+        if self.user.role.name != Role.UNIVERSITY_ADMIN:
+            raise ValidationError(_("UniversityAdminProfile requires UNIVERSITY_ADMIN role."))
+        if not self.university:
+            raise ValidationError(_("University Admin must be linked to a university."))
 
 
+# ============================================================
+# Tech Support Profile
+# ============================================================
 class TechSupportProfile(Profile):
     department = models.CharField(max_length=100, blank=True, null=True)
     position = models.CharField(max_length=100, blank=True, null=True)
 
     class Meta:
         db_table = "tech_support_profiles"
-        verbose_name = _("Tech Support Profile")
-        verbose_name_plural = _("Tech Support Profiles")
+
+    def clean(self):
+        super().clean()
+        if self.user.role.name != Role.TECH_SUPPORT:
+            raise ValidationError(_("TechSupportProfile requires TECH_SUPPORT role."))

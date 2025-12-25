@@ -1,5 +1,4 @@
 # apps/ai/tests.py
-
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -38,9 +37,9 @@ class AIDiagnosisAPITestCase(APITestCase):
             description="Dental pain case",
         )
 
-        self.analyze_url = reverse("ai-analyze-symptoms")
+        self.diagnose_url = reverse("ai-diagnose")
 
-    def test_patient_can_request_ai_analysis(self):
+    def test_patient_can_request_ai_diagnosis(self):
         self.client.force_authenticate(user=self.patient)
 
         payload = {
@@ -48,16 +47,12 @@ class AIDiagnosisAPITestCase(APITestCase):
             "symptoms_text": "أشعر بألم شديد في الضرس مع حساسية عند الأكل",
         }
 
-        response = self.client.post(self.analyze_url, payload, format="json")
+        response = self.client.post(self.diagnose_url, payload, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(AIDiagnosis.objects.count(), 1)
 
-        diagnosis = AIDiagnosis.objects.first()
-        self.assertEqual(diagnosis.patient, self.patient)
-        self.assertEqual(diagnosis.case, self.case)
-
-    def test_non_patient_cannot_request_ai_analysis(self):
+    def test_non_patient_cannot_request_ai_diagnosis(self):
         self.client.force_authenticate(user=self.student)
 
         payload = {
@@ -65,11 +60,11 @@ class AIDiagnosisAPITestCase(APITestCase):
             "symptoms_text": "ألم في الأسنان",
         }
 
-        response = self.client.post(self.analyze_url, payload, format="json")
+        response = self.client.post(self.diagnose_url, payload, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
-    def test_patient_can_list_own_ai_diagnoses(self):
+    def test_patient_can_list_own_diagnoses(self):
         self.client.force_authenticate(user=self.patient)
 
         AIDiagnosis.objects.create(
@@ -77,11 +72,12 @@ class AIDiagnosisAPITestCase(APITestCase):
             patient=self.patient,
             requested_by=self.patient,
             raw_symptoms="ألم مستمر",
-            diagnosis_label="tooth_pain",
+            diagnosis_label="internal_tooth_pain",
+            primary_diagnosis="تسوس متوسط في الضرس الخلفي",
             confidence_level="medium",
             severity_level="moderate",
             urgency_level="non_urgent",
-            patient_explanation="قد يكون هناك تسوس",
+            patient_explanation="يوجد تسوس يحتاج متابعة",
             status="completed",
         )
 

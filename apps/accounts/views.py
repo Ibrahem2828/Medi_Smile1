@@ -1,12 +1,12 @@
-# apps/accounts/views.py
 from django.contrib.auth.models import update_last_login
-from django.core.exceptions import ValidationError
 from django.shortcuts import get_object_or_404
+from django.core.exceptions import ObjectDoesNotExist
 
 from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.exceptions import PermissionDenied, ValidationError as DRFValidationError
 
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -57,7 +57,6 @@ from .permissions import (
     IsOwnerOrReadOnly,
 )
 
-
 # ============================================================
 # Unified API Response
 # ============================================================
@@ -75,6 +74,25 @@ class APIResponse:
             {"status": "error", "message": message, "errors": errors},
             status=status_code,
         )
+
+
+# ============================================================
+# Helpers (Scoped Access)
+# ============================================================
+def _get_university_admin_university(request):
+    """
+    Returns the University instance for University Admin user.
+    Raises PermissionDenied if not properly linked.
+    """
+    try:
+        profile = request.user.universityadminprofile_profile
+    except ObjectDoesNotExist:
+        raise PermissionDenied("حساب إدارة الجامعة غير مكتمل (لا يوجد ملف UniversityAdminProfile).")
+
+    if not profile.university:
+        raise PermissionDenied("حساب إدارة الجامعة غير مرتبط بجامعة. يرجى ربط الحساب بجامعة أولاً.")
+
+    return profile.university
 
 
 # ============================================================
@@ -122,14 +140,32 @@ class LogoutView(APIView):
 # PATIENT
 # ============================================================
 class PatientCreateView(generics.CreateAPIView):
+    """
+    Patient self-registration.
+    """
     serializer_class = PatientCreateSerializer
     permission_classes = [AllowAny]
 
+    def perform_create(self, serializer):
+        user = serializer.save()
+
+        # Ensure profile exists (and validated by model clean/save)
+        PatientProfile.objects.create(user=user)
+
 
 class PatientListView(generics.ListAPIView):
+    """
+    Tech Support can view all patients.
+    University Admin can view patients (read-only) scoped by their university,
+    BUT patients are not university-scoped in your current schema.
+    Therefore:
+    - If you do not have a direct relation patient->university, we allow:
+      Tech Support only (default safe).
+    - If you later add scoping (via cases), implement it there, not here.
+    """
     queryset = PatientProfile.objects.select_related("user")
     serializer_class = PatientListSerializer
-    permission_classes = [IsAuthenticated, IsUniversityAdmin | IsTechSupport]
+    permission_classes = [IsAuthenticated, IsTechSupport]
 
 
 class PatientDetailView(generics.RetrieveAPIView):
@@ -144,9 +180,7 @@ class PatientUpdateView(generics.UpdateAPIView):
     permission_classes = [IsAuthenticated, IsPatient, IsOwnerOrReadOnly]
 
     def get_object(self):
-        return get_object_or_404(
-            PatientProfile, user=self.request.user
-        )
+        return get_object_or_404(PatientProfile, user=self.request.user)
 
 
 # ============================================================
@@ -156,17 +190,51 @@ class StudentCreateView(generics.CreateAPIView):
     serializer_class = StudentCreateSerializer
     permission_classes = [IsAuthenticated, IsUniversityAdmin]
 
+    def perform_create(self, serializer):
+        """
+        University Admin creates student INSIDE their university scope.
+        We enforce university at profile level (not from request payload).
+        """
+        university = _get_university_admin_university(self.request)
+
+        user = serializer.save()
+
+        # Create profile and enforce university scope
+        StudentProfile.objects.create(user=user, university=university)
+
 
 class StudentListView(generics.ListAPIView):
-    queryset = StudentProfile.objects.select_related("user", "university")
     serializer_class = StudentListSerializer
     permission_classes = [IsAuthenticated, IsUniversityAdmin]
 
+    def get_queryset(self):
+        university = _get_university_admin_university(self.request)
+        return StudentProfile.objects.select_related("user", "university").filter(university=university)
+
 
 class StudentDetailView(generics.RetrieveAPIView):
-    queryset = StudentProfile.objects.select_related("user", "university")
     serializer_class = StudentDetailSerializer
     permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        """
+        - Student can view self.
+        - University Admin can view only within scope.
+        - Tech Support can view all if needed later (not enabled here).
+        """
+        user = self.request.user
+
+        base_qs = StudentProfile.objects.select_related("user", "university")
+
+        if user.role.name == Role.STUDENT:
+            return base_qs.filter(user=user)
+
+        if user.role.name == Role.UNIVERSITY_ADMIN:
+            university = _get_university_admin_university(self.request)
+            return base_qs.filter(university=university)
+
+        # Default: deny by empty queryset (safe)
+        return base_qs.none()
 
 
 class StudentUpdateView(generics.UpdateAPIView):
@@ -184,17 +252,38 @@ class SupervisorCreateView(generics.CreateAPIView):
     serializer_class = SupervisorCreateSerializer
     permission_classes = [IsAuthenticated, IsUniversityAdmin]
 
+    def perform_create(self, serializer):
+        university = _get_university_admin_university(self.request)
+
+        user = serializer.save()
+        SupervisorProfile.objects.create(user=user, university=university)
+
 
 class SupervisorListView(generics.ListAPIView):
-    queryset = SupervisorProfile.objects.select_related("user", "university")
     serializer_class = SupervisorListSerializer
     permission_classes = [IsAuthenticated, IsUniversityAdmin]
 
+    def get_queryset(self):
+        university = _get_university_admin_university(self.request)
+        return SupervisorProfile.objects.select_related("user", "university").filter(university=university)
+
 
 class SupervisorDetailView(generics.RetrieveAPIView):
-    queryset = SupervisorProfile.objects.select_related("user", "university")
     serializer_class = SupervisorDetailSerializer
     permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        base_qs = SupervisorProfile.objects.select_related("user", "university")
+
+        if user.role.name == Role.SUPERVISOR:
+            return base_qs.filter(user=user)
+
+        if user.role.name == Role.UNIVERSITY_ADMIN:
+            university = _get_university_admin_university(self.request)
+            return base_qs.filter(university=university)
+
+        return base_qs.none()
 
 
 class SupervisorUpdateView(generics.UpdateAPIView):
@@ -209,8 +298,19 @@ class SupervisorUpdateView(generics.UpdateAPIView):
 # UNIVERSITY ADMIN
 # ============================================================
 class UniversityAdminCreateView(generics.CreateAPIView):
+    """
+    IT Support creates University Admin users.
+    IMPORTANT:
+    - You MUST attach a university in a later step (or in another endpoint).
+    - In this file we only create the user + profile.
+    """
     serializer_class = UniversityAdminCreateSerializer
-    permission_classes = [IsSystemAdmin]
+    permission_classes = [IsAuthenticated, IsTechSupport]
+
+    def perform_create(self, serializer):
+        user = serializer.save()
+        # Profile is created but university must be set somewhere (universities app workflow)
+        UniversityAdminProfile.objects.create(user=user)
 
 
 class UniversityAdminListView(generics.ListAPIView):
@@ -220,9 +320,20 @@ class UniversityAdminListView(generics.ListAPIView):
 
 
 class UniversityAdminDetailView(generics.RetrieveAPIView):
-    queryset = UniversityAdminProfile.objects.select_related("user", "university")
     serializer_class = UniversityAdminDetailSerializer
     permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        base_qs = UniversityAdminProfile.objects.select_related("user", "university")
+
+        if user.role.name == Role.UNIVERSITY_ADMIN:
+            return base_qs.filter(user=user)
+
+        if user.role.name == Role.TECH_SUPPORT:
+            return base_qs
+
+        return base_qs.none()
 
 
 class UniversityAdminUpdateView(generics.UpdateAPIView):
@@ -240,9 +351,14 @@ class TechSupportCreateView(generics.CreateAPIView):
     """
     🔐 Internal System API
     Only System Admin can create IT Support users
+    (SystemAdmin = TechSupport with is_staff/is_superuser).
     """
     serializer_class = TechSupportCreateSerializer
-    permission_classes = [IsSystemAdmin]
+    permission_classes = [IsAuthenticated, IsSystemAdmin]
+
+    def perform_create(self, serializer):
+        user = serializer.save()
+        TechSupportProfile.objects.create(user=user)
 
 
 class TechSupportListView(generics.ListAPIView):

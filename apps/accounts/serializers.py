@@ -1,7 +1,7 @@
-# apps/accounts/serializers.py
 from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.db import transaction
+from django.core.exceptions import ObjectDoesNotExist
 
 from rest_framework import serializers
 
@@ -34,10 +34,14 @@ class LoginSerializer(serializers.Serializer):
         )
 
         if not user:
-            raise serializers.ValidationError({"detail": "بيانات الدخول غير صحيحة."})
+            raise serializers.ValidationError(
+                {"detail": "بيانات الدخول غير صحيحة."}
+            )
 
         if not user.is_active:
-            raise serializers.ValidationError({"detail": "الحساب غير مفعل."})
+            raise serializers.ValidationError(
+                {"detail": "الحساب غير مفعل."}
+            )
 
         attrs["user"] = user
         return attrs
@@ -51,30 +55,67 @@ class LogoutSerializer(serializers.Serializer):
 # BASE USER CREATE SERIALIZER
 # ============================================================
 class BaseUserCreateSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, validators=[validate_password])
+    """
+    Base serializer for controlled user creation.
+    Role is enforced internally – never from request.
+    """
+
+    password = serializers.CharField(
+        write_only=True,
+        validators=[validate_password],
+    )
     password_confirm = serializers.CharField(write_only=True)
 
-    role_name: str = None  # must be defined in child
+    role_name: str = None  # MUST be defined in subclasses
 
     class Meta:
         model = User
-        fields = ("username", "email", "first_name", "last_name", "password", "password_confirm")
+        fields = (
+            "username",
+            "email",
+            "first_name",
+            "last_name",
+            "password",
+            "password_confirm",
+        )
 
     def validate(self, attrs):
         if attrs["password"] != attrs["password_confirm"]:
-            raise serializers.ValidationError({"password": "Passwords do not match."})
+            raise serializers.ValidationError(
+                {"password": "Passwords do not match."}
+            )
         return attrs
+
+    def validate_role(self):
+        if not self.role_name:
+            raise serializers.ValidationError(
+                "Internal error: role_name not defined."
+            )
+
+        try:
+            return Role.objects.get(name=self.role_name)
+        except Role.DoesNotExist:
+            raise serializers.ValidationError(
+                f"Role `{self.role_name}` does not exist."
+            )
 
     @transaction.atomic
     def create(self, validated_data):
         validated_data.pop("password_confirm")
         password = validated_data.pop("password")
 
-        role = Role.objects.get(name=self.role_name)
+        role = self.validate_role()
 
         user = User(**validated_data)
         user.role = role
         user.set_password(password)
+
+        # Audit support
+        request = self.context.get("request")
+        if request and request.user.is_authenticated:
+            user.created_by = request.user
+
+        user.full_clean()
         user.save()
 
         return user
@@ -107,7 +148,7 @@ class TechSupportCreateSerializer(BaseUserCreateSerializer):
 
 
 # ============================================================
-# LIST SERIALIZERS
+# BASE PROFILE LIST SERIALIZER
 # ============================================================
 class BaseProfileListSerializer(serializers.ModelSerializer):
     user_id = serializers.UUIDField(source="user.id", read_only=True)
@@ -117,7 +158,13 @@ class BaseProfileListSerializer(serializers.ModelSerializer):
     last_name = serializers.CharField(source="user.last_name", read_only=True)
     role = serializers.CharField(source="user.role.name", read_only=True)
 
+    class Meta:
+        abstract = True
 
+
+# ============================================================
+# LIST SERIALIZERS
+# ============================================================
 class PatientListSerializer(BaseProfileListSerializer):
     class Meta:
         model = PatientProfile
@@ -125,7 +172,9 @@ class PatientListSerializer(BaseProfileListSerializer):
 
 
 class StudentListSerializer(BaseProfileListSerializer):
-    university_name = serializers.CharField(source="university.name", read_only=True)
+    university_name = serializers.CharField(
+        source="university.name", read_only=True
+    )
 
     class Meta:
         model = StudentProfile
@@ -133,7 +182,9 @@ class StudentListSerializer(BaseProfileListSerializer):
 
 
 class SupervisorListSerializer(BaseProfileListSerializer):
-    university_name = serializers.CharField(source="university.name", read_only=True)
+    university_name = serializers.CharField(
+        source="university.name", read_only=True
+    )
 
     class Meta:
         model = SupervisorProfile
@@ -141,7 +192,9 @@ class SupervisorListSerializer(BaseProfileListSerializer):
 
 
 class UniversityAdminListSerializer(BaseProfileListSerializer):
-    university_name = serializers.CharField(source="university.name", read_only=True)
+    university_name = serializers.CharField(
+        source="university.name", read_only=True
+    )
 
     class Meta:
         model = UniversityAdminProfile
@@ -155,7 +208,7 @@ class TechSupportListSerializer(BaseProfileListSerializer):
 
 
 # ============================================================
-# DETAIL SERIALIZERS
+# BASE PROFILE DETAIL SERIALIZER
 # ============================================================
 class BaseProfileDetailSerializer(serializers.ModelSerializer):
     user_id = serializers.UUIDField(source="user.id", read_only=True)
@@ -163,10 +216,20 @@ class BaseProfileDetailSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source="user.username", read_only=True)
     role = serializers.CharField(source="user.role.name", read_only=True)
     is_active = serializers.BooleanField(source="user.is_active", read_only=True)
-    date_joined = serializers.DateTimeField(source="user.date_joined", read_only=True)
-    last_login = serializers.DateTimeField(source="user.last_login", read_only=True)
+    date_joined = serializers.DateTimeField(
+        source="user.date_joined", read_only=True
+    )
+    last_login = serializers.DateTimeField(
+        source="user.last_login", read_only=True
+    )
+
+    class Meta:
+        abstract = True
 
 
+# ============================================================
+# DETAIL SERIALIZERS
+# ============================================================
 class PatientDetailSerializer(BaseProfileDetailSerializer):
     class Meta:
         model = PatientProfile
@@ -174,7 +237,9 @@ class PatientDetailSerializer(BaseProfileDetailSerializer):
 
 
 class StudentDetailSerializer(BaseProfileDetailSerializer):
-    university_name = serializers.CharField(source="university.name", read_only=True)
+    university_name = serializers.CharField(
+        source="university.name", read_only=True
+    )
 
     class Meta:
         model = StudentProfile
@@ -182,7 +247,9 @@ class StudentDetailSerializer(BaseProfileDetailSerializer):
 
 
 class SupervisorDetailSerializer(BaseProfileDetailSerializer):
-    university_name = serializers.CharField(source="university.name", read_only=True)
+    university_name = serializers.CharField(
+        source="university.name", read_only=True
+    )
 
     class Meta:
         model = SupervisorProfile
@@ -190,7 +257,9 @@ class SupervisorDetailSerializer(BaseProfileDetailSerializer):
 
 
 class UniversityAdminDetailSerializer(BaseProfileDetailSerializer):
-    university_name = serializers.CharField(source="university.name", read_only=True)
+    university_name = serializers.CharField(
+        source="university.name", read_only=True
+    )
 
     class Meta:
         model = UniversityAdminProfile
@@ -237,7 +306,7 @@ class TechSupportUpdateSerializer(serializers.ModelSerializer):
 
 
 # ============================================================
-# USER SERIALIZER (GENERIC)
+# USER SERIALIZER (GENERIC / READ-ONLY)
 # ============================================================
 class UserSerializer(serializers.ModelSerializer):
     role = serializers.CharField(source="role.name", read_only=True)

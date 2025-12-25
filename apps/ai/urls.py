@@ -1,21 +1,22 @@
-# apps/ai/urls.py
-
 from django.urls import path
+
 from .views import (
     AIDiagnosisListView,
     AIDiagnosisDetailView,
-    analyze_symptoms,
+    create_ai_diagnosis,
 )
 
 urlpatterns = [
     # =====================================================
-    # AI Diagnoses
+    # AI Diagnosis Endpoints
     # =====================================================
+
     path(
         "diagnoses/",
         AIDiagnosisListView.as_view(),
         name="ai-diagnosis-list",
     ),
+
     path(
         "diagnoses/<uuid:pk>/",
         AIDiagnosisDetailView.as_view(),
@@ -23,11 +24,12 @@ urlpatterns = [
     ),
 
     # =====================================================
-    # AI Analysis
+    # AI Diagnosis Creation (Patient Only)
     # =====================================================
+
     path(
-        "analyze/",
-        analyze_symptoms,
-        name="ai-analyze-symptoms",
+        "diagnose/",
+        create_ai_diagnosis,
+        name="ai-diagnose",
     ),
 ]

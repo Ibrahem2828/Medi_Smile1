@@ -209,7 +209,7 @@ SIMPLE_JWT = {
 }
 
 
-AI_ENGINE_URL = "https://medismile-ai-production.up.railway.app/analyze/symptoms"
+# AI_ENGINE_URL = "https://medismile-ai-production.up.railway.app/analyze/symptoms"
 
 
 # ============================================================

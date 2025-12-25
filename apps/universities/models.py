@@ -1,10 +1,12 @@
-# apps/universities/models.py
-
 import uuid
 from django.db import models
 from django.utils.translation import gettext_lazy as _
+from django.core.exceptions import ValidationError
 
 
+# ============================================================
+# University
+# ============================================================
 class University(models.Model):
     """
     Core University model.
@@ -27,51 +29,14 @@ class University(models.Model):
         help_text=_("Abbreviated name (e.g. HU, DENT-UNI)"),
     )
 
-    description = models.TextField(
-        blank=True,
-        null=True,
-        verbose_name=_("Description"),
-    )
+    description = models.TextField(blank=True, null=True)
+    address = models.CharField(max_length=255, blank=True, null=True)
+    city = models.CharField(max_length=100, blank=True, null=True)
+    country = models.CharField(max_length=100, blank=True, null=True)
 
-    address = models.CharField(
-        max_length=255,
-        blank=True,
-        null=True,
-        verbose_name=_("Address"),
-    )
-
-    city = models.CharField(
-        max_length=100,
-        blank=True,
-        null=True,
-        verbose_name=_("City"),
-    )
-
-    country = models.CharField(
-        max_length=100,
-        blank=True,
-        null=True,
-        verbose_name=_("Country"),
-    )
-
-    website = models.URLField(
-        blank=True,
-        null=True,
-        verbose_name=_("Website"),
-    )
-
-    email = models.EmailField(
-        blank=True,
-        null=True,
-        verbose_name=_("Official Email"),
-    )
-
-    phone = models.CharField(
-        max_length=30,
-        blank=True,
-        null=True,
-        verbose_name=_("Phone"),
-    )
+    website = models.URLField(blank=True, null=True)
+    email = models.EmailField(blank=True, null=True)
+    phone = models.CharField(max_length=30, blank=True, null=True)
 
     logo = models.ImageField(
         upload_to="universities/logos/",
@@ -80,26 +45,28 @@ class University(models.Model):
         verbose_name=_("Logo"),
     )
 
-    is_active = models.BooleanField(
-        default=True,
-        verbose_name=_("Is Active"),
-    )
+    is_active = models.BooleanField(default=True)
 
-    created_at = models.DateTimeField(
-        auto_now_add=True,
-        verbose_name=_("Created At"),
-    )
-
-    updated_at = models.DateTimeField(
-        auto_now=True,
-        verbose_name=_("Updated At"),
-    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "universities"
         verbose_name = _("University")
         verbose_name_plural = _("Universities")
         ordering = ["name"]
+
+    def clean(self):
+        super().clean()
+
+        if self.short_name and len(self.short_name) < 2:
+            raise ValidationError(
+                {"short_name": _("Short name must be at least 2 characters.")}
+            )
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.name
@@ -108,7 +75,6 @@ class University(models.Model):
 # ============================================================
 # Faculty / Department
 # ============================================================
-
 class Faculty(models.Model):
     """
     Faculty or College within a university
@@ -129,11 +95,7 @@ class Faculty(models.Model):
         verbose_name=_("Faculty Name"),
     )
 
-    description = models.TextField(
-        blank=True,
-        null=True,
-        verbose_name=_("Description"),
-    )
+    description = models.TextField(blank=True, null=True)
 
     is_active = models.BooleanField(default=True)
 
@@ -146,14 +108,25 @@ class Faculty(models.Model):
         unique_together = ("university", "name")
         ordering = ["name"]
 
+    def clean(self):
+        super().clean()
+
+        if not self.university.is_active:
+            raise ValidationError(
+                _("Cannot add faculty to an inactive university.")
+            )
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.name} - {self.university.name}"
 
 
 # ============================================================
-# Academic Program (replaces generic Course)
+# Academic Program
 # ============================================================
-
 class AcademicProgram(models.Model):
     """
     Academic program (e.g. Bachelor of Dental Surgery).
@@ -185,34 +158,18 @@ class AcademicProgram(models.Model):
         verbose_name=_("Faculty"),
     )
 
-    name = models.CharField(
-        max_length=255,
-        verbose_name=_("Program Name"),
-    )
-
-    code = models.CharField(
-        max_length=50,
-        verbose_name=_("Program Code"),
-    )
+    name = models.CharField(max_length=255)
+    code = models.CharField(max_length=50)
 
     level = models.CharField(
         max_length=20,
         choices=LEVEL_CHOICES,
         default="bachelor",
-        verbose_name=_("Level"),
     )
 
-    duration_years = models.PositiveIntegerField(
-        default=4,
-        verbose_name=_("Duration (Years)"),
-    )
+    duration_years = models.PositiveIntegerField(default=4)
 
-    description = models.TextField(
-        blank=True,
-        null=True,
-        verbose_name=_("Description"),
-    )
-
+    description = models.TextField(blank=True, null=True)
     is_active = models.BooleanField(default=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -224,17 +181,34 @@ class AcademicProgram(models.Model):
         unique_together = ("university", "code")
         ordering = ["name"]
 
+    def clean(self):
+        super().clean()
+
+        if self.faculty and self.faculty.university != self.university:
+            raise ValidationError(
+                _("Faculty must belong to the same university as the program.")
+            )
+
+        if self.duration_years <= 0:
+            raise ValidationError(
+                _("Program duration must be greater than zero.")
+            )
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.name} ({self.code})"
 
 
 # ============================================================
-# Academic Year / Term
+# Academic Year
 # ============================================================
-
 class AcademicYear(models.Model):
     """
     Academic year scope (e.g. 2024 / 2025).
+    Only ONE active academic year per university.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -265,6 +239,31 @@ class AcademicYear(models.Model):
         verbose_name_plural = _("Academic Years")
         unique_together = ("university", "name")
         ordering = ["-start_date"]
+
+    def clean(self):
+        super().clean()
+
+        if self.start_date >= self.end_date:
+            raise ValidationError(
+                _("Academic year start date must be before end date.")
+            )
+
+        if self.is_active:
+            qs = AcademicYear.objects.filter(
+                university=self.university,
+                is_active=True,
+            )
+            if self.pk:
+                qs = qs.exclude(pk=self.pk)
+
+            if qs.exists():
+                raise ValidationError(
+                    _("Only one active academic year is allowed per university.")
+                )
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.name} - {self.university.name}"

@@ -1,5 +1,4 @@
 # apps/ai/admin.py
-
 from django.contrib import admin
 from django.utils.translation import gettext_lazy as _
 
@@ -17,7 +16,7 @@ class AIDiagnosisAdmin(admin.ModelAdmin):
         "created_at",
         "patient",
         "case",
-        "diagnosis_label",
+        "primary_diagnosis",
         "confidence_level",
         "severity_level",
         "urgency_level",
@@ -34,9 +33,9 @@ class AIDiagnosisAdmin(admin.ModelAdmin):
 
     search_fields = (
         "patient__email",
+        "primary_diagnosis",
         "diagnosis_label",
         "raw_symptoms",
-        "normalized_symptoms",
     )
 
     readonly_fields = (
@@ -47,11 +46,14 @@ class AIDiagnosisAdmin(admin.ModelAdmin):
         "raw_symptoms",
         "normalized_symptoms",
         "diagnosis_label",
+        "primary_diagnosis",
+        "detected_findings",
+        "patient_explanation",
+        "report_text",
+        "recommendations",
         "confidence_level",
         "severity_level",
         "urgency_level",
-        "patient_explanation",
-        "recommendations",
         "ai_metadata",
         "status",
         "reviewed_by",
@@ -73,19 +75,30 @@ class AIDiagnosisAdmin(admin.ModelAdmin):
                 "normalized_symptoms",
             )
         }),
-        (_("AI Output (Technical)"), {
+        (_("Diagnosis Summary"), {
             "fields": (
-                "diagnosis_label",
+                "primary_diagnosis",
                 "confidence_level",
                 "severity_level",
                 "urgency_level",
-                "ai_metadata",
             )
         }),
-        (_("Patient Explanation"), {
+        (_("Detected Findings"), {
+            "fields": (
+                "detected_findings",
+            )
+        }),
+        (_("Patient Report"), {
             "fields": (
                 "patient_explanation",
+                "report_text",
                 "recommendations",
+            )
+        }),
+        (_("Technical Metadata"), {
+            "fields": (
+                "diagnosis_label",
+                "ai_metadata",
             )
         }),
         (_("Lifecycle"), {
@@ -101,9 +114,7 @@ class AIDiagnosisAdmin(admin.ModelAdmin):
     ordering = ("-created_at",)
 
     def has_add_permission(self, request):
-        # AI diagnoses are created programmatically only
-        return False
+        return False  # Created programmatically only
 
     def has_delete_permission(self, request, obj=None):
-        # Preserve medical audit trail
-        return False
+        return False  # Preserve audit trail
