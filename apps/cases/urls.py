@@ -1,78 +1,55 @@
+# apps/cases/urls.py
 from django.urls import path
-from . import views
 
-app_name = "cases"
+from .views import (
+    CaseListCreateView,
+    CaseDetailView,
+    CaseAssignmentRequestCreateView,
+    CaseSessionListView,
+    CaseSessionCreateView,
+    CaseSessionReviewView,
+)
 
 urlpatterns = [
-
-    # ============================================================
+    # =====================================================
     # Cases
-    # ============================================================
-
-    # List cases (role-based) / Create case
+    # =====================================================
     path(
         "",
-        views.CaseListView.as_view(),
-        name="case-list",
+        CaseListCreateView.as_view(),
+        name="case-list-create",
     ),
-
-    # Retrieve / Update single case
     path(
         "<uuid:pk>/",
-        views.CaseDetailView.as_view(),
+        CaseDetailView.as_view(),
         name="case-detail",
     ),
 
-    # ============================================================
-    # Assignment Requests (Case → Student → Supervisor)
-    # ============================================================
-
-    # List assignment requests:
-    # - student: own requests
-    # - supervisor: requests for supervised cases
-    # - admin / IT: all
-    #
-    # Create request (student only)
+    # =====================================================
+    # Assignment Requests
+    # =====================================================
     path(
-        "assignment-requests/",
-        views.CaseAssignmentRequestListView.as_view(),
-        name="assignment-request-list",
+        "<uuid:pk>/assignment-requests/",
+        CaseAssignmentRequestCreateView.as_view(),
+        name="case-assignment-request-create",
     ),
 
-    # Supervisor:
-    # Retrieve / Accept / Reject assignment request
-    path(
-        "assignment-requests/<uuid:pk>/",
-        views.CaseAssignmentRequestDetailView.as_view(),
-        name="assignment-request-detail",
-    ),
-
-    # ============================================================
-    # Treatment Sessions (per Case)
-    # ============================================================
-
-    # List sessions for a case / Create session (student)
+    # =====================================================
+    # Sessions
+    # =====================================================
     path(
         "<uuid:case_id>/sessions/",
-        views.CaseSessionListCreateView.as_view(),
-        name="case-session-list-create",
+        CaseSessionListView.as_view(),
+        name="case-session-list",
     ),
-
-    # Supervisor reviews a session
+    path(
+        "<uuid:case_id>/sessions/create/",
+        CaseSessionCreateView.as_view(),
+        name="case-session-create",
+    ),
     path(
         "sessions/<uuid:pk>/review/",
-        views.CaseSessionReviewView.as_view(),
+        CaseSessionReviewView.as_view(),
         name="case-session-review",
-    ),
-
-    # ============================================================
-    # Legacy APIs (Backward Compatibility)
-    # ============================================================
-
-    # Student requests assignment (legacy endpoint)
-    path(
-        "<uuid:case_id>/assignments/request/",
-        views.request_case_assignment,
-        name="case-request-assignment-legacy",
     ),
 ]

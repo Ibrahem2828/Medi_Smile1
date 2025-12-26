@@ -1,21 +1,9 @@
 # apps/appointments/views.py
-from __future__ import annotations
-
-from django.db import transaction
-from django.db.models import Q
-from django.shortcuts import get_object_or_404
-from django.utils.translation import gettext_lazy as _
-
-from rest_framework import generics, status
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework import generics
 from rest_framework.response import Response
+from rest_framework.exceptions import PermissionDenied
 
-from medismile.utils.auth import resolve_request_user, require_request_user
-from medismile.utils.pagination import StandardResultsSetPagination
-
-from apps.accounts.permissions import IsStudent
-from apps.notifications.utils import notify_appointment_status_change
+from apps.accounts.models import Role
 
 from .models import Appointment
 from .serializers import (
@@ -23,312 +11,148 @@ from .serializers import (
     AppointmentCreateSerializer,
     AppointmentUpdateSerializer,
 )
-
-
-# ============================================================
-# Unified API Helpers
-# ============================================================
-
-def api_success(message, data=None, status_code=status.HTTP_200_OK):
-    return Response(
-        {
-            "status": "success",
-            "message": message,
-            "data": data,
-        },
-        status=status_code,
-    )
-
-
-def api_error(message, status_code=status.HTTP_400_BAD_REQUEST):
-    return Response(
-        {
-            "status": "error",
-            "message": message,
-        },
-        status=status_code,
-    )
+from .permissions import (
+    IsAuthenticatedAndActive,
+    CanViewAppointment,
+    CanCreateAppointment,
+    CanUpdateAppointment,
+)
 
 
 # ============================================================
 # Appointment List & Create
 # ============================================================
-
-class AppointmentListView(generics.ListCreateAPIView):
+class AppointmentListCreateView(generics.ListCreateAPIView):
     """
-    List & create appointments.
+    List & Create Appointments.
 
-    Visibility rules:
-    - Patient: own appointments only
-    - Student: appointments of cases assigned to him
-    - Supervisor: appointments of supervised cases
-    - University admin / IT support: full access
+    READ:
+    - Patient        → sees only his own appointments (read-only)
+    - Student        → sees appointments for his assigned cases
+    - Supervisor     → sees appointments under his supervision
+    - UniversityAdmin→ sees appointments within his university (read-only)
+    - TechSupport    → sees all appointments (system-wide archive)
+
+    CREATE:
+    - Student        → primary creator (normal workflow)
+    - Supervisor     → exceptional creator (academic oversight)
+
+    Notes:
+    - Patient CANNOT create appointments
+    - All permission validation is enforced in:
+        - permissions.py
+        - serializers.py
     """
 
-    permission_classes = [IsAuthenticated]
-    pagination_class = StandardResultsSetPagination
+    permission_classes = [IsAuthenticatedAndActive]
 
     def get_queryset(self):
-        user = resolve_request_user(self.request)
+        """
+        Return appointments scoped by user role.
 
-        qs = (
-            Appointment.objects
-            .select_related("patient", "student", "supervisor", "case", "created_by")
-            .filter(is_archived=False)
+        This ensures:
+        - No cross-university leakage
+        - No cross-patient leakage
+        - Full audit visibility for IT Support
+        """
+        user = self.request.user
+        role = user.role.name
+
+        base_qs = Appointment.objects.select_related(
+            "case",
+            "patient",
+            "student",
+            "supervisor",
+            "case__university",
         )
 
-        if not user:
-            return Appointment.objects.none()
+        if role == Role.TECH_SUPPORT:
+            # System-wide archive access
+            return base_qs
 
-        if user.role == "patient":
-            qs = qs.filter(patient=user)
+        if role == Role.PATIENT:
+            # Patient sees only his appointments
+            return base_qs.filter(patient=user)
 
-        elif user.role == "student":
-            qs = qs.filter(student=user)
+        if role == Role.STUDENT:
+            # Student sees appointments he manages
+            return base_qs.filter(student=user)
 
-        elif user.role == "supervisor":
-            qs = qs.filter(supervisor=user)
+        if role == Role.SUPERVISOR:
+            # Supervisor sees appointments under supervision
+            return base_qs.filter(supervisor=user)
 
-        elif user.role in ["university_admin", "tech_support"]:
-            pass  # full access
+        if role == Role.UNIVERSITY_ADMIN:
+            # University admin sees appointments within his university
+            university = user.universityadminprofile_profile.university
+            return base_qs.filter(case__university=university)
 
-        else:
-            return Appointment.objects.none()
-
-        # Optional filters
-        status_filter = self.request.query_params.get("status")
-        case_id = self.request.query_params.get("case_id")
-
-        if status_filter:
-            qs = qs.filter(status=status_filter)
-
-        if case_id:
-            qs = qs.filter(case_id=case_id)
-
-        return qs.order_by("-appointment_date")
+        # Fallback: no access
+        return Appointment.objects.none()
 
     def get_serializer_class(self):
-        return (
-            AppointmentCreateSerializer
-            if self.request.method == "POST"
-            else AppointmentSerializer
-        )
+        """
+        Dynamically select serializer.
 
-    @transaction.atomic
+        - POST  → creation rules
+        - GET   → read-only representation
+        """
+        if self.request.method == "POST":
+            return AppointmentCreateSerializer
+        return AppointmentSerializer
+
     def perform_create(self, serializer):
-        serializer.save()
+        """
+        Create appointment.
+
+        Business rules enforced in:
+        - AppointmentCreateSerializer.validate()
+        - Appointment.clean()
+
+        Future hooks:
+        - Notification scheduling (patient / student / supervisor)
+        - Audit logging
+        """
+        serializer.save(context={"request": self.request})
 
 
 # ============================================================
 # Appointment Detail & Update
 # ============================================================
-
 class AppointmentDetailView(generics.RetrieveUpdateAPIView):
     """
-    Retrieve or update an appointment.
-    Deletion is NOT allowed (medical/legal reasons).
+    Retrieve & Update Appointment.
+
+    READ:
+    - Controlled via CanViewAppointment
+
+    UPDATE:
+    - Student    → can update date / notes / limited status
+    - Supervisor → can update status only
+    - Patient    → NO updates allowed
+    - Admin/IT   → NO medical updates allowed
+
+    Final states (completed/cancelled/no-show) are immutable.
     """
 
-    queryset = (
-        Appointment.objects
-        .select_related("patient", "student", "supervisor", "case", "created_by")
-        .all()
+    queryset = Appointment.objects.select_related(
+        "case",
+        "patient",
+        "student",
+        "supervisor",
+        "case__university",
     )
-    permission_classes = [IsAuthenticated]
+
+    permission_classes = [
+        IsAuthenticatedAndActive,
+        CanViewAppointment,
+        CanUpdateAppointment,
+    ]
 
     def get_serializer_class(self):
-        return (
-            AppointmentUpdateSerializer
-            if self.request.method in ["PUT", "PATCH"]
-            else AppointmentSerializer
-        )
-
-    def get_object(self):
-        appointment = super().get_object()
-        user = resolve_request_user(self.request)
-
-        if not user:
-            return appointment
-
-        if user.role == "patient" and appointment.patient != user:
-            raise PermissionError(_("Access denied."))
-
-        if user.role == "student" and appointment.student != user:
-            raise PermissionError(_("Access denied."))
-
-        if user.role == "supervisor" and appointment.supervisor != user:
-            raise PermissionError(_("Access denied."))
-
-        return appointment
-
-
-# ============================================================
-# Appointment State Actions
-# ============================================================
-
-@api_view(["POST"])
-@permission_classes([IsAuthenticated])
-@transaction.atomic
-def confirm_appointment(request, appointment_id):
-    """
-    Confirm appointment:
-    - Patient confirms attendance
-    - Student confirms scheduling
-    """
-
-    appointment = get_object_or_404(Appointment, id=appointment_id)
-    user, error = require_request_user(request)
-    if error:
-        return error
-
-    if appointment.status != Appointment.Status.SCHEDULED:
-        return api_error(_("Appointment cannot be confirmed."))
-
-    if user not in {appointment.patient, appointment.student}:
-        return api_error(_("Not authorized."), status.HTTP_403_FORBIDDEN)
-
-    old_status = appointment.status
-    appointment.status = Appointment.Status.CONFIRMED
-    appointment.save(update_fields=["status"])
-
-    notify_appointment_status_change(
-        appointment, old_status, appointment.status, user
-    )
-
-    return api_success(
-        _("Appointment confirmed successfully."),
-        AppointmentSerializer(appointment).data,
-    )
-
-
-@api_view(["POST"])
-@permission_classes([IsAuthenticated, IsStudent])
-@transaction.atomic
-def start_appointment(request, appointment_id):
-    """
-    Start appointment (student only).
-    """
-
-    appointment = get_object_or_404(Appointment, id=appointment_id)
-    user, error = require_request_user(request)
-    if error:
-        return error
-
-    if appointment.student != user:
-        return api_error(_("Not authorized."), status.HTTP_403_FORBIDDEN)
-
-    if appointment.status != Appointment.Status.CONFIRMED:
-        return api_error(_("Appointment must be confirmed first."))
-
-    appointment.status = Appointment.Status.IN_PROGRESS
-    appointment.save(update_fields=["status"])
-
-    return api_success(
-        _("Appointment started."),
-        AppointmentSerializer(appointment).data,
-    )
-
-
-@api_view(["POST"])
-@permission_classes([IsAuthenticated, IsStudent])
-@transaction.atomic
-def complete_appointment(request, appointment_id):
-    """
-    Complete appointment (student only).
-    """
-
-    appointment = get_object_or_404(Appointment, id=appointment_id)
-    user, error = require_request_user(request)
-    if error:
-        return error
-
-    if appointment.student != user:
-        return api_error(_("Not authorized."), status.HTTP_403_FORBIDDEN)
-
-    if appointment.status not in {
-        Appointment.Status.CONFIRMED,
-        Appointment.Status.IN_PROGRESS,
-    }:
-        return api_error(_("Appointment cannot be completed."))
-
-    old_status = appointment.status
-    appointment.status = Appointment.Status.COMPLETED
-    appointment.save(update_fields=["status"])
-
-    notify_appointment_status_change(
-        appointment, old_status, appointment.status, user
-    )
-
-    return api_success(
-        _("Appointment completed."),
-        AppointmentSerializer(appointment).data,
-    )
-
-
-@api_view(["POST"])
-@permission_classes([IsAuthenticated])
-@transaction.atomic
-def cancel_appointment(request, appointment_id):
-    """
-    Cancel appointment:
-    - Patient (own)
-    - Student (own)
-    """
-
-    appointment = get_object_or_404(Appointment, id=appointment_id)
-    user, error = require_request_user(request)
-    if error:
-        return error
-
-    if user not in {appointment.patient, appointment.student}:
-        return api_error(_("Not authorized."), status.HTTP_403_FORBIDDEN)
-
-    if appointment.status not in {
-        Appointment.Status.SCHEDULED,
-        Appointment.Status.CONFIRMED,
-    }:
-        return api_error(_("Appointment cannot be cancelled."))
-
-    old_status = appointment.status
-    appointment.status = Appointment.Status.CANCELLED
-    appointment.save(update_fields=["status"])
-
-    notify_appointment_status_change(
-        appointment, old_status, appointment.status, user
-    )
-
-    return api_success(
-        _("Appointment cancelled."),
-        AppointmentSerializer(appointment).data,
-    )
-
-
-@api_view(["POST"])
-@permission_classes([IsAuthenticated, IsStudent])
-@transaction.atomic
-def mark_no_show(request, appointment_id):
-    """
-    Mark appointment as no-show (student only).
-    """
-
-    appointment = get_object_or_404(Appointment, id=appointment_id)
-    user, error = require_request_user(request)
-    if error:
-        return error
-
-    if appointment.student != user:
-        return api_error(_("Not authorized."), status.HTTP_403_FORBIDDEN)
-
-    if appointment.status not in {
-        Appointment.Status.CONFIRMED,
-        Appointment.Status.IN_PROGRESS,
-    }:
-        return api_error(_("Invalid appointment status."))
-
-    appointment.status = Appointment.Status.NO_SHOW
-    appointment.save(update_fields=["status"])
-
-    return api_success(
-        _("Appointment marked as no-show."),
-        AppointmentSerializer(appointment).data,
-    )
+        """
+        Use update serializer only for write operations.
+        """
+        if self.request.method in ("PUT", "PATCH"):
+            return AppointmentUpdateSerializer
+        return AppointmentSerializer

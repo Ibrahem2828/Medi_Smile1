@@ -1,3 +1,4 @@
+# apps/notifications/admin.py
 from django.contrib import admin
 from django.utils.translation import gettext_lazy as _
 
@@ -6,25 +7,19 @@ from .models import Notification
 
 @admin.register(Notification)
 class NotificationAdmin(admin.ModelAdmin):
-    """
-    Admin configuration for Notification model.
-    Notifications are treated as audit records and should be mostly read-only.
-    """
-
     list_display = (
         "id",
-        "title",
         "notification_type",
-        "sender",
         "recipient",
-        "status",
+        "sender",
+        "priority",
         "is_read",
         "created_at",
     )
 
     list_filter = (
         "notification_type",
-        "status",
+        "priority",
         "is_read",
         "created_at",
     )
@@ -32,19 +27,8 @@ class NotificationAdmin(admin.ModelAdmin):
     search_fields = (
         "title",
         "message",
-        "sender__username",
-        "sender__email",
         "recipient__username",
-        "recipient__email",
-    )
-
-    ordering = ("-created_at",)
-
-    list_select_related = (
-        "sender",
-        "recipient",
-        "appointment",
-        "content",
+        "sender__username",
     )
 
     readonly_fields = (
@@ -52,42 +36,55 @@ class NotificationAdmin(admin.ModelAdmin):
         "sender",
         "recipient",
         "notification_type",
+        "title",
+        "message",
         "appointment",
-        "content",
-        "proposed_changes",
+        "target_content_type",
+        "target_object_id",
         "created_at",
-        "updated_at",
     )
 
     fieldsets = (
-        (_("Core Information"), {
-            "fields": (
-                "id",
-                "notification_type",
-                "title",
-                "message",
-                "status",
-                "is_read",
-            )
-        }),
-        (_("Relations"), {
-            "fields": (
-                "sender",
-                "recipient",
-                "appointment",
-                "content",
-            )
-        }),
-        (_("Advanced / System"), {
-            "fields": (
-                "proposed_changes",
-                "response_message",
-                "created_at",
-                "updated_at",
-            )
-        }),
+        (
+            _("Core Information"),
+            {
+                "fields": (
+                    "id",
+                    "notification_type",
+                    "priority",
+                    "is_read",
+                )
+            },
+        ),
+        (
+            _("Actors"),
+            {
+                "fields": (
+                    "sender",
+                    "recipient",
+                )
+            },
+        ),
+        (
+            _("Content"),
+            {
+                "fields": (
+                    "title",
+                    "message",
+                    "appointment",
+                    "target_content_type",
+                    "target_object_id",
+                )
+            },
+        ),
+        (
+            _("Metadata"),
+            {
+                "fields": (
+                    "created_at",
+                )
+            },
+        ),
     )
 
-    def has_add_permission(self, request):
-        # Notifications should be created by the system only
-        return False
+    ordering = ("-created_at",)

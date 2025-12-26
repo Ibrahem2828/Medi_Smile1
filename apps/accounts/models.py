@@ -1,9 +1,11 @@
+# apps/accounts/models.py
 import uuid
-from django.db import models
-from django.contrib.auth.models import AbstractUser
+
 from django.conf import settings
-from django.utils.translation import gettext_lazy as _
+from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
+from django.db import models
+from django.utils.translation import gettext_lazy as _
 
 
 # ============================================================
@@ -12,6 +14,10 @@ from django.core.exceptions import ValidationError
 class Role(models.Model):
     """
     Central Role model for RBAC.
+
+    Notes:
+    - Role name is controlled by ROLE_CHOICES (stable identifiers used across the project).
+    - Permissions are enforced by central Permission Matrix / Checker (not here).
     """
 
     PATIENT = "patient"
@@ -42,8 +48,11 @@ class Role(models.Model):
         db_table = "roles"
         verbose_name = _("Role")
         verbose_name_plural = _("Roles")
+        indexes = [
+            models.Index(fields=["name"], name="idx_roles_name"),
+        ]
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.name
 
 
@@ -53,6 +62,11 @@ class Role(models.Model):
 class User(AbstractUser):
     """
     Custom user model with UUID PK and RBAC via Role FK.
+
+    Key rules:
+    - email is unique and acts as USERNAME_FIELD.
+    - role is mandatory.
+    - created_by is used for audit and internal flows (created by admin/system).
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -85,6 +99,7 @@ class User(AbstractUser):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # keep explicit field here (even though AbstractUser has is_active) for clarity & migrations stability
     is_active = models.BooleanField(default=True)
 
     USERNAME_FIELD = "email"
@@ -109,14 +124,27 @@ class User(AbstractUser):
         db_table = "users"
         verbose_name = _("User")
         verbose_name_plural = _("Users")
+        indexes = [
+            models.Index(fields=["email"], name="idx_users_email"),
+            models.Index(fields=["role"], name="idx_users_role"),
+            models.Index(fields=["is_active"], name="idx_users_active"),
+        ]
+
+    @property
+    def role_name(self) -> str:
+        return getattr(self.role, "name", "")
 
     def clean(self):
         super().clean()
 
-        if not self.role:
+        if not self.role_id:
             raise ValidationError(_("User must have a role."))
 
-    def __str__(self):
+        # normalize email (keeps behavior stable but production-friendly)
+        if self.email:
+            self.email = self.email.strip().lower()
+
+    def __str__(self) -> str:
         return self.email
 
 
@@ -126,7 +154,10 @@ class User(AbstractUser):
 class Profile(models.Model):
     """
     Base abstract profile.
-    Profiles store data only – permissions come from Role.
+
+    Important:
+    - Profiles store data only.
+    - Access control is enforced centrally by RBAC (Role + Scope + Ownership + State).
     """
 
     GENDER_CHOICES = (
@@ -138,17 +169,22 @@ class Profile(models.Model):
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         primary_key=True,
-        related_name="%(class)s_profile",
+        related_name="%(class)s_profile",  # keep as-is (do not break existing relations)
     )
 
     phone_number = models.CharField(max_length=20, blank=True, null=True)
     address = models.TextField(blank=True, null=True)
     date_of_birth = models.DateField(blank=True, null=True)
     gender = models.CharField(
-        max_length=10, choices=GENDER_CHOICES, blank=True, null=True
+        max_length=10,
+        choices=GENDER_CHOICES,
+        blank=True,
+        null=True,
     )
     profile_picture = models.ImageField(
-        upload_to="profile_pictures/", blank=True, null=True
+        upload_to="profile_pictures/",
+        blank=True,
+        null=True,
     )
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -158,11 +194,13 @@ class Profile(models.Model):
         abstract = True
 
     def save(self, *args, **kwargs):
+        # enforce model-level validation consistently (production safe)
         self.full_clean()
-        super().save(*args, **kwargs)
+        return super().save(*args, **kwargs)
 
-    def __str__(self):
-        return f"{self.user.first_name} {self.user.last_name}"
+    def __str__(self) -> str:
+        full_name = f"{self.user.first_name} {self.user.last_name}".strip()
+        return full_name or str(self.user)
 
 
 # ============================================================
@@ -177,10 +215,14 @@ class PatientProfile(Profile):
 
     class Meta:
         db_table = "patient_profiles"
+        indexes = [
+            models.Index(fields=["created_at"], name="idx_patient_prof_created"),
+        ]
 
     def clean(self):
         super().clean()
-        if self.user.role.name != Role.PATIENT:
+        # Guard: ensure correct role
+        if self.user and self.user.role and self.user.role.name != Role.PATIENT:
             raise ValidationError(_("PatientProfile requires PATIENT role."))
 
 
@@ -201,10 +243,14 @@ class StudentProfile(Profile):
 
     class Meta:
         db_table = "student_profiles"
+        indexes = [
+            models.Index(fields=["university"], name="idx_student_prof_univ"),
+            models.Index(fields=["student_id"], name="idx_student_prof_sid"),
+        ]
 
     def clean(self):
         super().clean()
-        if self.user.role.name != Role.STUDENT:
+        if self.user and self.user.role and self.user.role.name != Role.STUDENT:
             raise ValidationError(_("StudentProfile requires STUDENT role."))
         if not self.university:
             raise ValidationError(_("Student must be linked to a university."))
@@ -226,10 +272,14 @@ class SupervisorProfile(Profile):
 
     class Meta:
         db_table = "supervisor_profiles"
+        indexes = [
+            models.Index(fields=["university"], name="idx_supervisor_prof_univ"),
+            models.Index(fields=["license_number"], name="idx_supervisor_prof_lic"),
+        ]
 
     def clean(self):
         super().clean()
-        if self.user.role.name != Role.SUPERVISOR:
+        if self.user and self.user.role and self.user.role.name != Role.SUPERVISOR:
             raise ValidationError(_("SupervisorProfile requires SUPERVISOR role."))
         if not self.university:
             raise ValidationError(_("Supervisor must be linked to a university."))
@@ -250,10 +300,13 @@ class UniversityAdminProfile(Profile):
 
     class Meta:
         db_table = "university_admin_profiles"
+        indexes = [
+            models.Index(fields=["university"], name="idx_univ_admin_prof_univ"),
+        ]
 
     def clean(self):
         super().clean()
-        if self.user.role.name != Role.UNIVERSITY_ADMIN:
+        if self.user and self.user.role and self.user.role.name != Role.UNIVERSITY_ADMIN:
             raise ValidationError(_("UniversityAdminProfile requires UNIVERSITY_ADMIN role."))
         if not self.university:
             raise ValidationError(_("University Admin must be linked to a university."))
@@ -268,8 +321,11 @@ class TechSupportProfile(Profile):
 
     class Meta:
         db_table = "tech_support_profiles"
+        indexes = [
+            models.Index(fields=["created_at"], name="idx_tech_support_prof_created"),
+        ]
 
     def clean(self):
         super().clean()
-        if self.user.role.name != Role.TECH_SUPPORT:
+        if self.user and self.user.role and self.user.role.name != Role.TECH_SUPPORT:
             raise ValidationError(_("TechSupportProfile requires TECH_SUPPORT role."))

@@ -1,21 +1,43 @@
 # apps/appointments/serializers.py
-
-from rest_framework import serializers
-from django.utils.translation import gettext_lazy as _
 from django.db import transaction
+from django.utils.translation import gettext_lazy as _
+from rest_framework import serializers
 
-from apps.accounts.serializers import UserSerializer
-from apps.cases.serializers import CaseSerializer
-from apps.cases.models import Case
 from medismile.utils.auth import resolve_request_user
 
+from apps.accounts.models import User, Role
+from apps.cases.models import Case
 from .models import Appointment
+
+
+# ============================================================
+# Local lightweight serializers (avoid cross-app tight coupling)
+# ============================================================
+class AppointmentUserSerializer(serializers.ModelSerializer):
+    role = serializers.CharField(source="role.name", read_only=True)
+
+    class Meta:
+        model = User
+        fields = ("id", "email", "first_name", "last_name", "role")
+        read_only_fields = fields
+
+
+class AppointmentCaseMiniSerializer(serializers.ModelSerializer):
+    patient_id = serializers.UUIDField(source="patient.id", read_only=True)
+    student_id = serializers.UUIDField(source="student.id", read_only=True)
+    supervisor_id = serializers.UUIDField(source="supervisor.id", read_only=True)
+    university_id = serializers.UUIDField(source="university.id", read_only=True)
+    status = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = Case
+        fields = ("id", "title", "status", "patient_id", "student_id", "supervisor_id", "university_id")
+        read_only_fields = fields
 
 
 # ============================================================
 # Read Serializer (List / Detail)
 # ============================================================
-
 class AppointmentSerializer(serializers.ModelSerializer):
     """
     Read-only serializer for appointments.
@@ -23,18 +45,18 @@ class AppointmentSerializer(serializers.ModelSerializer):
     - patient (read-only)
     - student
     - supervisor
-    - admin / IT
+    - university admin / IT (read)
     """
 
-    patient = UserSerializer(read_only=True)
-    student = UserSerializer(read_only=True)
-    supervisor = UserSerializer(read_only=True)
-    created_by = UserSerializer(read_only=True)
-    case = CaseSerializer(read_only=True)
+    patient = AppointmentUserSerializer(read_only=True)
+    student = AppointmentUserSerializer(read_only=True)
+    supervisor = AppointmentUserSerializer(read_only=True)
+    created_by = AppointmentUserSerializer(read_only=True)
+    case = AppointmentCaseMiniSerializer(read_only=True)
 
     class Meta:
         model = Appointment
-        fields = [
+        fields = (
             "id",
             "case",
             "patient",
@@ -48,35 +70,26 @@ class AppointmentSerializer(serializers.ModelSerializer):
             "is_archived",
             "created_at",
             "updated_at",
-        ]
+        )
         read_only_fields = fields
 
 
 # ============================================================
 # Create Serializer
 # ============================================================
-
 class AppointmentCreateSerializer(serializers.ModelSerializer):
     """
-    Create appointment serializer.
-
-    Business Rules:
-    - ❌ Patient cannot create appointments
-    - ✅ Student creates appointment for assigned case
-    - ⚠ Supervisor can create only in exceptional cases
-    - Appointment MUST belong to an assigned case
+    Business Rules (per MediSmile):
+    - ❌ Patient cannot create
+    - ✅ Student creates for assigned case
+    - ✅ Supervisor can create only for cases he supervises (exception)
     """
 
     case_id = serializers.UUIDField(write_only=True)
 
     class Meta:
         model = Appointment
-        fields = [
-            "case_id",
-            "appointment_date",
-            "is_follow_up",
-            "notes",
-        ]
+        fields = ("case_id", "appointment_date", "is_follow_up", "notes")
 
     def validate(self, attrs):
         request = self.context.get("request")
@@ -85,39 +98,27 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
         if not actor:
             raise serializers.ValidationError(_("Authentication required."))
 
-        if actor.role not in ["student", "supervisor"]:
-            raise serializers.ValidationError(
-                _("Only students or supervisors can create appointments.")
-            )
+        role_name = getattr(actor.role, "name", None)
+        if role_name not in {Role.STUDENT, Role.SUPERVISOR}:
+            raise serializers.ValidationError(_("Only students or supervisors can create appointments."))
 
         case_id = attrs.get("case_id")
-
         try:
-            case = (
-                Case.objects
-                .select_related("patient", "student", "supervisor")
-                .get(id=case_id)
-            )
+            case = Case.objects.select_related("patient", "student", "supervisor", "university").get(id=case_id)
         except Case.DoesNotExist:
             raise serializers.ValidationError({"case_id": _("Case not found.")})
 
-        # Case must be assigned
-        if not case.student:
-            raise serializers.ValidationError(
-                _("Appointment cannot be created before case assignment.")
-            )
+        # Case must be assigned (student required)
+        if not case.student_id:
+            raise serializers.ValidationError(_("Appointment cannot be created before case assignment."))
 
         # Student rules
-        if actor.role == "student" and case.student != actor:
-            raise serializers.ValidationError(
-                _("You are not assigned to this case.")
-            )
+        if role_name == Role.STUDENT and case.student_id != actor.id:
+            raise serializers.ValidationError(_("You are not assigned to this case."))
 
         # Supervisor rules
-        if actor.role == "supervisor" and case.supervisor != actor:
-            raise serializers.ValidationError(
-                _("You are not supervising this case.")
-            )
+        if role_name == Role.SUPERVISOR and case.supervisor_id != actor.id:
+            raise serializers.ValidationError(_("You are not supervising this case."))
 
         attrs["case"] = case
         attrs["patient"] = case.patient
@@ -130,35 +131,31 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
     @transaction.atomic
     def create(self, validated_data):
         validated_data.pop("case_id", None)
-        return Appointment.objects.create(**validated_data)
+        appointment = Appointment.objects.create(**validated_data)
+        return appointment
 
 
 # ============================================================
 # Update Serializer
 # ============================================================
-
 class AppointmentUpdateSerializer(serializers.ModelSerializer):
     """
     Update appointment serializer.
 
-    Permissions:
-    - ❌ Patient: no updates
+    Permissions (aligned with your scenario):
+    - ❌ Patient: cannot update date/notes/status (he requests change via messaging)
     - ✅ Student:
-        - update date
-        - update status (limited)
-        - add notes
+        - update appointment_date
+        - update notes
+        - update status (limited by views/actions)
+        - archive
     - ✅ Supervisor:
-        - update status only
+        - status only (limited)
     """
 
     class Meta:
         model = Appointment
-        fields = [
-            "appointment_date",
-            "status",
-            "notes",
-            "is_archived",
-        ]
+        fields = ("appointment_date", "status", "notes", "is_archived")
 
     def validate(self, attrs):
         request = self.context.get("request")
@@ -168,40 +165,31 @@ class AppointmentUpdateSerializer(serializers.ModelSerializer):
         if not actor:
             raise serializers.ValidationError(_("Authentication required."))
 
-        if actor.role == "patient":
-            raise serializers.ValidationError(
-                _("Patients are not allowed to modify appointments.")
-            )
+        role_name = getattr(actor.role, "name", None)
+
+        if role_name == Role.PATIENT:
+            raise serializers.ValidationError(_("Patients are not allowed to modify appointments."))
+
+        # immutable final states
+        if instance.status in {Appointment.Status.COMPLETED, Appointment.Status.CANCELLED, Appointment.Status.NO_SHOW}:
+            raise serializers.ValidationError(_("Completed/cancelled/no-show appointments cannot be modified."))
 
         # Student permissions
-        if actor.role == "student":
-            if instance.student != actor:
-                raise serializers.ValidationError(
-                    _("You are not assigned to this appointment.")
-                )
+        if role_name == Role.STUDENT:
+            if instance.student_id != actor.id:
+                raise serializers.ValidationError(_("You are not assigned to this appointment."))
 
-        # Supervisor permissions
-        if actor.role == "supervisor":
-            if instance.supervisor != actor:
-                raise serializers.ValidationError(
-                    _("You are not supervising this appointment.")
-                )
+        # Supervisor permissions: status only
+        if role_name == Role.SUPERVISOR:
+            if instance.supervisor_id != actor.id:
+                raise serializers.ValidationError(_("You are not supervising this appointment."))
 
-            # Supervisor can only change status
             forbidden = {"appointment_date", "notes", "is_archived"}
             if forbidden.intersection(attrs.keys()):
-                raise serializers.ValidationError(
-                    _("Supervisors can only update appointment status.")
-                )
+                raise serializers.ValidationError(_("Supervisors can only update appointment status."))
 
-        # Immutable statuses
-        if instance.status in {
-            Appointment.Status.COMPLETED,
-            Appointment.Status.CANCELLED,
-            Appointment.Status.NO_SHOW,
-        }:
-            raise serializers.ValidationError(
-                _("Completed or cancelled appointments cannot be modified.")
-            )
+        # Other roles disallowed
+        if role_name not in {Role.STUDENT, Role.SUPERVISOR}:
+            raise serializers.ValidationError(_("Not allowed."))
 
         return attrs

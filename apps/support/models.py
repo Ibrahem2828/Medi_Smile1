@@ -2,24 +2,15 @@ import uuid
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 
-from apps.accounts.models import User
+from apps.accounts.models import User, Role
 
-
-# ============================================================
-# Support Ticket
-# ============================================================
 
 class SupportTicket(models.Model):
     """
     Technical support ticket.
-
-    Used strictly for:
-    - Technical issues
-    - System errors
-    - Account problems
-    - Feature requests
-    NOT for medical or academic decisions.
+    Used strictly for system / technical / account issues.
     """
 
     class Category(models.TextChoices):
@@ -42,9 +33,6 @@ class SupportTicket(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
-    # --------------------------------------------------------
-    # Relations
-    # --------------------------------------------------------
     created_by = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
@@ -58,99 +46,77 @@ class SupportTicket(models.Model):
         null=True,
         blank=True,
         related_name="assigned_support_tickets",
-        limit_choices_to={"role": "tech_support"},
-        verbose_name=_("Assigned To (Tech Support)"),
+        limit_choices_to={"role__name": Role.TECH_SUPPORT},
+        verbose_name=_("Assigned Tech Support"),
     )
 
-    # --------------------------------------------------------
-    # Core Fields
-    # --------------------------------------------------------
+    # optional context (future analytics)
+    related_app = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        help_text="accounts / cases / appointments / community",
+    )
+
     category = models.CharField(
         max_length=20,
         choices=Category.choices,
         default=Category.TECHNICAL,
-        verbose_name=_("Category"),
     )
 
-    subject = models.CharField(
-        max_length=200,
-        verbose_name=_("Subject"),
-    )
-
-    description = models.TextField(
-        verbose_name=_("Description"),
-        help_text=_("Detailed description of the issue."),
-    )
+    subject = models.CharField(max_length=200)
+    description = models.TextField()
 
     priority = models.CharField(
         max_length=20,
         choices=Priority.choices,
         default=Priority.MEDIUM,
-        verbose_name=_("Priority"),
     )
 
     status = models.CharField(
         max_length=20,
         choices=Status.choices,
         default=Status.OPEN,
-        verbose_name=_("Status"),
     )
 
-    resolution = models.TextField(
-        blank=True,
-        null=True,
-        verbose_name=_("Resolution"),
-        help_text=_("Filled by technical support when resolving the ticket."),
-    )
+    resolution = models.TextField(blank=True, null=True)
 
-    # --------------------------------------------------------
-    # Timestamps
-    # --------------------------------------------------------
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name=_("Created At"))
-    updated_at = models.DateTimeField(auto_now=True, verbose_name=_("Updated At"))
-    resolved_at = models.DateTimeField(null=True, blank=True, verbose_name=_("Resolved At"))
-    closed_at = models.DateTimeField(null=True, blank=True, verbose_name=_("Closed At"))
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
 
-    # --------------------------------------------------------
-    # Meta
-    # --------------------------------------------------------
     class Meta:
-        db_table = "support_tickets"
-        verbose_name = _("Support Ticket")
-        verbose_name_plural = _("Support Tickets")
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["status", "priority"]),
-            models.Index(fields=["category"]),
-            models.Index(fields=["created_at"]),
+            models.Index(fields=["created_by"]),
+            models.Index(fields=["assigned_to"]),
         ]
 
-    # --------------------------------------------------------
-    # Business Rules
-    # --------------------------------------------------------
     def clean(self):
-        if self.assigned_to and self.assigned_to.role != "tech_support":
-            raise ValidationError(_("Ticket can only be assigned to technical support."))
+        if self.assigned_to and self.assigned_to.role.name != Role.TECH_SUPPORT:
+            raise ValidationError(_("Ticket can only be assigned to tech support."))
 
         if self.status == self.Status.RESOLVED and not self.resolution:
-            raise ValidationError(_("Resolved tickets must include a resolution."))
+            raise ValidationError(_("Resolved tickets require a resolution."))
+
+    def save(self, *args, **kwargs):
+        if self.status == self.Status.RESOLVED and not self.resolved_at:
+            self.resolved_at = timezone.now()
 
         if self.status == self.Status.CLOSED and not self.closed_at:
-            raise ValidationError(_("Closed tickets must have a closed_at timestamp."))
+            self.closed_at = timezone.now()
+
+        super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.subject} ({self.get_status_display()})"
+        return f"{self.subject} ({self.status})"
 
-
-# ============================================================
-# Support Ticket Response
-# ============================================================
 
 class SupportTicketResponse(models.Model):
     """
-    Response inside a support ticket.
-
-    Acts as a secure, auditable communication channel.
+    Response inside support ticket (auditable communication).
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -159,39 +125,26 @@ class SupportTicketResponse(models.Model):
         SupportTicket,
         on_delete=models.CASCADE,
         related_name="responses",
-        verbose_name=_("Ticket"),
     )
 
     author = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        related_name="support_ticket_responses",
-        verbose_name=_("Author"),
+        related_name="support_responses",
     )
 
-    message = models.TextField(
-        verbose_name=_("Message"),
-    )
+    message = models.TextField()
 
     is_internal = models.BooleanField(
         default=False,
-        verbose_name=_("Internal Message"),
-        help_text=_("Visible only to technical support staff."),
+        help_text="Visible only to tech support",
     )
 
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name=_("Created At"))
-    updated_at = models.DateTimeField(auto_now=True, verbose_name=_("Updated At"))
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        db_table = "support_ticket_responses"
-        verbose_name = _("Support Ticket Response")
-        verbose_name_plural = _("Support Ticket Responses")
         ordering = ["created_at"]
 
     def clean(self):
-        # Internal messages must be written by tech support
-        if self.is_internal and self.author.role != "tech_support":
-            raise ValidationError(_("Only technical support can write internal messages."))
-
-    def __str__(self):
-        return f"Response by {self.author.email} on ticket {self.ticket.id}"
+        if self.is_internal and self.author.role.name != Role.TECH_SUPPORT:
+            raise ValidationError(_("Only tech support can add internal notes."))

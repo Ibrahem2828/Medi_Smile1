@@ -1,28 +1,26 @@
 # apps/ai/tests.py
+from unittest.mock import patch
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import User, Role
 from apps.cases.models import Case
-from apps.ai.models import AIDiagnosis
+from apps.ai.models import AIDiagnosis, DiagnosisStatus
 
 
 class AIDiagnosisAPITestCase(APITestCase):
-
     def setUp(self):
-        # Roles
-        self.patient_role = Role.objects.create(name=Role.PATIENT)
-        self.student_role = Role.objects.create(name=Role.STUDENT)
+        # Roles (assume they exist in your DB; create if your tests run isolated)
+        self.patient_role, _ = Role.objects.get_or_create(name=Role.PATIENT)
+        self.student_role, _ = Role.objects.get_or_create(name=Role.STUDENT)
 
-        # Users
         self.patient = User.objects.create_user(
             email="patient@test.com",
             username="patient",
             password="password123",
             role=self.patient_role,
         )
-
         self.student = User.objects.create_user(
             email="student@test.com",
             username="student",
@@ -30,43 +28,45 @@ class AIDiagnosisAPITestCase(APITestCase):
             role=self.student_role,
         )
 
-        # Case
         self.case = Case.objects.create(
             patient=self.patient,
             title="Test Case",
             description="Dental pain case",
         )
 
-        self.diagnose_url = reverse("ai-diagnose")
-
-    def test_patient_can_request_ai_diagnosis(self):
-        self.client.force_authenticate(user=self.patient)
-
-        payload = {
-            "case_id": str(self.case.id),
-            "symptoms_text": "أشعر بألم شديد في الضرس مع حساسية عند الأكل",
+    @patch("apps.ai.services.analyze_case")
+    @patch("apps.ai.services._get_engine_config")
+    def test_patient_can_request_ai_diagnosis(self, _cfg, analyze_case_mock):
+        analyze_case_mock.return_value = {
+            "primary_diagnosis": "تسوس متوسط",
+            "diagnosis_label": "caries_moderate",
+            "detected_findings": {"tooth": "16", "issue": "caries"},
+            "patient_explanation": "يوجد تسوس يحتاج متابعة.",
+            "report_text": "تفاصيل التقرير...",
+            "recommendations": "زيارة العيادة خلال أسبوع.",
+            "confidence_level": "medium",
+            "severity_level": "moderate",
+            "urgency_level": "non_urgent",
+            "metadata": {"normalized_text": "الم في الضرس"},
         }
 
-        response = self.client.post(self.diagnose_url, payload, format="json")
+        self.client.force_authenticate(user=self.patient)
+        url = reverse("ai:ai-diagnose")
+        payload = {"case_id": str(self.case.id), "symptoms_text": "أشعر بألم شديد في الضرس مع حساسية"}
+        res = self.client.post(url, payload, format="json")
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
         self.assertEqual(AIDiagnosis.objects.count(), 1)
+        self.assertEqual(AIDiagnosis.objects.first().status, DiagnosisStatus.COMPLETED)
 
     def test_non_patient_cannot_request_ai_diagnosis(self):
         self.client.force_authenticate(user=self.student)
+        url = reverse("ai:ai-diagnose")
+        payload = {"case_id": str(self.case.id), "symptoms_text": "ألم في الأسنان"}
+        res = self.client.post(url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
 
-        payload = {
-            "case_id": str(self.case.id),
-            "symptoms_text": "ألم في الأسنان",
-        }
-
-        response = self.client.post(self.diagnose_url, payload, format="json")
-
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-
-    def test_patient_can_list_own_diagnoses(self):
-        self.client.force_authenticate(user=self.patient)
-
+    def test_patient_can_list_own_diagnoses_only(self):
         AIDiagnosis.objects.create(
             case=self.case,
             patient=self.patient,
@@ -74,15 +74,12 @@ class AIDiagnosisAPITestCase(APITestCase):
             raw_symptoms="ألم مستمر",
             diagnosis_label="internal_tooth_pain",
             primary_diagnosis="تسوس متوسط في الضرس الخلفي",
-            confidence_level="medium",
-            severity_level="moderate",
-            urgency_level="non_urgent",
             patient_explanation="يوجد تسوس يحتاج متابعة",
-            status="completed",
+            status=DiagnosisStatus.COMPLETED,
         )
 
-        url = reverse("ai-diagnosis-list")
-        response = self.client.get(url)
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 1)
+        self.client.force_authenticate(user=self.patient)
+        url = reverse("ai:ai-diagnosis-list")
+        res = self.client.get(url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res.data), 1)

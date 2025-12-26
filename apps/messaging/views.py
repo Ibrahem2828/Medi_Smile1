@@ -1,80 +1,108 @@
-from rest_framework import viewsets, permissions, status
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from django.contrib.auth import get_user_model
-from django.db.models import Q
+# apps/messaging/views.py
+from rest_framework import generics
+from rest_framework.exceptions import PermissionDenied
+
+from apps.accounts.models import Role
+from apps.cases.models import Case
+
 from .models import Room, Message
 from .serializers import RoomSerializer, MessageSerializer
+from .permissions import (
+    IsAuthenticatedAndActive,
+    CanViewRoom,
+    CanCreateRoom,
+    CanSendMessage,
+    CanViewMessage,
+)
 
-User = get_user_model()
 
+# ============================================================
+# Room Views
+# ============================================================
+class RoomRetrieveView(generics.RetrieveAPIView):
+    """
+    Retrieve conversation room for a case.
+    """
+    queryset = Room.objects.select_related(
+        "case",
+        "participant1",
+        "participant2",
+    )
 
-class RoomViewSet(viewsets.ModelViewSet):
-    queryset = Room.objects.all()
     serializer_class = RoomSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        user = self.request.user
-        return Room.objects.filter(Q(participant1=user) | Q(participant2=user))
-
-    def create(self, request, *args, **kwargs):
-        # Ensure the current user is one of the participants
-        participant2_id = request.data.get('participant2_id')
-        if not participant2_id:
-            return Response({'error': 'participant2_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            participant2 = User.objects.get(id=participant2_id)
-        except User.DoesNotExist:
-            return Response({'error': 'participant2 not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        user = request.user
-        # Check if room exists in either order
-        room = Room.objects.filter(
-            (Q(participant1=user) & Q(participant2=participant2)) |
-            (Q(participant1=participant2) & Q(participant2=user))
-        ).first()
-        if room:
-            serializer = self.get_serializer(room)
-            return Response(serializer.data, status=status.HTTP_200_OK)
-
-        # Create new room with current user as participant1
-        room = Room.objects.create(participant1=user, participant2=participant2)
-        serializer = self.get_serializer(room)
-        headers = self.get_success_headers(serializer.data)
-        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+    permission_classes = [
+        IsAuthenticatedAndActive,
+        CanViewRoom,
+    ]
 
 
-class MessageViewSet(viewsets.ModelViewSet):
-    queryset = Message.objects.all()
-    serializer_class = MessageSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        user = self.request.user
-        return Message.objects.filter(
-            Q(room__participant1=user) | Q(room__participant2=user)
-        )
+class RoomCreateView(generics.CreateAPIView):
+    """
+    Create (or get) room for a case.
+    One room per case.
+    """
+    serializer_class = RoomSerializer
+    permission_classes = [
+        IsAuthenticatedAndActive,
+        CanCreateRoom,
+    ]
 
     def perform_create(self, serializer):
-        room = serializer.validated_data['room']
-        user = self.request.user
-        # Validate membership
-        if user != room.participant1 and user != room.participant2:
-            raise permissions.PermissionDenied('You are not a participant in this room')
-        serializer.save(sender=user)
+        case = serializer.validated_data["case"]
 
-    @action(detail=True, methods=['post'])
-    def mark_read(self, request, pk=None):
-        message = self.get_object()
-        user = request.user
-        # Only participants other than sender can mark as read
-        if user == message.sender:
-            return Response({'error': 'Sender cannot mark own message as read'}, status=status.HTTP_400_BAD_REQUEST)
-        if user != message.room.participant1 and user != message.room.participant2:
-            return Response({'error': 'Not allowed'}, status=status.HTTP_403_FORBIDDEN)
-        message.is_read = True
-        message.save(update_fields=['is_read'])
-        return Response({'message': 'Marked as read'})
-    
+        room, _ = Room.objects.get_or_create(
+            case=case,
+            defaults={
+                "participant1": case.patient,
+                "participant2": case.student,
+            },
+        )
+
+        serializer.instance = room
+
+
+# ============================================================
+# Message Views
+# ============================================================
+class MessageListCreateView(generics.ListCreateAPIView):
+    """
+    List & send messages in a room.
+    """
+    serializer_class = MessageSerializer
+    permission_classes = [
+        IsAuthenticatedAndActive,
+    ]
+
+    def get_queryset(self):
+        room_id = self.kwargs["room_id"]
+        room = Room.objects.select_related("case").get(id=room_id)
+
+        if not CanViewRoom().has_object_permission(self.request, self, room):
+            raise PermissionDenied("You cannot access this conversation")
+
+        return Message.objects.filter(room=room).select_related("sender")
+
+    def perform_create(self, serializer):
+        room_id = self.kwargs["room_id"]
+        room = Room.objects.get(id=room_id)
+
+        if not CanSendMessage().has_object_permission(self.request, self, room):
+            raise PermissionDenied("You cannot send messages here")
+
+        serializer.save(room=room)
+
+
+class MessageDetailView(generics.RetrieveAPIView):
+    """
+    Retrieve a single message (Audit / Read tracking).
+    """
+    queryset = Message.objects.select_related(
+        "room",
+        "room__case",
+        "sender",
+    )
+    serializer_class = MessageSerializer
+    permission_classes = [
+        IsAuthenticatedAndActive,
+        CanViewMessage,
+    ]

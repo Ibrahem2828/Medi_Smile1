@@ -1,11 +1,39 @@
-from django.urls import path, include
-from rest_framework.routers import DefaultRouter
-from .views import RoomViewSet, MessageViewSet
+# apps/messaging/urls.py
+from django.urls import path
 
-router = DefaultRouter()
-router.register(r'rooms', RoomViewSet)
-router.register(r'messages', MessageViewSet)
+from .views import (
+    RoomRetrieveView,
+    RoomCreateView,
+    MessageListCreateView,
+    MessageDetailView,
+)
 
 urlpatterns = [
-    path('', include(router.urls)),
+    # =====================================================
+    # Rooms (Case Conversations)
+    # =====================================================
+    path(
+        "rooms/<uuid:pk>/",
+        RoomRetrieveView.as_view(),
+        name="messaging-room-detail",
+    ),
+    path(
+        "rooms/",
+        RoomCreateView.as_view(),
+        name="messaging-room-create",
+    ),
+
+    # =====================================================
+    # Messages
+    # =====================================================
+    path(
+        "rooms/<uuid:room_id>/messages/",
+        MessageListCreateView.as_view(),
+        name="message-list-create",
+    ),
+    path(
+        "messages/<uuid:pk>/",
+        MessageDetailView.as_view(),
+        name="message-detail",
+    ),
 ]

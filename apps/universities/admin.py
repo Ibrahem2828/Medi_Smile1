@@ -1,11 +1,18 @@
 # apps/universities/admin.py
-
 from django.contrib import admin
 from django.utils.translation import gettext_lazy as _
 
-from .models import University, Faculty, AcademicProgram, AcademicYear
+from .models import (
+    University,
+    Faculty,
+    AcademicProgram,
+    AcademicYear,
+)
 
 
+# ============================================================
+# University Admin (System Level)
+# ============================================================
 @admin.register(University)
 class UniversityAdmin(admin.ModelAdmin):
     list_display = (
@@ -16,45 +23,43 @@ class UniversityAdmin(admin.ModelAdmin):
         "is_active",
         "created_at",
     )
-    list_filter = ("is_active", "country", "city")
-    search_fields = ("name", "short_name", "email")
-    readonly_fields = ("id", "created_at", "updated_at")
+    list_filter = ("is_active", "country")
+    search_fields = ("name", "short_name", "city", "country")
     ordering = ("name",)
 
+    readonly_fields = ("created_at", "updated_at")
+
     fieldsets = (
-        (_("Basic Information"), {
-            "fields": (
-                "id",
-                "name",
-                "short_name",
-                "description",
-                "logo",
-            )
-        }),
-        (_("Contact Information"), {
-            "fields": (
-                "address",
-                "city",
-                "country",
-                "email",
-                "phone",
-                "website",
-            )
-        }),
-        (_("Status & Metadata"), {
-            "fields": (
-                "is_active",
-                "created_at",
-                "updated_at",
-            )
-        }),
+        (None, {"fields": ("name", "short_name", "is_active")}),
+        (
+            _("Contact & Location"),
+            {
+                "fields": (
+                    "address",
+                    "city",
+                    "country",
+                    "email",
+                    "phone",
+                    "website",
+                )
+            },
+        ),
+        (_("Branding"), {"fields": ("logo",)}),
+        (
+            _("System"),
+            {
+                "fields": (
+                    "created_at",
+                    "updated_at",
+                )
+            },
+        ),
     )
 
-    def has_delete_permission(self, request, obj=None):
-        # Prevent hard delete to preserve institutional history
-        return False
 
-
+# ============================================================
+# Faculty Admin
+# ============================================================
 @admin.register(Faculty)
 class FacultyAdmin(admin.ModelAdmin):
     list_display = (
@@ -63,12 +68,22 @@ class FacultyAdmin(admin.ModelAdmin):
         "is_active",
         "created_at",
     )
-    list_filter = ("university", "is_active")
-    search_fields = ("name",)
-    readonly_fields = ("id", "created_at")
-    ordering = ("name",)
+    list_filter = ("is_active", "university")
+    search_fields = ("name", "university__name")
+    ordering = ("university__name", "name")
+
+    readonly_fields = ("created_at",)
+
+    fieldsets = (
+        (None, {"fields": ("university", "name", "is_active")}),
+        (_("Description"), {"fields": ("description",)}),
+        (_("System"), {"fields": ("created_at",)}),
+    )
 
 
+# ============================================================
+# Academic Program Admin
+# ============================================================
 @admin.register(AcademicProgram)
 class AcademicProgramAdmin(admin.ModelAdmin):
     list_display = (
@@ -80,12 +95,32 @@ class AcademicProgramAdmin(admin.ModelAdmin):
         "is_active",
         "created_at",
     )
-    list_filter = ("level", "university", "faculty", "is_active")
-    search_fields = ("name", "code")
-    readonly_fields = ("id", "created_at")
-    ordering = ("name",)
+    list_filter = ("level", "is_active", "university")
+    search_fields = ("name", "code", "university__name")
+    ordering = ("university__name", "name")
+
+    readonly_fields = ("created_at",)
+
+    fieldsets = (
+        (None, {"fields": ("university", "faculty", "name", "code")}),
+        (
+            _("Academic Info"),
+            {
+                "fields": (
+                    "level",
+                    "duration_years",
+                    "description",
+                )
+            },
+        ),
+        (_("Status"), {"fields": ("is_active",)}),
+        (_("System"), {"fields": ("created_at",)}),
+    )
 
 
+# ============================================================
+# Academic Year Admin
+# ============================================================
 @admin.register(AcademicYear)
 class AcademicYearAdmin(admin.ModelAdmin):
     list_display = (
@@ -94,8 +129,24 @@ class AcademicYearAdmin(admin.ModelAdmin):
         "start_date",
         "end_date",
         "is_active",
+        "created_at",
     )
-    list_filter = ("university", "is_active")
-    search_fields = ("name",)
-    readonly_fields = ("id", "created_at")
+    list_filter = ("is_active", "university")
+    search_fields = ("name", "university__name")
     ordering = ("-start_date",)
+
+    readonly_fields = ("created_at",)
+
+    fieldsets = (
+        (None, {"fields": ("university", "name", "is_active")}),
+        (
+            _("Date Range"),
+            {
+                "fields": (
+                    "start_date",
+                    "end_date",
+                )
+            },
+        ),
+        (_("System"), {"fields": ("created_at",)}),
+    )

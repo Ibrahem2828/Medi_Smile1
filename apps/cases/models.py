@@ -1,16 +1,17 @@
+# apps/cases/models.py
 import uuid
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
+from django.db.models import Q
 
-from apps.accounts.models import User
+from apps.accounts.models import User, Role
 from apps.universities.models import University
 
 
 # ============================================================
 # Case (Core Medical Entity)
 # ============================================================
-
 class Case(models.Model):
     """
     Dental medical case.
@@ -22,7 +23,6 @@ class Case(models.Model):
     # --------------------------------------------------------
     # Status & Priority
     # --------------------------------------------------------
-
     class Status(models.TextChoices):
         NEW = "new", _("New (Initial Diagnosis)")
         PENDING_ASSIGNMENT = "pending_assignment", _("Pending Assignment")
@@ -55,7 +55,6 @@ class Case(models.Model):
     # --------------------------------------------------------
     # Fields
     # --------------------------------------------------------
-
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
     title = models.CharField(max_length=200, verbose_name=_("Title"))
@@ -64,10 +63,12 @@ class Case(models.Model):
     # --------------------------------------------------------
     # Relations
     # --------------------------------------------------------
-
+    # ✅ Optional until case is routed/assigned to a university
     university = models.ForeignKey(
         University,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         related_name="cases",
         verbose_name=_("University"),
     )
@@ -76,7 +77,7 @@ class Case(models.Model):
         User,
         on_delete=models.CASCADE,
         related_name="patient_cases",
-        limit_choices_to={"role": "patient"},
+        limit_choices_to={"role__name": Role.PATIENT},
         verbose_name=_("Patient"),
     )
 
@@ -86,7 +87,7 @@ class Case(models.Model):
         null=True,
         blank=True,
         related_name="student_cases",
-        limit_choices_to={"role": "student"},
+        limit_choices_to={"role__name": Role.STUDENT},
         verbose_name=_("Assigned Student"),
     )
 
@@ -96,14 +97,13 @@ class Case(models.Model):
         null=True,
         blank=True,
         related_name="supervised_cases",
-        limit_choices_to={"role": "supervisor"},
+        limit_choices_to={"role__name": Role.SUPERVISOR},
         verbose_name=_("Supervisor"),
     )
 
     # --------------------------------------------------------
     # State & Visibility
     # --------------------------------------------------------
-
     status = models.CharField(
         max_length=30,
         choices=Status.choices,
@@ -127,44 +127,62 @@ class Case(models.Model):
     # --------------------------------------------------------
     # Timestamps
     # --------------------------------------------------------
-
     created_at = models.DateTimeField(auto_now_add=True, verbose_name=_("Created At"))
     updated_at = models.DateTimeField(auto_now=True, verbose_name=_("Updated At"))
-
-    # --------------------------------------------------------
-    # Meta
-    # --------------------------------------------------------
 
     class Meta:
         db_table = "cases"
         verbose_name = _("Case")
         verbose_name_plural = _("Cases")
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["status"], name="idx_case_status"),
+            models.Index(fields=["priority"], name="idx_case_priority"),
+            models.Index(fields=["created_at"], name="idx_case_created"),
+            models.Index(fields=["is_public"], name="idx_case_public"),
+            models.Index(fields=["university"], name="idx_case_university"),
+            models.Index(fields=["patient"], name="idx_case_patient"),
+            models.Index(fields=["student"], name="idx_case_student"),
+            models.Index(fields=["supervisor"], name="idx_case_supervisor"),
+        ]
 
     # --------------------------------------------------------
     # Business Rules
     # --------------------------------------------------------
-
     def clean(self):
-        # Patient role validation
-        if self.patient.role != "patient":
+        super().clean()
+
+        # Role validation (FK-based)
+        if self.patient and getattr(self.patient.role, "name", None) != Role.PATIENT:
             raise ValidationError(_("Assigned patient must have role 'patient'."))
 
-        # Single active case per patient
-        if self.status in self.ACTIVE_STATUSES:
+        if self.student and getattr(self.student.role, "name", None) != Role.STUDENT:
+            raise ValidationError(_("Assigned student must have role 'student'."))
+
+        if self.supervisor and getattr(self.supervisor.role, "name", None) != Role.SUPERVISOR:
+            raise ValidationError(_("Assigned supervisor must have role 'supervisor'."))
+
+        # One active case per patient
+        if self.patient and self.status in self.ACTIVE_STATUSES:
             qs = Case.objects.filter(
                 patient=self.patient,
                 status__in=self.ACTIVE_STATUSES,
-            ).exclude(id=self.id)
+            )
+            if self.pk:
+                qs = qs.exclude(pk=self.pk)
 
             if qs.exists():
                 raise ValidationError(_("This patient already has an active case."))
 
-        # Status transition validation
+        # If case is public / pending assignment, university must be set
+        if self.is_public or self.status == self.Status.PENDING_ASSIGNMENT:
+            if not self.university_id:
+                raise ValidationError(_("University is required for public/assignment cases."))
+
+        # Status transition validation (immutable once closed)
         if self.pk:
             previous_status = (
-                Case.objects
-                .filter(pk=self.pk)
+                Case.objects.filter(pk=self.pk)
                 .values_list("status", flat=True)
                 .first()
             )
@@ -177,6 +195,10 @@ class Case(models.Model):
                 if self.status not in allowed:
                     raise ValidationError(_("Invalid case status transition."))
 
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.title} ({self.get_status_display()})"
 
@@ -184,7 +206,6 @@ class Case(models.Model):
 # ============================================================
 # Case History (Immutable Audit Trail)
 # ============================================================
-
 class CaseHistory(models.Model):
     """
     Immutable legal and educational audit trail for a case.
@@ -232,24 +253,27 @@ class CaseHistory(models.Model):
         verbose_name = _("Case History")
         verbose_name_plural = _("Case Histories")
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["case", "created_at"], name="idx_casehistory_case_time"),
+            models.Index(fields=["action"], name="idx_casehistory_action"),
+        ]
 
     def save(self, *args, **kwargs):
         if self.pk:
             raise ValidationError(_("Case history records are immutable."))
-        super().save(*args, **kwargs)
+        return super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.case.id} - {self.get_action_display()}"
+        return f"{self.case_id} - {self.get_action_display()}"
 
 
 # ============================================================
 # Case Assignment Request
 # ============================================================
-
 class CaseAssignmentRequest(models.Model):
     """
     Student request to take ownership of a public case.
-    Approved ONLY by supervisor.
+    Approved ONLY by supervisor (via services/views).
     """
 
     class Status(models.TextChoices):
@@ -271,7 +295,7 @@ class CaseAssignmentRequest(models.Model):
         User,
         on_delete=models.CASCADE,
         related_name="case_assignment_requests",
-        limit_choices_to={"role": "student"},
+        limit_choices_to={"role__name": Role.STUDENT},
         verbose_name=_("Student"),
     )
 
@@ -296,10 +320,18 @@ class CaseAssignmentRequest(models.Model):
         verbose_name = _("Case Assignment Request")
         verbose_name_plural = _("Case Assignment Requests")
         ordering = ["-created_at"]
-        unique_together = ["case", "student"]
+        constraints = [
+            models.UniqueConstraint(fields=["case", "student"], name="uq_case_student_request"),
+        ]
+        indexes = [
+            models.Index(fields=["case", "status"], name="idx_req_case_status"),
+            models.Index(fields=["student", "status"], name="idx_req_student_status"),
+        ]
 
     def clean(self):
-        if self.student.role != "student":
+        super().clean()
+
+        if getattr(self.student.role, "name", None) != Role.STUDENT:
             raise ValidationError(_("Only students can request case assignment."))
 
         if not self.case.is_public:
@@ -308,20 +340,25 @@ class CaseAssignmentRequest(models.Model):
         if self.case.status != Case.Status.PENDING_ASSIGNMENT:
             raise ValidationError(_("Case is not accepting assignment requests."))
 
+        if not self.case.university_id:
+            raise ValidationError(_("Case must be linked to a university before assignment."))
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
     def __str__(self):
-        return f"{self.case.id} - {self.student.email}"
+        return f"{self.case_id} - {self.student.email}"
 
 
 # ============================================================
 # Case Session (Treatment Session)
 # ============================================================
-
 class CaseSession(models.Model):
     """
     A single treatment session within a case.
-
     Created by student.
-    Reviewed and approved by supervisor.
+    Reviewed by supervisor.
     Read-only for patient.
     """
 
@@ -345,7 +382,7 @@ class CaseSession(models.Model):
         User,
         on_delete=models.CASCADE,
         related_name="case_sessions",
-        limit_choices_to={"role": "student"},
+        limit_choices_to={"role__name": Role.STUDENT},
         verbose_name=_("Student"),
     )
 
@@ -355,7 +392,7 @@ class CaseSession(models.Model):
         null=True,
         blank=True,
         related_name="reviewed_sessions",
-        limit_choices_to={"role": "supervisor"},
+        limit_choices_to={"role__name": Role.SUPERVISOR},
         verbose_name=_("Supervisor"),
     )
 
@@ -385,19 +422,35 @@ class CaseSession(models.Model):
         verbose_name = _("Case Session")
         verbose_name_plural = _("Case Sessions")
         ordering = ["created_at"]
+        indexes = [
+            models.Index(fields=["case", "created_at"], name="idx_session_case_time"),
+            models.Index(fields=["student", "created_at"], name="idx_session_student_time"),
+            models.Index(fields=["status"], name="idx_session_status"),
+        ]
 
     def clean(self):
-        if self.student.role != "student":
+        super().clean()
+
+        if getattr(self.student.role, "name", None) != Role.STUDENT:
             raise ValidationError(_("Session creator must be a student."))
 
-        if self.case.student != self.student:
+        if self.case.student_id != self.student_id:
             raise ValidationError(_("Student is not assigned to this case."))
 
-        if self.case.status not in {
-            Case.Status.ASSIGNED,
-            Case.Status.IN_PROGRESS,
-        }:
+        if self.case.status not in {Case.Status.ASSIGNED, Case.Status.IN_PROGRESS}:
             raise ValidationError(_("Sessions can only be created for active cases."))
 
+        # Supervisor defaults to the case supervisor
+        if self.case.supervisor_id and self.supervisor_id and self.supervisor_id != self.case.supervisor_id:
+            raise ValidationError(_("Session supervisor must match case supervisor."))
+
+    def save(self, *args, **kwargs):
+        # Auto-sync supervisor from case if missing
+        if not self.supervisor_id and self.case and self.case.supervisor_id:
+            self.supervisor_id = self.case.supervisor_id
+
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
     def __str__(self):
-        return f"Session {self.id} - {self.case.id}"
+        return f"Session {self.id} - {self.case_id}"

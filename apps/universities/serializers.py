@@ -1,6 +1,6 @@
+# apps/universities/serializers.py
 from rest_framework import serializers
 from django.utils.translation import gettext_lazy as _
-from django.core.exceptions import ValidationError as DjangoValidationError
 
 from .models import (
     University,
@@ -21,14 +21,14 @@ class UniversityListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = University
-        fields = [
+        fields = (
             "id",
             "name",
             "short_name",
             "city",
             "country",
             "is_active",
-        ]
+        )
 
 
 class UniversityDetailSerializer(serializers.ModelSerializer):
@@ -48,7 +48,7 @@ class UniversityDetailSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = University
-        fields = [
+        fields = (
             "id",
             "name",
             "short_name",
@@ -66,7 +66,7 @@ class UniversityDetailSerializer(serializers.ModelSerializer):
             "academic_years_count",
             "created_at",
             "updated_at",
-        ]
+        )
         read_only_fields = (
             "id",
             "created_at",
@@ -84,7 +84,7 @@ class UniversityCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = University
-        fields = [
+        fields = (
             "name",
             "short_name",
             "description",
@@ -95,17 +95,16 @@ class UniversityCreateSerializer(serializers.ModelSerializer):
             "email",
             "phone",
             "logo",
-        ]
+        )
 
     def validate_name(self, value):
         if University.objects.filter(name__iexact=value).exists():
             raise serializers.ValidationError(
                 _("A university with this name already exists.")
             )
-        return value
+        return value.strip()
 
     def validate(self, attrs):
-        # Extra guard: prevent empty-but-present short_name
         short_name = attrs.get("short_name")
         if short_name is not None and short_name.strip() == "":
             raise serializers.ValidationError(
@@ -124,12 +123,13 @@ class FacultySerializer(serializers.ModelSerializer):
     """
 
     university_name = serializers.CharField(
-        source="university.name", read_only=True
+        source="university.name",
+        read_only=True,
     )
 
     class Meta:
         model = Faculty
-        fields = [
+        fields = (
             "id",
             "university",
             "university_name",
@@ -137,14 +137,14 @@ class FacultySerializer(serializers.ModelSerializer):
             "description",
             "is_active",
             "created_at",
-        ]
-        read_only_fields = ("id", "created_at", "university_name")
+        )
+        read_only_fields = (
+            "id",
+            "created_at",
+            "university_name",
+        )
 
     def validate(self, attrs):
-        """
-        Ensure faculty uniqueness inside the university
-        and prevent attaching to inactive university.
-        """
         university = attrs.get("university")
         name = attrs.get("name")
 
@@ -154,10 +154,15 @@ class FacultySerializer(serializers.ModelSerializer):
                     _("Cannot add faculty to an inactive university.")
                 )
 
-            if name and Faculty.objects.filter(
+            qs = Faculty.objects.filter(
                 university=university,
                 name__iexact=name,
-            ).exists():
+            )
+
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+
+            if qs.exists():
                 raise serializers.ValidationError(
                     {"name": _("Faculty name must be unique within the university.")}
                 )
@@ -175,15 +180,17 @@ class AcademicProgramSerializer(serializers.ModelSerializer):
     """
 
     university_name = serializers.CharField(
-        source="university.name", read_only=True
+        source="university.name",
+        read_only=True,
     )
     faculty_name = serializers.CharField(
-        source="faculty.name", read_only=True
+        source="faculty.name",
+        read_only=True,
     )
 
     class Meta:
         model = AcademicProgram
-        fields = [
+        fields = (
             "id",
             "university",
             "university_name",
@@ -196,19 +203,20 @@ class AcademicProgramSerializer(serializers.ModelSerializer):
             "description",
             "is_active",
             "created_at",
-        ]
-        read_only_fields = ("id", "created_at", "university_name", "faculty_name")
+        )
+        read_only_fields = (
+            "id",
+            "created_at",
+            "university_name",
+            "faculty_name",
+        )
 
     def validate(self, attrs):
-        """
-        - Program code must be unique per university
-        - Faculty (if provided) must belong to the same university
-        """
         university = attrs.get("university")
         faculty = attrs.get("faculty")
         code = attrs.get("code")
 
-        if faculty and university and faculty.university != university:
+        if faculty and university and faculty.university_id != university.id:
             raise serializers.ValidationError(
                 {"faculty": _("Faculty must belong to the same university.")}
             )
@@ -218,8 +226,6 @@ class AcademicProgramSerializer(serializers.ModelSerializer):
                 university=university,
                 code__iexact=code,
             )
-
-            # Update-safe uniqueness
             if self.instance:
                 qs = qs.exclude(pk=self.instance.pk)
 
@@ -241,12 +247,13 @@ class AcademicYearSerializer(serializers.ModelSerializer):
     """
 
     university_name = serializers.CharField(
-        source="university.name", read_only=True
+        source="university.name",
+        read_only=True,
     )
 
     class Meta:
         model = AcademicYear
-        fields = [
+        fields = (
             "id",
             "university",
             "university_name",
@@ -255,14 +262,14 @@ class AcademicYearSerializer(serializers.ModelSerializer):
             "end_date",
             "is_active",
             "created_at",
-        ]
-        read_only_fields = ("id", "created_at", "university_name")
+        )
+        read_only_fields = (
+            "id",
+            "created_at",
+            "university_name",
+        )
 
     def validate(self, attrs):
-        """
-        - End date must be after start date
-        - Only one active academic year per university
-        """
         start_date = attrs.get("start_date")
         end_date = attrs.get("end_date")
         university = attrs.get("university")
@@ -278,7 +285,6 @@ class AcademicYearSerializer(serializers.ModelSerializer):
                 university=university,
                 is_active=True,
             )
-
             if self.instance:
                 qs = qs.exclude(pk=self.instance.pk)
 
@@ -288,10 +294,3 @@ class AcademicYearSerializer(serializers.ModelSerializer):
                 )
 
         return attrs
-
-
-# ============================================================
-# Backward compatibility alias
-# ============================================================
-
-UniversitySerializer = UniversityDetailSerializer

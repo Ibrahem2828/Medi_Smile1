@@ -1,17 +1,11 @@
-from __future__ import annotations
-
-from django.shortcuts import get_object_or_404
-from django.utils.translation import gettext_lazy as _
-from django.db import transaction
-
-from rest_framework import generics, status, serializers
+# apps/cases/views.py
+from rest_framework import generics, status
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
-from apps.accounts.permissions import IsStudent, IsSupervisor
-from medismile.utils.auth import resolve_request_user
-from medismile.utils.pagination import StandardResultsSetPagination
+from apps.accounts.models import Role
+from apps.accounts.permissions import IsAuthenticatedAndActive
 
 from .models import Case, CaseAssignmentRequest, CaseSession
 from .serializers import (
@@ -23,261 +17,110 @@ from .serializers import (
     CaseSessionCreateSerializer,
     CaseSessionReviewSerializer,
 )
-
-# selectors
-from .selectors.case_queries import (
-    get_cases_for_user,
-    get_assignment_requests_for_user,
-    get_sessions_for_case,
+from .permissions import (
+    CanCreateCase,
+    CanViewCase,
+    CanUpdateCase,
+    CanRequestAssignment,
+    CanCreateSession,
+    CanReviewSession,
 )
 
-# services
-from .services.assignment import (
-    request_case_assignment as service_request_assignment,
-    decide_assignment_request,
-)
-from .services.session_logic import (
-    create_session,
-    review_session,
-)
-from .services.case_lifecycle import change_case_status
-
 
 # ============================================================
-# Unified API Response Helpers
+# Case List & Create
 # ============================================================
-
-def api_success(message, data=None, status_code=status.HTTP_200_OK):
-    return Response(
-        {"status": "success", "message": message, "data": data},
-        status=status_code,
-    )
-
-
-def api_error(message, status_code=status.HTTP_400_BAD_REQUEST):
-    return Response(
-        {"status": "error", "message": message},
-        status=status_code,
-    )
-
-
-# ============================================================
-# Cases
-# ============================================================
-
-class CaseListView(generics.ListCreateAPIView):
-    """
-    List cases (role-based visibility)
-    Create case:
-    - Patient: for himself only
-    - Others: allowed only if serializer permits (admin scenarios)
-    """
-
-    permission_classes = [IsAuthenticated]
-    pagination_class = StandardResultsSetPagination
+class CaseListCreateView(generics.ListCreateAPIView):
+    permission_classes = [IsAuthenticatedAndActive, CanCreateCase]
 
     def get_queryset(self):
-        user = resolve_request_user(self.request)
-        return get_cases_for_user(user)
+        user = self.request.user
+
+        if user.role.name == Role.TECH_SUPPORT:
+            return Case.objects.all()
+
+        if user.role.name == Role.PATIENT:
+            return Case.objects.filter(patient=user)
+
+        if user.role.name == Role.STUDENT:
+            return Case.objects.filter(student=user)
+
+        if user.role.name == Role.SUPERVISOR:
+            return Case.objects.filter(supervisor=user)
+
+        if user.role.name == Role.UNIVERSITY_ADMIN:
+            return Case.objects.filter(university=user.universityadminprofile_profile.university)
+
+        return Case.objects.none()
 
     def get_serializer_class(self):
-        return CaseCreateSerializer if self.request.method == "POST" else CaseSerializer
+        if self.request.method == "POST":
+            return CaseCreateSerializer
+        return CaseSerializer
 
     def perform_create(self, serializer):
-        serializer.save()
+        serializer.save(context={"request": self.request})
 
 
+# ============================================================
+# Case Detail & Update
+# ============================================================
 class CaseDetailView(generics.RetrieveUpdateAPIView):
-    """
-    Retrieve / update a case within role scope.
-    """
-
-    permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        user = resolve_request_user(self.request)
-        return get_cases_for_user(user)
+    queryset = Case.objects.all()
+    serializer_class = CaseSerializer
+    permission_classes = [IsAuthenticatedAndActive, CanViewCase, CanUpdateCase]
 
     def get_serializer_class(self):
-        return CaseUpdateSerializer if self.request.method in ["PUT", "PATCH"] else CaseSerializer
-
-    @transaction.atomic
-    def perform_update(self, serializer):
-        user = resolve_request_user(self.request)
-        case = self.get_object()
-        old_status = case.status
-
-        updated_case = serializer.save()
-
-        if old_status != updated_case.status:
-            change_case_status(
-                case=updated_case,
-                new_status=updated_case.status,
-                actor=user,
-            )
+        if self.request.method in ("PUT", "PATCH"):
+            return CaseUpdateSerializer
+        return CaseSerializer
 
 
 # ============================================================
 # Assignment Requests
 # ============================================================
-
-class CaseAssignmentRequestListView(generics.ListCreateAPIView):
-    """
-    - Student: list/create own assignment requests
-    - Supervisor: list requests for supervised cases
-    - Admin / IT: list all
-    """
-
-    permission_classes = [IsAuthenticated]
+class CaseAssignmentRequestCreateView(generics.CreateAPIView):
     serializer_class = CaseAssignmentRequestSerializer
+    permission_classes = [IsAuthenticatedAndActive, CanRequestAssignment]
 
-    def get_queryset(self):
-        user = resolve_request_user(self.request)
-        return get_assignment_requests_for_user(user)
-
-    @transaction.atomic
     def perform_create(self, serializer):
-        user = resolve_request_user(self.request)
-
-        if user.role != "student":
-            raise serializers.ValidationError(_("Only students can request assignments."))
-
-        case = serializer.validated_data.get("case")
-        message = serializer.validated_data.get("message", "")
-
-        service_request_assignment(
-            case=case,
-            student=user,
-            message=message,
-        )
-
-
-class CaseAssignmentRequestDetailView(generics.RetrieveUpdateAPIView):
-    """
-    Supervisor accepts / rejects assignment request.
-    """
-
-    permission_classes = [IsAuthenticated, IsSupervisor]
-    serializer_class = CaseAssignmentRequestSerializer
-    queryset = CaseAssignmentRequest.objects.select_related("case", "student")
-
-    @transaction.atomic
-    def perform_update(self, serializer):
-        supervisor = resolve_request_user(self.request)
-        assignment = self.get_object()
-
-        new_status = serializer.validated_data.get("status")
-        response = serializer.validated_data.get("supervisor_response", "")
-
-        if new_status not in [
-            CaseAssignmentRequest.Status.ACCEPTED,
-            CaseAssignmentRequest.Status.REJECTED,
-        ]:
-            raise serializers.ValidationError(_("Invalid status change."))
-
-        decide_assignment_request(
-            assignment=assignment,
-            supervisor=supervisor,
-            accept=new_status == CaseAssignmentRequest.Status.ACCEPTED,
-            response=response,
-        )
+        serializer.save(student=self.request.user)
 
 
 # ============================================================
-# Treatment Sessions
+# Sessions
 # ============================================================
-
-class CaseSessionListCreateView(generics.ListCreateAPIView):
-    """
-    Sessions per case:
-    - Student: list & create
-    - Supervisor: list
-    - Patient: read-only
-    """
-
-    permission_classes = [IsAuthenticated]
+class CaseSessionListView(generics.ListAPIView):
+    serializer_class = CaseSessionSerializer
+    permission_classes = [IsAuthenticatedAndActive]
 
     def get_queryset(self):
-        user = resolve_request_user(self.request)
-        case = get_object_or_404(Case, id=self.kwargs["case_id"])
-        return get_sessions_for_case(case, user=user)
+        case_id = self.kwargs["case_id"]
+        user = self.request.user
 
-    def get_serializer_class(self):
-        return CaseSessionCreateSerializer if self.request.method == "POST" else CaseSessionSerializer
+        qs = CaseSession.objects.filter(case_id=case_id)
 
-    @transaction.atomic
+        if user.role.name == Role.PATIENT:
+            qs = qs.filter(case__patient=user)
+
+        elif user.role.name == Role.STUDENT:
+            qs = qs.filter(student=user)
+
+        elif user.role.name == Role.SUPERVISOR:
+            qs = qs.filter(supervisor=user)
+
+        return qs
+
+
+class CaseSessionCreateView(generics.CreateAPIView):
+    serializer_class = CaseSessionCreateSerializer
+    permission_classes = [IsAuthenticatedAndActive, CanCreateSession]
+
     def perform_create(self, serializer):
-        user = resolve_request_user(self.request)
-        case = serializer.validated_data["case"]
-        notes = serializer.validated_data["notes"]
-
-        session = create_session(
-            case=case,
-            student=user,
-            notes=notes,
-        )
-
-        # 🔗 Hook: notify supervisor (real-time supervision)
-        # apps.notifications / apps.messaging will listen to this event
-        # Example (future):
-        # notify_supervisor_new_session(session)
-
-        return session
+        serializer.save(context={"request": self.request})
 
 
 class CaseSessionReviewView(generics.UpdateAPIView):
-    """
-    Supervisor reviews a treatment session.
-    """
-
-    permission_classes = [IsAuthenticated, IsSupervisor]
+    queryset = CaseSession.objects.all()
     serializer_class = CaseSessionReviewSerializer
-    queryset = CaseSession.objects.select_related("case", "student", "supervisor")
-
-    @transaction.atomic
-    def perform_update(self, serializer):
-        supervisor = resolve_request_user(self.request)
-        session = self.get_object()
-
-        approve = serializer.validated_data["status"] == CaseSession.Status.APPROVED
-        feedback = serializer.validated_data.get("supervisor_feedback", "")
-
-        review_session(
-            session=session,
-            supervisor=supervisor,
-            approve=approve,
-            feedback=feedback,
-        )
-
-        # 🔗 Hook: notify student of review decision
-        # notify_student_session_review(session)
-
-
-# ============================================================
-# Legacy API (Backward Compatibility)
-# ============================================================
-
-@api_view(["POST"])
-@permission_classes([IsAuthenticated, IsStudent])
-@transaction.atomic
-def request_case_assignment(request, case_id):
-    """
-    Legacy endpoint for assignment request.
-    """
-
-    student = resolve_request_user(request)
-    case = get_object_or_404(Case, id=case_id)
-    message = request.data.get("message", "")
-
-    assignment = service_request_assignment(
-        case=case,
-        student=student,
-        message=message,
-    )
-
-    serializer = CaseAssignmentRequestSerializer(assignment)
-    return api_success(
-        _("Assignment request created."),
-        serializer.data,
-        status.HTTP_201_CREATED,
-    )
+    permission_classes = [IsAuthenticatedAndActive, CanReviewSession]

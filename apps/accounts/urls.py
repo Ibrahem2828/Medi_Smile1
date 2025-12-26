@@ -1,196 +1,75 @@
+# apps/accounts/urls.py
 from django.urls import path
 
 from .views import (
-    # ============================================================
-    # AUTH
-    # ============================================================
-    LoginView,
-    LogoutView,
+    # Login
+    PatientLoginView,
+    StudentLoginView,
+    SupervisorLoginView,
+    UniversityAdminLoginView,
+    TechSupportLoginView,
 
-    # ============================================================
-    # PATIENT
-    # ============================================================
-    PatientCreateView,
-    PatientListView,
-    PatientDetailView,
-    PatientUpdateView,
-
-    # ============================================================
-    # STUDENT
-    # ============================================================
+    # Registration / Creation
+    PatientRegisterView,
     StudentCreateView,
-    StudentListView,
-    StudentDetailView,
-    StudentUpdateView,
-
-    # ============================================================
-    # SUPERVISOR
-    # ============================================================
     SupervisorCreateView,
-    SupervisorListView,
-    SupervisorDetailView,
-    SupervisorUpdateView,
-
-    # ============================================================
-    # UNIVERSITY ADMIN
-    # ============================================================
     UniversityAdminCreateView,
-    UniversityAdminListView,
-    UniversityAdminDetailView,
-    UniversityAdminUpdateView,
-
-    # ============================================================
-    # TECH SUPPORT (SYSTEM)
-    # ============================================================
     TechSupportCreateView,
-    TechSupportListView,
-    TechSupportDetailView,
-    TechSupportUpdateView,
+
+    # Self profile
+    PatientMeView,
+    StudentMeView,
+    SupervisorMeView,
+    UniversityAdminMeView,
+    TechSupportMeView,
 )
 
 urlpatterns = [
-
-    # ============================================================
-    # AUTH
-    # ============================================================
-    path("auth/login/", LoginView.as_view(), name="auth-login"),
-    path("auth/logout/", LogoutView.as_view(), name="auth-logout"),
-
-    # ============================================================
-    # PATIENT
-    # ============================================================
-    # Public registration
+    # =====================================================
+    # AUTHENTICATION (Separated Login)
+    # =====================================================
+    path("login/patient/", PatientLoginView.as_view(), name="login-patient"),
+    path("login/student/", StudentLoginView.as_view(), name="login-student"),
+    path("login/supervisor/", SupervisorLoginView.as_view(), name="login-supervisor"),
     path(
-        "patients/register/",
-        PatientCreateView.as_view(),
-        name="patient-register",
+        "login/university-admin/",
+        UniversityAdminLoginView.as_view(),
+        name="login-university-admin",
+    ),
+    path(
+        "login/tech-support/",
+        TechSupportLoginView.as_view(),
+        name="login-tech-support",
     ),
 
-    # Internal / admin listing
-    path(
-        "patients/",
-        PatientListView.as_view(),
-        name="patient-list",
-    ),
+    # =====================================================
+    # REGISTRATION / CREATION
+    # =====================================================
+    path("register/patient/", PatientRegisterView.as_view(), name="register-patient"),
 
-    # Detail & self-access
+    path("create/student/", StudentCreateView.as_view(), name="create-student"),
+    path("create/supervisor/", SupervisorCreateView.as_view(), name="create-supervisor"),
     path(
-        "patients/<uuid:user_id>/",
-        PatientDetailView.as_view(),
-        name="patient-detail",
-    ),
-
-    path(
-        "patients/<uuid:user_id>/update/",
-        PatientUpdateView.as_view(),
-        name="patient-update",
-    ),
-
-    # ============================================================
-    # STUDENT
-    # ============================================================
-    path(
-        "students/",
-        StudentListView.as_view(),
-        name="student-list",
-    ),
-
-    path(
-        "students/create/",
-        StudentCreateView.as_view(),
-        name="student-create",
-    ),
-
-    path(
-        "students/<uuid:user_id>/",
-        StudentDetailView.as_view(),
-        name="student-detail",
-    ),
-
-    path(
-        "students/<uuid:user_id>/update/",
-        StudentUpdateView.as_view(),
-        name="student-update",
-    ),
-
-    # ============================================================
-    # SUPERVISOR
-    # ============================================================
-    path(
-        "supervisors/",
-        SupervisorListView.as_view(),
-        name="supervisor-list",
-    ),
-
-    path(
-        "supervisors/create/",
-        SupervisorCreateView.as_view(),
-        name="supervisor-create",
-    ),
-
-    path(
-        "supervisors/<uuid:user_id>/",
-        SupervisorDetailView.as_view(),
-        name="supervisor-detail",
-    ),
-
-    path(
-        "supervisors/<uuid:user_id>/update/",
-        SupervisorUpdateView.as_view(),
-        name="supervisor-update",
-    ),
-
-    # ============================================================
-    # UNIVERSITY ADMIN
-    # ============================================================
-    path(
-        "university-admins/",
-        UniversityAdminListView.as_view(),
-        name="university-admin-list",
-    ),
-
-    path(
-        "university-admins/create/",
+        "create/university-admin/",
         UniversityAdminCreateView.as_view(),
-        name="university-admin-create",
+        name="create-university-admin",
     ),
-
     path(
-        "university-admins/<uuid:user_id>/",
-        UniversityAdminDetailView.as_view(),
-        name="university-admin-detail",
-    ),
-
-    path(
-        "university-admins/<uuid:user_id>/update/",
-        UniversityAdminUpdateView.as_view(),
-        name="university-admin-update",
-    ),
-
-    # ============================================================
-    # TECH SUPPORT (SYSTEM / INTERNAL)
-    # ============================================================
-    path(
-        "system/tech-support/",
-        TechSupportListView.as_view(),
-        name="tech-support-list",
-    ),
-
-    path(
-        "system/tech-support/create/",
+        "create/tech-support/",
         TechSupportCreateView.as_view(),
-        name="tech-support-create",
+        name="create-tech-support",
     ),
 
+    # =====================================================
+    # SELF PROFILE (ME)
+    # =====================================================
+    path("me/patient/", PatientMeView.as_view(), name="me-patient"),
+    path("me/student/", StudentMeView.as_view(), name="me-student"),
+    path("me/supervisor/", SupervisorMeView.as_view(), name="me-supervisor"),
     path(
-        "system/tech-support/<uuid:user_id>/",
-        TechSupportDetailView.as_view(),
-        name="tech-support-detail",
+        "me/university-admin/",
+        UniversityAdminMeView.as_view(),
+        name="me-university-admin",
     ),
-
-    path(
-        "system/tech-support/<uuid:user_id>/update/",
-        TechSupportUpdateView.as_view(),
-        name="tech-support-update",
-    ),
+    path("me/tech-support/", TechSupportMeView.as_view(), name="me-tech-support"),
 ]

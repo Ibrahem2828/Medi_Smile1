@@ -1,151 +1,134 @@
-from django.test import TestCase
-from django.utils import timezone
-from django.core.exceptions import ValidationError
+# apps/reports/tests.py
+from django.urls import reverse
+from rest_framework import status
+from rest_framework.test import APITestCase
 
-from apps.accounts.models import User
+from apps.accounts.models import User, Role
 from apps.universities.models import University
 from apps.reports.models import Report
+from apps.notifications.models import Notification
+from apps.audit.models import AuditLog
+from apps.cases.models import Case
 
 
-class ReportModelTest(TestCase):
-    """
-    Test suite for Report model.
-    Covers:
-    - Creation
-    - Role constraints
-    - Defaults
-    - String representation
-    - Active flag behavior
-    """
+class ReportsAPITest(APITestCase):
 
     def setUp(self):
-        """
-        Prepare common test objects.
-        """
-        self.university = University.objects.create(
-            name="Test University",
-            address="Test Address"
-        )
+        self.university = University.objects.create(name="Test Uni")
 
         self.student = User.objects.create_user(
-            username="student1",
-            email="student1@test.com",
-            password="testpass123",
-            role="student"
+            username="student",
+            password="pass",
+            role=Role.objects.get(name=Role.STUDENT),
+            university=self.university,
         )
 
         self.supervisor = User.objects.create_user(
-            username="supervisor1",
-            email="supervisor@test.com",
-            password="testpass123",
-            role="supervisor"
+            username="supervisor",
+            password="pass",
+            role=Role.objects.get(name=Role.SUPERVISOR),
+            university=self.university,
         )
 
         self.admin = User.objects.create_user(
-            username="admin1",
-            email="admin1@test.com",
-            password="testpass123",
-            role="university_admin"
+            username="admin",
+            password="pass",
+            role=Role.objects.get(name=Role.UNIVERSITY_ADMIN),
+            university=self.university,
         )
 
-    # ============================================================
-    # Creation
-    # ============================================================
+        self.tech = User.objects.create_user(
+            username="tech",
+            password="pass",
+            role=Role.objects.get(name=Role.TECH_SUPPORT),
+        )
 
-    def test_create_report_successfully(self):
-        """
-        Report should be created with valid data.
-        """
+        self.case = Case.objects.create(
+            patient=self.student,  # simplified for test
+            university=self.university,
+            supervisor=self.supervisor,
+            student=self.student,
+        )
+
+    # ---------------------------------------------------------
+    # Permissions
+    # ---------------------------------------------------------
+
+    def test_student_can_view_own_reports_only(self):
         report = Report.objects.create(
             student=self.student,
             university=self.university,
             report_type="academic",
-            file_url="https://example.com/report.pdf",
-            generated_by=self.admin,
-            title="Academic Performance Report",
-            description="Semester performance summary"
+            file_url="/r.pdf",
         )
 
-        self.assertEqual(report.student, self.student)
-        self.assertEqual(report.university, self.university)
-        self.assertEqual(report.report_type, "academic")
-        self.assertEqual(report.generated_by, self.admin)
-        self.assertTrue(report.is_active)
-        self.assertIsNotNone(report.generated_at)
-        self.assertIsNotNone(report.created_at)
+        self.client.force_authenticate(self.student)
+        url = reverse("reports:report-detail", args=[report.id])
+        res = self.client.get(url)
 
-    # ============================================================
-    # Defaults & Flags
-    # ============================================================
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
 
-    def test_report_defaults(self):
-        """
-        Ensure default values are set correctly.
-        """
+    def test_student_cannot_generate_report(self):
+        self.client.force_authenticate(self.student)
+        url = reverse("reports:report-list")
+        res = self.client.post(url, {})
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_supervisor_can_generate_report(self):
+        self.client.force_authenticate(self.supervisor)
+        url = reverse("reports:report-list")
+
+        payload = {
+            "student_id": str(self.student.id),
+            "university_id": str(self.university.id),
+            "report_type": "academic",
+            "file_url": "/test.pdf",
+        }
+
+        res = self.client.post(url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+
+    # ---------------------------------------------------------
+    # Business Rules
+    # ---------------------------------------------------------
+
+    def test_report_is_immutable(self):
         report = Report.objects.create(
             student=self.student,
             university=self.university,
-            report_type="clinical",
-            file_url="/reports/clinical.pdf"
+            report_type="academic",
+            file_url="/r.pdf",
         )
 
-        self.assertTrue(report.is_active)
-        self.assertIsNone(report.generated_by)
-        self.assertIsNone(report.title)
-        self.assertIsNone(report.description)
+        report.title = "Hacked"
+        with self.assertRaises(RuntimeError):
+            report.save()
 
-    # ============================================================
-    # Constraints
-    # ============================================================
+    # ---------------------------------------------------------
+    # Audit + Notification
+    # ---------------------------------------------------------
 
-    def test_report_requires_student_role(self):
-        """
-        Only users with role=student can be linked as report.student.
-        """
-        with self.assertRaises(Exception):
-            Report.objects.create(
-                student=self.admin,  # invalid role
-                university=self.university,
-                report_type="academic",
-                file_url="/invalid.pdf"
-            )
+    def test_submit_report_creates_audit_and_notification(self):
+        self.client.force_authenticate(self.student)
 
-    # ============================================================
-    # String Representation
-    # ============================================================
+        url = reverse("reports:submit-report", args=[self.case.id])
+        payload = {"content": "Case report content"}
 
-    def test_report_string_representation(self):
-        """
-        __str__ should be human-readable and informative.
-        """
-        report = Report.objects.create(
-            student=self.student,
-            university=self.university,
-            report_type="progress",
-            file_url="/reports/progress.pdf"
+        res = self.client.post(url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+
+        # Audit log created
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action="reports.report.submitted",
+                user=self.student,
+            ).exists()
         )
 
-        text = str(report)
-        self.assertIn(self.student.username, text)
-        self.assertIn(self.university.name, text)
-
-    # ============================================================
-    # Soft Deactivation
-    # ============================================================
-
-    def test_deactivate_report(self):
-        """
-        Report can be soft-disabled without deletion.
-        """
-        report = Report.objects.create(
-            student=self.student,
-            university=self.university,
-            report_type="attendance",
-            file_url="/reports/attendance.pdf"
+        # Notification sent to supervisor
+        self.assertTrue(
+            Notification.objects.filter(
+                recipient=self.supervisor,
+                notification_type="report_submitted",
+            ).exists()
         )
-
-        report.is_active = False
-        report.save(update_fields=["is_active"])
-
-        report.refresh_from_db()
-        self.assertFalse(report.is_active)

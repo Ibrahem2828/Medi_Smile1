@@ -1,10 +1,16 @@
+# apps/support/views.py
+from django.db.models import Count, Q
+from django.shortcuts import get_object_or_404
+from django.utils.translation import gettext_lazy as _
 from rest_framework import generics, status
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from django.shortcuts import get_object_or_404
-from django.db.models import Count
-from django.utils.translation import gettext_lazy as _
+
+from apps.accounts.models import Role
+from apps.accounts.permissions import IsTechSupport  # موجود عندك مسبقاً
+from medismile.utils.auth import resolve_request_user
 
 from .models import SupportTicket, SupportTicketResponse
 from .serializers import (
@@ -15,92 +21,115 @@ from .serializers import (
     SupportTicketResponseCreateSerializer,
     SupportTicketResponseSerializer,
 )
-from apps.accounts.permissions import IsTechSupport
-from medismile.utils.auth import resolve_request_user
 
 
-# ============================================================
+# ------------------------------------------------------------
 # Unified API Response
-# ============================================================
+# ------------------------------------------------------------
 
 class APIResponse:
     @staticmethod
     def success(message, data=None, status_code=status.HTTP_200_OK):
-        return Response(
-            {
-                "status": "success",
-                "message": message,
-                "data": data,
-            },
-            status=status_code,
-        )
+        return Response({"status": "success", "message": message, "data": data}, status=status_code)
 
     @staticmethod
     def error(message, errors=None, status_code=status.HTTP_400_BAD_REQUEST):
-        return Response(
-            {
-                "status": "error",
-                "message": message,
-                "errors": errors,
-            },
-            status=status_code,
-        )
+        return Response({"status": "error", "message": message, "errors": errors}, status=status_code)
 
 
-# ============================================================
-# Support Ticket – List & Create
-# ============================================================
+# ------------------------------------------------------------
+# Pagination
+# ------------------------------------------------------------
+
+class SupportPagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = "page_size"
+    max_page_size = 100
+
+
+# ------------------------------------------------------------
+# University scope helpers (membership-based)
+# ------------------------------------------------------------
+
+def _get_user_university_ids(user) -> set:
+    ids = set()
+    if getattr(user, "university_id", None):
+        ids.add(user.university_id)
+
+    rel = getattr(user, "universities", None)
+    if rel is not None and hasattr(rel, "all"):
+        ids |= set(rel.values_list("id", flat=True))
+    return ids
+
+
+def _ticket_queryset_for_user(user):
+    qs = (
+        SupportTicket.objects
+        .select_related("created_by", "assigned_to")
+        .annotate(responses_count=Count("responses"))
+    )
+
+    role_name = getattr(getattr(user, "role", None), "name", None)
+
+    # IT/Tech support: all
+    if role_name == Role.TECH_SUPPORT:
+        return qs
+
+    # University admin: tickets in his university scope (created_by's university)
+    if role_name == Role.UNIVERSITY_ADMIN:
+        uni_ids = _get_user_university_ids(user)
+
+        # Support ticket doesn't have university field -> derive from created_by
+        # supports created_by.university FK OR created_by.universities M2M
+        qs = qs.filter(
+            Q(created_by__university_id__in=uni_ids) |
+            Q(created_by__universities__id__in=uni_ids)
+        ).distinct()
+        return qs
+
+    # Others: only own tickets
+    return qs.filter(created_by=user)
+
+
+# ------------------------------------------------------------
+# Tickets: List + Create
+# ------------------------------------------------------------
 
 class SupportTicketListView(generics.ListCreateAPIView):
-    """
-    - Any authenticated user: create ticket
-    - Tech support: see all tickets
-    - Normal users: see own tickets only
-    """
-
     permission_classes = [IsAuthenticated]
+    pagination_class = SupportPagination
 
     def get_serializer_class(self):
-        if self.request.method == "POST":
-            return SupportTicketCreateSerializer
-        return SupportTicketListSerializer
+        return SupportTicketCreateSerializer if self.request.method == "POST" else SupportTicketListSerializer
 
     def get_queryset(self):
         user = resolve_request_user(self.request)
+        qs = _ticket_queryset_for_user(user)
 
-        queryset = (
-            SupportTicket.objects
-            .select_related("created_by", "assigned_to")
-            .annotate(responses_count=Count("responses"))
-        )
-
-        if user.role != "tech_support":
-            queryset = queryset.filter(created_by=user)
-
-        # Optional filters
+        # Filters
         status_filter = self.request.query_params.get("status")
         priority_filter = self.request.query_params.get("priority")
         category_filter = self.request.query_params.get("category")
+        related_app = self.request.query_params.get("related_app")
 
         if status_filter:
-            queryset = queryset.filter(status=status_filter)
+            qs = qs.filter(status=status_filter)
         if priority_filter:
-            queryset = queryset.filter(priority=priority_filter)
+            qs = qs.filter(priority=priority_filter)
         if category_filter:
-            queryset = queryset.filter(category=category_filter)
+            qs = qs.filter(category=category_filter)
+        if related_app:
+            qs = qs.filter(related_app=related_app)
 
-        return queryset.order_by("-created_at")
+        return qs.order_by("-created_at")
 
     def list(self, request, *args, **kwargs):
-        queryset = self.get_queryset()
-        serializer = self.get_serializer(queryset, many=True)
-        return APIResponse.success(
-            _("Support tickets retrieved successfully."),
-            serializer.data,
-        )
+        page = self.paginate_queryset(self.get_queryset())
+        serializer = self.get_serializer(page, many=True)
+        return self.get_paginated_response({"status": "success", "message": _("Tickets retrieved."), "data": serializer.data})
 
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
+        serializer = self.get_serializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         ticket = serializer.save()
 
@@ -111,146 +140,107 @@ class SupportTicketListView(generics.ListCreateAPIView):
         )
 
 
-# ============================================================
-# Support Ticket – Detail / Update
-# ============================================================
+# ------------------------------------------------------------
+# Ticket: Retrieve + Update
+# ------------------------------------------------------------
 
 class SupportTicketDetailView(generics.RetrieveUpdateAPIView):
-    """
-    - Owner: read-only
-    - Tech support: update
-    """
-
     permission_classes = [IsAuthenticated]
     lookup_url_kwarg = "ticket_id"
 
     def get_queryset(self):
         user = resolve_request_user(self.request)
-
-        queryset = (
-            SupportTicket.objects
-            .select_related("created_by", "assigned_to")
+        qs = (
+            _ticket_queryset_for_user(user)
             .prefetch_related("responses__author")
         )
-
-        if user.role != "tech_support":
-            queryset = queryset.filter(created_by=user)
-
-        return queryset
+        return qs
 
     def get_serializer_class(self):
-        if self.request.method in ["PUT", "PATCH"]:
+        if self.request.method in ("PUT", "PATCH"):
             return SupportTicketUpdateSerializer
         return SupportTicketDetailSerializer
 
     def retrieve(self, request, *args, **kwargs):
         ticket = self.get_object()
-        serializer = self.get_serializer(ticket)
-        return APIResponse.success(
-            _("Support ticket retrieved successfully."),
-            serializer.data,
-        )
+        return APIResponse.success(_("Ticket retrieved."), self.get_serializer(ticket).data)
 
     def update(self, request, *args, **kwargs):
         user = resolve_request_user(request)
-        if user.role != "tech_support":
-            return APIResponse.error(
-                _("You are not allowed to update this ticket."),
-                status_code=status.HTTP_403_FORBIDDEN,
-            )
+        role_name = getattr(getattr(user, "role", None), "name", None)
+
+        if role_name not in {Role.TECH_SUPPORT, Role.UNIVERSITY_ADMIN}:
+            return APIResponse.error(_("You are not allowed to update this ticket."), status_code=status.HTTP_403_FORBIDDEN)
 
         ticket = self.get_object()
-        serializer = self.get_serializer(ticket, data=request.data, partial=True)
+        serializer = self.get_serializer(ticket, data=request.data, partial=True, context={"request": request})
         serializer.is_valid(raise_exception=True)
         ticket = serializer.save()
 
-        return APIResponse.success(
-            _("Support ticket updated successfully."),
-            SupportTicketDetailSerializer(ticket).data,
-        )
+        return APIResponse.success(_("Ticket updated successfully."), SupportTicketDetailSerializer(ticket).data)
 
 
-# ============================================================
-# Support Ticket Responses
-# ============================================================
+# ------------------------------------------------------------
+# Ticket Responses: List + Create
+# ------------------------------------------------------------
 
 class SupportTicketResponseListView(generics.ListCreateAPIView):
-    """
-    List & create responses for a support ticket.
-    """
-
     permission_classes = [IsAuthenticated]
+    pagination_class = SupportPagination
 
     def get_serializer_class(self):
-        if self.request.method == "POST":
-            return SupportTicketResponseCreateSerializer
-        return SupportTicketResponseSerializer
+        return SupportTicketResponseCreateSerializer if self.request.method == "POST" else SupportTicketResponseSerializer
 
     def get_ticket(self):
-        return get_object_or_404(
-            SupportTicket,
-            id=self.kwargs["ticket_id"],
-        )
+        # use scoped ticket queryset
+        user = resolve_request_user(self.request)
+        qs = _ticket_queryset_for_user(user)
+        return get_object_or_404(qs, id=self.kwargs["ticket_id"])
 
     def get_queryset(self):
-        ticket = self.get_ticket()
         user = resolve_request_user(self.request)
+        ticket = self.get_ticket()
 
-        queryset = SupportTicketResponse.objects.filter(ticket=ticket).select_related("author")
+        qs = SupportTicketResponse.objects.filter(ticket=ticket).select_related("author")
 
-        # Hide internal notes from non-tech users
-        if user.role != "tech_support":
-            queryset = queryset.filter(is_internal=False)
+        # internal notes only for tech support
+        if getattr(getattr(user, "role", None), "name", None) != Role.TECH_SUPPORT:
+            qs = qs.filter(is_internal=False)
 
-        # Prevent access to чужие tickets
-        if user.role != "tech_support" and ticket.created_by != user:
-            return SupportTicketResponse.objects.none()
-
-        return queryset
+        return qs.order_by("created_at")
 
     def get_serializer_context(self):
-        context = super().get_serializer_context()
-        context["ticket"] = self.get_ticket()
-        return context
+        ctx = super().get_serializer_context()
+        ctx["ticket"] = self.get_ticket()
+        return ctx
 
     def list(self, request, *args, **kwargs):
-        queryset = self.get_queryset()
-        serializer = self.get_serializer(queryset, many=True)
-        return APIResponse.success(
-            _("Ticket responses retrieved successfully."),
-            serializer.data,
-        )
+        page = self.paginate_queryset(self.get_queryset())
+        serializer = self.get_serializer(page, many=True)
+        return self.get_paginated_response({"status": "success", "message": _("Responses retrieved."), "data": serializer.data})
 
     def create(self, request, *args, **kwargs):
         ticket = self.get_ticket()
         user = resolve_request_user(request)
+        role_name = getattr(getattr(user, "role", None), "name", None)
 
-        if user.role != "tech_support" and ticket.created_by != user:
-            return APIResponse.error(
-                _("You are not allowed to respond to this ticket."),
-                status_code=status.HTTP_403_FORBIDDEN,
-            )
+        # Only: ticket owner OR university admin (same scope) OR tech support
+        if role_name not in {Role.TECH_SUPPORT, Role.UNIVERSITY_ADMIN} and ticket.created_by_id != user.id:
+            return APIResponse.error(_("You are not allowed to respond to this ticket."), status_code=status.HTTP_403_FORBIDDEN)
 
-        serializer = self.get_serializer(data=request.data)
+        serializer = self.get_serializer(data=request.data, context={"request": request, "ticket": ticket})
         serializer.is_valid(raise_exception=True)
-        response = serializer.save()
+        response_obj = serializer.save()
 
-        return APIResponse.success(
-            _("Response sent successfully."),
-            SupportTicketResponseSerializer(response).data,
-            status.HTTP_201_CREATED,
-        )
+        # Ensure non-tech cannot create internal notes (already validated)
+        return APIResponse.success(_("Response sent successfully."), SupportTicketResponseSerializer(response_obj).data, status.HTTP_201_CREATED)
 
 
-# ============================================================
-# Support Ticket Statistics (Tech Support)
-# ============================================================
+# ------------------------------------------------------------
+# Analytics: Tech Support only
+# ------------------------------------------------------------
 
 class SupportTicketStatsView(APIView):
-    """
-    Statistics dashboard for tech support.
-    """
-
     permission_classes = [IsAuthenticated, IsTechSupport]
 
     def get(self, request):
@@ -260,16 +250,9 @@ class SupportTicketStatsView(APIView):
             "in_progress": SupportTicket.objects.filter(status=SupportTicket.Status.IN_PROGRESS).count(),
             "resolved": SupportTicket.objects.filter(status=SupportTicket.Status.RESOLVED).count(),
             "closed": SupportTicket.objects.filter(status=SupportTicket.Status.CLOSED).count(),
-            "urgent": SupportTicket.objects.filter(
+            "urgent_open": SupportTicket.objects.filter(
                 priority=SupportTicket.Priority.URGENT,
-                status__in=[
-                    SupportTicket.Status.OPEN,
-                    SupportTicket.Status.IN_PROGRESS,
-                ],
+                status__in=[SupportTicket.Status.OPEN, SupportTicket.Status.IN_PROGRESS],
             ).count(),
         }
-
-        return APIResponse.success(
-            _("Support ticket statistics retrieved successfully."),
-            stats,
-        )
+        return APIResponse.success(_("Support ticket statistics retrieved successfully."), stats)

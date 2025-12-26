@@ -1,28 +1,68 @@
 from rest_framework import serializers
-from django.contrib.auth import get_user_model
+from django.conf import settings
+
 from .models import Room, Message
-from apps.accounts.serializers import UserSerializer
 
-User = get_user_model()
+User = settings.AUTH_USER_MODEL
 
 
-class RoomSerializer(serializers.ModelSerializer):
-    participant1 = UserSerializer(read_only=True)
-    participant2 = UserSerializer(read_only=True)
-    participant1_id = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), source='participant1', write_only=True)
-    participant2_id = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), source='participant2', write_only=True)
+# ============================================================
+# Minimal Public User Serializer (Messaging Scope)
+# ============================================================
+class MessagingUserSerializer(serializers.ModelSerializer):
+    """
+    Minimal, read-only user representation for messaging.
+    """
 
     class Meta:
-        model = Room
-        fields = ['id', 'participant1', 'participant2', 'participant1_id', 'participant2_id', 'created_at']
-        read_only_fields = ['id', 'created_at']
+        model = User
+        fields = (
+            "id",
+            "first_name",
+            "last_name",
+        )
+        read_only_fields = fields
 
 
+# ============================================================
+# Message Serializer
+# ============================================================
 class MessageSerializer(serializers.ModelSerializer):
-    sender = UserSerializer(read_only=True)
-    room = serializers.PrimaryKeyRelatedField(queryset=Room.objects.all())
+    sender = MessagingUserSerializer(read_only=True)
 
     class Meta:
         model = Message
-        fields = ['id', 'room', 'sender', 'content', 'sent_at', 'is_read']
-        read_only_fields = ['id', 'sender', 'sent_at']
+        fields = (
+            "id",
+            "sender",
+            "content",
+            "sent_at",
+            "is_system",
+        )
+        read_only_fields = (
+            "id",
+            "sender",
+            "sent_at",
+            "is_system",
+        )
+
+
+# ============================================================
+# Room Serializer
+# ============================================================
+class RoomSerializer(serializers.ModelSerializer):
+    participant_patient = MessagingUserSerializer(read_only=True)
+    participant_student = MessagingUserSerializer(read_only=True)
+    messages = MessageSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Room
+        fields = (
+            "id",
+            "case",
+            "participant_patient",
+            "participant_student",
+            "created_at",
+            "messages",
+        )
+        read_only_fields = fields

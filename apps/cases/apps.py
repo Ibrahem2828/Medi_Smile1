@@ -1,15 +1,26 @@
+# apps/cases/apps.py
 from django.apps import AppConfig
-from django.utils.translation import gettext_lazy as _
 
 
 class CasesConfig(AppConfig):
+    """
+    Cases app configuration.
+
+    - Core medical workflow (Cases, Sessions, Assignments).
+    - Integrates with Universities for scoping.
+    - Integrates with Accounts for role-based access.
+    """
+
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.cases"
-    verbose_name = _("Medical Cases")
+    verbose_name = "Medical Cases"
 
     def ready(self):
         """
-        Hook for future signals (case lifecycle, history, notifications).
+        Hook for future signals:
+        - Case creation audit
+        - Automatic notifications
+        - Status transition logging
         """
-        # import apps.cases.signals  # يُفعّل لاحقًا عند الحاجة
+        # from . import signals  # noqa: F401
         pass

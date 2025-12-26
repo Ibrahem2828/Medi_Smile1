@@ -1,5 +1,4 @@
 # apps/audit/models.py
-
 import uuid
 from django.db import models
 from django.utils.translation import gettext_lazy as _
@@ -11,6 +10,12 @@ from apps.universities.models import University
 
 
 class AuditAction(models.TextChoices):
+    """
+    Canonical actions used for filtering and analytics.
+    NOTE: We keep this enum for standardization, but the `AuditLog.action`
+    field is NOT restricted to these choices, so you can log custom events like:
+    `community.content.approved` safely.
+    """
     LOGIN = "login", _("Login")
     LOGOUT = "logout", _("Logout")
 
@@ -41,7 +46,12 @@ class AuditAction(models.TextChoices):
 class AuditLog(models.Model):
     """
     Immutable audit log entry.
-    Used for tracking all critical actions across the system.
+
+    Principles:
+    - Write-only (immutable)
+    - Structured metadata
+    - Optional generic target (content_object)
+    - University-scoped where relevant
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -66,16 +76,17 @@ class AuditLog(models.Model):
         blank=True,
         related_name="audit_logs",
         verbose_name=_("University"),
-        help_text=_("University scope of the action"),
+        help_text=_("University scope of the action (if any)"),
     )
 
     # =====================================================
     # Action
     # =====================================================
     action = models.CharField(
-        max_length=30,
-        choices=AuditAction.choices,
+        max_length=80,
         verbose_name=_("Action"),
+        help_text=_("Canonical action or custom event name (e.g. community.content.approved)"),
+        db_index=True,
     )
 
     description = models.TextField(
@@ -132,9 +143,6 @@ class AuditLog(models.Model):
         verbose_name=_("Created At"),
     )
 
-    # =====================================================
-    # Meta
-    # =====================================================
     class Meta:
         db_table = "audit_logs"
         verbose_name = _("Audit Log")
@@ -142,7 +150,7 @@ class AuditLog(models.Model):
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["user", "action"]),
-            models.Index(fields=["university"]),
+            models.Index(fields=["university", "created_at"]),
             models.Index(fields=["created_at"]),
         ]
 
@@ -152,7 +160,7 @@ class AuditLog(models.Model):
     def save(self, *args, **kwargs):
         if self.pk:
             raise RuntimeError("Audit logs are immutable and cannot be modified.")
-        super().save(*args, **kwargs)
+        return super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
         raise RuntimeError("Audit logs cannot be deleted.")

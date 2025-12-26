@@ -1,58 +1,105 @@
-from django.test import TestCase
-from django.contrib.auth import get_user_model
-from cases.models import Case
-from .models import Conversation, Message, Notification
+# apps/messaging/tests.py
+from django.urls import reverse
+from django.utils import timezone
+from rest_framework import status
+from rest_framework.test import APITestCase
 
-User = get_user_model()
+from apps.accounts.models import User, Role
+from apps.universities.models import University
+from apps.cases.models import Case
+from apps.messaging.models import Room, Message
 
 
-class MessagingModelsTest(TestCase):
-    def setUp(self):
-        self.user1 = User.objects.create_user(
-            email='patient@example.com',
-            password='password123',
-            first_name='John',
-            last_name='Doe',
-            role='patient'
+class MessagingBaseTestCase(APITestCase):
+    @classmethod
+    def setUpTestData(cls):
+        # Roles
+        cls.patient_role = Role.objects.create(name=Role.PATIENT)
+        cls.student_role = Role.objects.create(name=Role.STUDENT)
+        cls.supervisor_role = Role.objects.create(name=Role.SUPERVISOR)
+
+        # University
+        cls.university = University.objects.create(
+            name="Messaging University",
+            city="City",
+            country="Country",
         )
-        
-        self.user2 = User.objects.create_user(
-            email='student@example.com',
-            password='password123',
-            first_name='Jane',
-            last_name='Smith',
-            role='student'
+
+        # Users
+        cls.patient = User.objects.create_user(
+            email="patient@msg.test",
+            username="patient_msg",
+            password="Patient123!",
+            role=cls.patient_role,
         )
-        
-        self.case = Case.objects.create(
-            university_id=self.user2.university.id,
-            patient=self.user1
+
+        cls.student = User.objects.create_user(
+            email="student@msg.test",
+            username="student_msg",
+            password="Student123!",
+            role=cls.student_role,
         )
-        
-        self.conversation = Conversation.objects.create(case=self.case)
-    
-    def test_conversation_creation(self):
-        self.assertEqual(self.conversation.case, self.case)
-        self.assertEqual(str(self.conversation), f"Conversation for Case {self.case.id}")
-    
-    def test_message_creation(self):
-        message = Message.objects.create(
-            conversation=self.conversation,
-            sender=self.user1,
-            body="Hello, this is a test message"
+
+        cls.supervisor = User.objects.create_user(
+            email="supervisor@msg.test",
+            username="supervisor_msg",
+            password="Supervisor123!",
+            role=cls.supervisor_role,
         )
-        self.assertEqual(message.conversation, self.conversation)
-        self.assertEqual(message.sender, self.user1)
-        self.assertEqual(message.body, "Hello, this is a test message")
-        self.assertEqual(str(message), f"Message from {self.user1.first_name} in {self.conversation}")
-    
-    def test_notification_creation(self):
-        notification = Notification.objects.create(
-            user=self.user2,
-            type='test_notification',
-            payload={'key': 'value'}
+
+        # Case
+        cls.case = Case.objects.create(
+            title="Messaging Case",
+            description="Case for messaging tests",
+            patient=cls.patient,
+            student=cls.student,
+            supervisor=cls.supervisor,
+            university=cls.university,
+            status=Case.Status.ASSIGNED,
         )
-        self.assertEqual(notification.user, self.user2)
-        self.assertEqual(notification.type, 'test_notification')
-        self.assertEqual(notification.payload, {'key': 'value'})
-        self.assertEqual(str(notification), f"Notification for {self.user2.first_name}: test_notification")
+
+        cls.room = Room.objects.create(
+            case=cls.case,
+            participant1=cls.patient,
+            participant2=cls.student,
+        )
+
+
+class MessageTests(MessagingBaseTestCase):
+    def test_participant_can_send_message(self):
+        self.client.login(email="student@msg.test", password="Student123!")
+
+        url = reverse(
+            "message-list-create",
+            kwargs={"room_id": self.room.id},
+        )
+
+        response = self.client.post(
+            url,
+            {"content": "Hello patient"},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(Message.objects.count(), 1)
+
+    def test_non_participant_cannot_send_message(self):
+        other_user = User.objects.create_user(
+            email="other@msg.test",
+            username="other_msg",
+            password="Other123!",
+            role=self.patient_role,
+        )
+
+        self.client.login(email="other@msg.test", password="Other123!")
+
+        url = reverse(
+            "message-list-create",
+            kwargs={"room_id": self.room.id},
+        )
+
+        response = self.client.post(
+            url,
+            {"content": "Hack attempt"},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)

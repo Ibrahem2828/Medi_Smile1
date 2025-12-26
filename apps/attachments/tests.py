@@ -1,85 +1,115 @@
 # apps/attachments/tests.py
-
-from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 from django.core.files.uploadedfile import SimpleUploadedFile
-from rest_framework.test import APIClient
 from rest_framework import status
+from rest_framework.test import APITestCase
 
-from apps.accounts.models import User
-from apps.attachments.models import Attachment
+from apps.accounts.models import User, Role
+from apps.universities.models import University
 from apps.cases.models import Case
+from apps.appointments.models import Appointment
+from apps.attachments.models import Attachment
 
 
-class AttachmentBaseTestCase(TestCase):
-    """
-    Base setup for attachment tests.
-    """
+class AttachmentsBaseTestCase(APITestCase):
+    @classmethod
+    def setUpTestData(cls):
+        # Roles
+        cls.patient_role = Role.objects.create(name=Role.PATIENT)
+        cls.student_role = Role.objects.create(name=Role.STUDENT)
+        cls.supervisor_role = Role.objects.create(name=Role.SUPERVISOR)
+        cls.admin_role = Role.objects.create(name=Role.UNIVERSITY_ADMIN)
+        cls.tech_role = Role.objects.create(name=Role.TECH_SUPPORT)
 
-    def setUp(self):
-        self.client = APIClient()
+        # University
+        cls.university = University.objects.create(
+            name="Dental University",
+            city="City",
+            country="Country",
+        )
 
-        # -------------------------------
         # Users
-        # -------------------------------
-        self.patient = User.objects.create_user(
-            email="patient@test.com",
-            username="patient",
-            password="pass1234",
-            role="patient",
+        cls.patient = User.objects.create_user(
+            email="patient@attach.test",
+            username="patient_attach",
+            password="Patient123!",
+            role=cls.patient_role,
         )
 
-        self.student = User.objects.create_user(
-            email="student@test.com",
-            username="student",
-            password="pass1234",
-            role="student",
+        cls.student = User.objects.create_user(
+            email="student@attach.test",
+            username="student_attach",
+            password="Student123!",
+            role=cls.student_role,
         )
 
-        self.supervisor = User.objects.create_user(
-            email="supervisor@test.com",
-            username="supervisor",
-            password="pass1234",
-            role="supervisor",
+        cls.supervisor = User.objects.create_user(
+            email="supervisor@attach.test",
+            username="supervisor_attach",
+            password="Supervisor123!",
+            role=cls.supervisor_role,
         )
 
-        # -------------------------------
+        cls.admin = User.objects.create_user(
+            email="admin@attach.test",
+            username="admin_attach",
+            password="Admin123!",
+            role=cls.admin_role,
+        )
+        cls.admin.universityadminprofile_profile.university = cls.university
+        cls.admin.universityadminprofile_profile.save()
+
+        cls.tech = User.objects.create_user(
+            email="tech@attach.test",
+            username="tech_attach",
+            password="Tech123!",
+            role=cls.tech_role,
+            is_staff=True,
+        )
+
         # Case
-        # -------------------------------
-        self.case = Case.objects.create(
-            title="Test Case",
-            description="Dental case",
-            patient=self.patient,
-            student=self.student,
-            supervisor=self.supervisor,
+        cls.case = Case.objects.create(
+            title="Attachment Case",
+            description="Case for attachment tests",
+            patient=cls.patient,
+            student=cls.student,
+            supervisor=cls.supervisor,
+            university=cls.university,
             status=Case.Status.ASSIGNED,
         )
 
-        # -------------------------------
-        # File
-        # -------------------------------
-        self.image_file = SimpleUploadedFile(
-            "before.jpg",
-            b"fake-image-content",
-            content_type="image/jpeg",
+        # Appointment
+        cls.appointment = Appointment.objects.create(
+            case=cls.case,
+            patient=cls.patient,
+            student=cls.student,
+            supervisor=cls.supervisor,
+            created_by=cls.student,
+            appointment_date=timezone.now() + timezone.timedelta(days=1),
         )
 
 
-class AttachmentUploadTest(AttachmentBaseTestCase):
-    """
-    Test uploading attachments.
-    """
+# ============================================================
+# Upload Tests
+# ============================================================
+class AttachmentUploadTests(AttachmentsBaseTestCase):
+    def test_student_can_upload_attachment(self):
+        self.client.login(email="student@attach.test", password="Student123!")
 
-    def test_student_can_upload_case_attachment(self):
-        """Student can upload attachment for assigned case."""
-        self.client.force_authenticate(self.student)
+        file = SimpleUploadedFile(
+            "before.jpg",
+            b"file_content",
+            content_type="image/jpeg",
+        )
 
+        url = reverse("attachment-list-create")
         response = self.client.post(
-            reverse("attachment-list"),
+            url,
             {
-                "file": self.image_file,
-                "case_id": self.case.id,
-                "is_public": False,
+                "appointment_id": str(self.appointment.id),
+                "file": file,
+                "attachment_type": Attachment.AttachmentType.BEFORE_IMAGE,
             },
             format="multipart",
         )
@@ -87,129 +117,62 @@ class AttachmentUploadTest(AttachmentBaseTestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(Attachment.objects.count(), 1)
 
-        attachment = Attachment.objects.first()
-        self.assertEqual(attachment.uploaded_by, self.student)
-        self.assertEqual(attachment.case_id, self.case.id)
-        self.assertEqual(attachment.file_type, "image")
+    def test_patient_cannot_upload_attachment(self):
+        self.client.login(email="patient@attach.test", password="Patient123!")
 
-    def test_patient_can_upload_own_attachment(self):
-        """Patient can upload attachment for own case."""
-        self.client.force_authenticate(self.patient)
+        file = SimpleUploadedFile(
+            "test.jpg",
+            b"file_content",
+            content_type="image/jpeg",
+        )
 
+        url = reverse("attachment-list-create")
         response = self.client.post(
-            reverse("attachment-list"),
+            url,
             {
-                "file": self.image_file,
-                "case_id": self.case.id,
-                "is_public": False,
+                "appointment_id": str(self.appointment.id),
+                "file": file,
+                "attachment_type": Attachment.AttachmentType.BEFORE_IMAGE,
             },
             format="multipart",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(Attachment.objects.first().uploaded_by, self.patient)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
 
-class AttachmentAccessTest(AttachmentBaseTestCase):
-    """
-    Test access control to attachments.
-    """
-
+# ============================================================
+# Visibility Tests
+# ============================================================
+class AttachmentVisibilityTests(AttachmentsBaseTestCase):
     def setUp(self):
-        super().setUp()
-
         self.attachment = Attachment.objects.create(
-            file=self.image_file,
-            original_filename="before.jpg",
-            file_type="image",
-            file_size=123,
-            mime_type="image/jpeg",
-            case_id=self.case.id,
+            case=self.case,
+            appointment=self.appointment,
             uploaded_by=self.student,
-            is_public=False,
-        )
-
-    def test_patient_can_view_own_case_attachment(self):
-        """Patient can view attachment related to own case."""
-        self.client.force_authenticate(self.patient)
-
-        response = self.client.get(
-            reverse("attachment-detail", args=[self.attachment.id])
-        )
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-
-    def test_other_patient_cannot_view_attachment(self):
-        """Other patients cannot access attachment."""
-        other_patient = User.objects.create_user(
-            email="other@test.com",
-            username="other",
-            password="pass1234",
-            role="patient",
-        )
-
-        self.client.force_authenticate(other_patient)
-
-        response = self.client.get(
-            reverse("attachment-detail", args=[self.attachment.id])
-        )
-
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-
-    def test_supervisor_can_view_case_attachment(self):
-        """Supervisor can view attachment for supervised case."""
-        self.client.force_authenticate(self.supervisor)
-
-        response = self.client.get(
-            reverse("attachment-detail", args=[self.attachment.id])
-        )
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-
-
-class AttachmentDownloadTest(AttachmentBaseTestCase):
-    """
-    Test downloading attachments.
-    """
-
-    def setUp(self):
-        super().setUp()
-
-        self.attachment = Attachment.objects.create(
-            file=self.image_file,
-            original_filename="before.jpg",
-            file_type="image",
-            file_size=123,
+            file="attachments/test.jpg",
+            original_filename="test.jpg",
+            file_size=100,
             mime_type="image/jpeg",
-            case_id=self.case.id,
-            uploaded_by=self.student,
-            is_public=False,
+            attachment_type=Attachment.AttachmentType.BEFORE_IMAGE,
+            file_category=Attachment.FileCategory.IMAGE,
+            is_visible_to_patient=True,
         )
 
-    def test_student_can_download_attachment(self):
-        """Student can download attachment."""
-        self.client.force_authenticate(self.student)
+    def test_patient_can_view_visible_attachment(self):
+        self.client.login(email="patient@attach.test", password="Patient123!")
 
-        response = self.client.get(
-            reverse("download-attachment", args=[self.attachment.id])
-        )
+        url = reverse("attachment-detail", args=[self.attachment.id])
+        response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn("Content-Disposition", response.headers)
 
-    def test_patient_cannot_download_unrelated_attachment(self):
-        """Patient cannot download attachment from other case."""
-        other_patient = User.objects.create_user(
-            email="other@test.com",
-            username="other",
-            password="pass1234",
-            role="patient",
-        )
+    def test_patient_cannot_view_hidden_attachment(self):
+        self.attachment.is_visible_to_patient = False
+        self.attachment.save()
 
-        self.client.force_authenticate(other_patient)
+        self.client.login(email="patient@attach.test", password="Patient123!")
 
-        response = self.client.get(
-            reverse("download-attachment", args=[self.attachment.id])
-        )
+        url = reverse("attachment-detail", args=[self.attachment.id])
+        response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)

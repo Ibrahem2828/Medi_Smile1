@@ -1,89 +1,75 @@
-from django.test import TestCase
-from django.utils.translation import gettext_lazy as _
-from django.contrib.auth import get_user_model
+# apps/notifications/tests.py
+from django.urls import reverse
+from rest_framework.test import APITestCase
+from rest_framework import status
 
-from apps.notifications.models import Notification
-from apps.appointments.models import Appointment
-from apps.cases.models import Case
-
-User = get_user_model()
+from apps.accounts.models import User, Role
+from .models import Notification
 
 
-class NotificationModelTest(TestCase):
-    """
-    Basic tests for Notification model.
-    """
-
+class NotificationAPITestCase(APITestCase):
     def setUp(self):
-        self.sender = User.objects.create_user(
-            email="student@test.com",
-            username="student1",
-            password="testpass123",
-            role="student",
-        )
+        self.patient_role = Role.objects.get(name=Role.PATIENT)
+        self.student_role = Role.objects.get(name=Role.STUDENT)
 
-        self.recipient = User.objects.create_user(
-            email="patient@test.com",
+        self.patient = User.objects.create_user(
             username="patient1",
-            password="testpass123",
-            role="patient",
+            password="pass1234",
+            role=self.patient_role,
         )
 
-        self.case = Case.objects.create(
-            title="Test Case",
-            description="Test case description",
-            patient=self.recipient,
-            status=Case.Status.ASSIGNED,
+        self.student = User.objects.create_user(
+            username="student1",
+            password="pass1234",
+            role=self.student_role,
         )
 
-        self.appointment = Appointment.objects.create(
-            patient=self.recipient,
-            created_by=self.sender,
-            case=self.case,
-            appointment_date="2030-01-01T10:00:00Z",
+        self.notification = Notification.objects.create(
+            sender=self.student,
+            recipient=self.patient,
+            notification_type="test",
+            title="Test Notification",
+            message="This is a test notification",
         )
 
-    def test_create_notification(self):
-        notification = Notification.objects.create(
-            sender=self.sender,
-            recipient=self.recipient,
-            notification_type="appointment_confirmed",
-            appointment=self.appointment,
-            title="Appointment Confirmed",
-            message="Your appointment has been confirmed.",
-            status="accepted",
-        )
+    def authenticate(self, user):
+        self.client.force_authenticate(user=user)
 
-        self.assertEqual(notification.sender, self.sender)
-        self.assertEqual(notification.recipient, self.recipient)
-        self.assertEqual(notification.appointment, self.appointment)
-        self.assertFalse(notification.is_read)
+    def test_list_notifications_for_recipient(self):
+        self.authenticate(self.patient)
+
+        url = reverse("notifications:notification-list")
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+
+    def test_cannot_view_others_notifications(self):
+        self.authenticate(self.student)
+
+        url = reverse(
+            "notifications:notification-detail",
+            args=[self.notification.id],
+        )
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_mark_notification_as_read(self):
-        notification = Notification.objects.create(
-            sender=self.sender,
-            recipient=self.recipient,
-            notification_type="appointment_confirmed",
-            appointment=self.appointment,
-            title="Appointment Confirmed",
-            message="Confirmed",
-            status="accepted",
+        self.authenticate(self.patient)
+
+        url = reverse(
+            "notifications:notification-detail",
+            args=[self.notification.id],
         )
 
-        notification.is_read = True
-        notification.save(update_fields=["is_read"])
-
-        notification.refresh_from_db()
-        self.assertTrue(notification.is_read)
-
-    def test_notification_str(self):
-        notification = Notification.objects.create(
-            sender=self.sender,
-            recipient=self.recipient,
-            notification_type="appointment_confirmed",
-            title="Test Notification",
-            message="Test message",
-            status="accepted",
+        response = self.client.patch(
+            url,
+            {"is_read": True},
+            format="json",
         )
 
-        self.assertIn("Test Notification", str(notification))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        self.notification.refresh_from_db()
+        self.assertTrue(self.notification.is_read)

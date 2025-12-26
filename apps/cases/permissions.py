@@ -1,174 +1,152 @@
+# apps/cases/permissions.py
 from rest_framework.permissions import BasePermission, SAFE_METHODS
-from django.utils.translation import gettext_lazy as _
 
-from medismile.utils.auth import resolve_request_user
+from apps.accounts.models import Role
 from .models import Case, CaseSession
 
 
 # ============================================================
-# Base Permission (Shared Logic)
+# Helpers
 # ============================================================
+def is_case_owner(user, case: Case) -> bool:
+    return case.patient_id == user.id
 
-class BaseCasePermission(BasePermission):
+
+def is_case_student(user, case: Case) -> bool:
+    return case.student_id == user.id
+
+
+def is_case_supervisor(user, case: Case) -> bool:
+    return case.supervisor_id == user.id
+
+
+def is_same_university(user, case: Case) -> bool:
     """
-    Base permission class for all Case & Session permissions.
-
-    - Supports JWT-authenticated users
-    - Supports fallback user resolution when needed
+    Check if user belongs to the same university as the case.
+    Used mainly for University Admin scope.
     """
+    try:
+        profile = user.universityadminprofile_profile
+    except Exception:
+        return False
 
-    message = _("You do not have permission to perform this action.")
-
-    def get_user(self, request):
-        """
-        Resolve user from request (JWT or fallback user_id).
-        """
-        return resolve_request_user(request)
+    return profile.university_id == case.university_id
 
 
 # ============================================================
-# Case-Level Permissions
+# Base Permissions
 # ============================================================
-
-class IsCasePatient(BaseCasePermission):
-    """
-    Allow access ONLY to the patient who owns the case.
-    """
-
-    def has_object_permission(self, request, view, obj: Case):
-        user = self.get_user(request)
+class IsAuthenticatedActive(BasePermission):
+    def has_permission(self, request, view):
         return (
-            user is not None
-            and user.role == "patient"
-            and obj.patient_id == user.id
+            request.user
+            and request.user.is_authenticated
+            and request.user.is_active
         )
 
 
-class IsCaseStudent(BaseCasePermission):
+# ============================================================
+# Case Permissions
+# ============================================================
+class CanCreateCase(BasePermission):
     """
-    Allow access ONLY to the student assigned to the case.
-    """
-
-    def has_object_permission(self, request, view, obj: Case):
-        user = self.get_user(request)
-        return (
-            user is not None
-            and user.role == "student"
-            and obj.student_id == user.id
-        )
-
-
-class IsCaseSupervisor(BaseCasePermission):
-    """
-    Allow access ONLY to the supervisor assigned to the case.
+    - Patient: can create case for himself
+    - Non-patient: allowed only via privileged flows (handled in serializer)
     """
 
-    def has_object_permission(self, request, view, obj: Case):
-        user = self.get_user(request)
-        return (
-            user is not None
-            and user.role == "supervisor"
-            and obj.supervisor_id == user.id
-        )
+    def has_permission(self, request, view):
+        return request.user.is_authenticated
 
 
-class IsCaseOwnerOrSupervisor(BaseCasePermission):
+class CanViewCase(BasePermission):
     """
-    Allow access to:
-    - Case patient (read-only)
-    - Assigned student (full case workflow)
-    - Assigned supervisor (review & approval)
+    Read access rules:
+    - Patient: only his own case
+    - Student: only assigned cases
+    - Supervisor: only supervised cases
+    - University Admin: cases of his university
+    - IT Support: full read
     """
 
     def has_object_permission(self, request, view, obj: Case):
-        user = self.get_user(request)
-        if not user:
-            return False
+        user = request.user
 
-        if user.role == "patient" and obj.patient_id == user.id:
+        if user.role.name == Role.TECH_SUPPORT:
             return True
 
-        if user.role == "student" and obj.student_id == user.id:
-            return True
+        if user.role.name == Role.PATIENT:
+            return is_case_owner(user, obj)
 
-        if user.role == "supervisor" and obj.supervisor_id == user.id:
-            return True
+        if user.role.name == Role.STUDENT:
+            return is_case_student(user, obj)
+
+        if user.role.name == Role.SUPERVISOR:
+            return is_case_supervisor(user, obj)
+
+        if user.role.name == Role.UNIVERSITY_ADMIN:
+            return is_same_university(user, obj)
 
         return False
 
 
-# ============================================================
-# Case Session Permissions
-# ============================================================
-
-class IsSessionStudent(BaseCasePermission):
+class CanUpdateCase(BasePermission):
     """
-    Allow ONLY the student who created the session.
-    """
-
-    def has_object_permission(self, request, view, obj: CaseSession):
-        user = self.get_user(request)
-        return (
-            user is not None
-            and user.role == "student"
-            and obj.student_id == user.id
-        )
-
-
-class IsSessionSupervisor(BaseCasePermission):
-    """
-    Allow ONLY the supervisor assigned to review the session.
+    Write access rules:
+    - Patient: ❌ no updates
+    - Student: ❌ no metadata updates
+    - Supervisor: limited (status transitions / reviews)
+    - University Admin: ❌ no medical changes
+    - IT Support: ❌ no medical changes
     """
 
-    def has_object_permission(self, request, view, obj: CaseSession):
-        user = self.get_user(request)
-        return (
-            user is not None
-            and user.role == "supervisor"
-            and obj.supervisor_id == user.id
-        )
+    def has_object_permission(self, request, view, obj: Case):
+        user = request.user
+
+        if obj.status == Case.Status.CLOSED:
+            return False
+
+        if user.role.name == Role.SUPERVISOR:
+            return is_case_supervisor(user, obj)
+
+        return False
 
 
-class IsSessionPatientReadOnly(BaseCasePermission):
+class CanRequestAssignment(BasePermission):
     """
-    Allow patient to READ ONLY sessions related to their own case.
+    - Student can request assignment
+    - Case must be public and pending assignment
     """
 
     def has_permission(self, request, view):
-        return request.method in SAFE_METHODS
-
-    def has_object_permission(self, request, view, obj: CaseSession):
-        user = self.get_user(request)
         return (
-            user is not None
-            and user.role == "patient"
-            and obj.case.patient_id == user.id
+            request.user.is_authenticated
+            and request.user.role.name == Role.STUDENT
         )
 
 
 # ============================================================
-# Administrative / System Roles
+# Session Permissions
 # ============================================================
-
-class IsUniversityAdmin(BaseCasePermission):
+class CanCreateSession(BasePermission):
     """
-    University admin:
-    - Read-only access to ALL cases within their university
-    - No ability to modify medical data
+    - Only assigned student can create session
     """
 
     def has_permission(self, request, view):
-        user = self.get_user(request)
-        return user is not None and user.role == "university_admin"
+        return (
+            request.user.is_authenticated
+            and request.user.role.name == Role.STUDENT
+        )
 
 
-class IsTechSupport(BaseCasePermission):
+class CanReviewSession(BasePermission):
     """
-    IT Support:
-    - Platform-level read-only access
-    - Used ONLY for auditing, debugging, and emergency support
+    - Only assigned supervisor can review session
     """
 
-    def has_permission(self, request, view):
-        user = self.get_user(request)
-        return user is not None and user.role == "tech_support"
+    def has_object_permission(self, request, view, obj: CaseSession):
+        return (
+            request.user.is_authenticated
+            and request.user.role.name == Role.SUPERVISOR
+            and obj.supervisor_id == request.user.id
+        )

@@ -1,5 +1,7 @@
+# apps/reports/admin.py
 from django.contrib import admin
 from django.utils.translation import gettext_lazy as _
+
 from .models import Report
 
 
@@ -7,10 +9,10 @@ from .models import Report
 class ReportAdmin(admin.ModelAdmin):
     """
     Admin configuration for Reports.
-    Designed for:
-    - University admins
-    - Supervisors
-    - Technical auditors
+
+    Reports are legally/academically sensitive:
+    - No deletion from admin
+    - No manual add from admin (generated via system/services)
     """
 
     # ============================================================
@@ -61,8 +63,7 @@ class ReportAdmin(admin.ModelAdmin):
         "updated_at",
     )
 
-    # Prevent accidental bulk deletion of reports
-    actions = None
+    actions = None  # prevent bulk delete etc.
 
     # ============================================================
     # Detail View Layout
@@ -84,10 +85,15 @@ class ReportAdmin(admin.ModelAdmin):
         (
             _("Report File"),
             {
-                "fields": (
-                    "file_url",
-                ),
+                "fields": ("file_url",),
                 "description": _("Link or path to the generated report file."),
+            },
+        ),
+        (
+            _("Snapshot"),
+            {
+                "fields": ("snapshot_data",),
+                "description": _("Frozen snapshot used for analytics/statistical reports."),
             },
         ),
         (
@@ -115,25 +121,14 @@ class ReportAdmin(admin.ModelAdmin):
     # Permissions Control
     # ============================================================
     def has_delete_permission(self, request, obj=None):
-        """
-        Reports are legally sensitive.
-        Disallow deletion from admin panel.
-        """
         return False
 
     def has_add_permission(self, request):
-        """
-        Reports should be generated via system logic,
-        not manually from admin.
-        """
         return False
 
     # ============================================================
-    # Display Enhancements
+    # Query Optimization
     # ============================================================
     def get_queryset(self, request):
-        """
-        Optimize queryset for admin performance.
-        """
         qs = super().get_queryset(request)
         return qs.select_related("student", "university", "generated_by")

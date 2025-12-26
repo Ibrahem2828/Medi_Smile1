@@ -1,24 +1,15 @@
 # apps/evaluations/serializers.py
-
-from django.utils import timezone
-from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
+from django.utils.translation import gettext_lazy as _
 
-from .models import Evaluation, EvaluationStatus, EvaluationTargetType
-
-from apps.accounts.serializers import UserSerializer
+from apps.accounts.models import User, Role
 from apps.cases.models import Case, CaseSession
 from apps.appointments.models import Appointment
 
+from .models import Evaluation, EvaluationStatus, EvaluationTargetType
+
 
 class EvaluationSerializer(serializers.ModelSerializer):
-    """
-    Read-only serializer for displaying evaluation details.
-    """
-
-    evaluator = UserSerializer(read_only=True)
-    student = UserSerializer(read_only=True)
-
     class Meta:
         model = Evaluation
         fields = [
@@ -42,260 +33,80 @@ class EvaluationSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class EvaluationCreateSerializer(serializers.ModelSerializer):
-    """
-    Serializer used to create an evaluation.
-    Only Supervisor / University Admin can create evaluations.
-    """
+class EvaluationCreateSerializer(serializers.Serializer):
+    student_id = serializers.UUIDField()
+    target_type = serializers.ChoiceField(choices=EvaluationTargetType.choices)
 
-    # Allow passing IDs directly from FE
-    student_id = serializers.UUIDField(write_only=True, required=True)
-    case_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
-    session_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
-    appointment_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
+    case_id = serializers.UUIDField(required=False, allow_null=True)
+    session_id = serializers.UUIDField(required=False, allow_null=True)
+    appointment_id = serializers.UUIDField(required=False, allow_null=True)
 
-    class Meta:
-        model = Evaluation
-        fields = [
-            "student_id",
-            "target_type",
-            "case_id",
-            "session_id",
-            "appointment_id",
-            "score",
-            "rubric",
-            "comment",
-        ]
-
-    # -------------------------
-    # Validation helpers
-    # -------------------------
-    def validate_score(self, value):
-        if value < 0 or value > 100:
-            raise serializers.ValidationError(_("Score must be between 0 and 100."))
-        return value
+    score = serializers.IntegerField(min_value=0, max_value=100)
+    rubric = serializers.JSONField(required=False)
+    comment = serializers.CharField(required=False, allow_blank=True)
 
     def validate(self, attrs):
-        request = self.context.get("request")
-        user = getattr(request, "user", None)
-
-        if not user or not getattr(user, "role", None):
-            raise serializers.ValidationError(_("User identification is required."))
-
-        if user.role not in ["supervisor", "university_admin"]:
-            raise serializers.ValidationError(_("Only supervisors or university admins can create evaluations."))
-
-        target_type = attrs.get("target_type")
-
-        # Resolve FK objects
-        student_id = attrs.get("student_id")
-        case_id = attrs.get("case_id")
-        session_id = attrs.get("session_id")
-        appointment_id = attrs.get("appointment_id")
-
-        # -------------------------
-        # Validate target mapping
-        # -------------------------
-        if target_type == EvaluationTargetType.CASE:
-            if not case_id or session_id or appointment_id:
-                raise serializers.ValidationError(
-                    _("For target_type=case you must provide only case_id.")
-                )
-        elif target_type == EvaluationTargetType.SESSION:
-            if not session_id or case_id or appointment_id:
-                raise serializers.ValidationError(
-                    _("For target_type=session you must provide only session_id.")
-                )
-        elif target_type == EvaluationTargetType.APPOINTMENT:
-            if not appointment_id or case_id or session_id:
-                raise serializers.ValidationError(
-                    _("For target_type=appointment you must provide only appointment_id.")
-                )
-        else:
-            raise serializers.ValidationError(_("Invalid target_type."))
-
-        # -------------------------
-        # Fetch objects
-        # -------------------------
-        from apps.accounts.models import User  # local import to avoid circular imports
-
+        # Resolve student
         try:
-            student = User.objects.get(id=student_id, role="student")
+            student = User.objects.get(id=attrs["student_id"], role__name=Role.STUDENT)
         except User.DoesNotExist:
             raise serializers.ValidationError({"student_id": _("Student not found.")})
 
-        # University scope
-        if getattr(student, "university_id", None) != getattr(user, "university_id", None):
-            raise serializers.ValidationError(_("Student must belong to the same university."))
+        target_type = attrs["target_type"]
 
-        # Target object resolution + integrity checks
         case = session = appointment = None
 
+        def _reject(msg):
+            raise serializers.ValidationError(msg)
+
         if target_type == EvaluationTargetType.CASE:
+            if not attrs.get("case_id") or attrs.get("session_id") or attrs.get("appointment_id"):
+                _reject(_("For target_type=case provide only case_id."))
             try:
-                case = Case.objects.select_related("patient").get(id=case_id)
+                case = Case.objects.select_related("university").get(id=attrs["case_id"])
             except Case.DoesNotExist:
                 raise serializers.ValidationError({"case_id": _("Case not found.")})
-
-            # Basic integrity: student must match assigned student if your case has it
-            # Adjust attribute name if different in your project (e.g., case.student / case.assigned_student)
-            assigned_student = getattr(case, "student", None) or getattr(case, "assigned_student", None)
-            if assigned_student and assigned_student != student:
-                raise serializers.ValidationError(_("Student does not match the case assigned student."))
-
-        if target_type == EvaluationTargetType.SESSION:
+        elif target_type == EvaluationTargetType.SESSION:
+            if not attrs.get("session_id") or attrs.get("case_id") or attrs.get("appointment_id"):
+                _reject(_("For target_type=session provide only session_id."))
             try:
-                session = CaseSession.objects.select_related("case").get(id=session_id)
+                session = CaseSession.objects.select_related("case__university").get(id=attrs["session_id"])
             except CaseSession.DoesNotExist:
                 raise serializers.ValidationError({"session_id": _("Session not found.")})
-
-            assigned_student = getattr(session.case, "student", None) or getattr(session.case, "assigned_student", None)
-            if assigned_student and assigned_student != student:
-                raise serializers.ValidationError(_("Student does not match the session case assigned student."))
-
-        if target_type == EvaluationTargetType.APPOINTMENT:
+            case = session.case
+        elif target_type == EvaluationTargetType.APPOINTMENT:
+            if not attrs.get("appointment_id") or attrs.get("case_id") or attrs.get("session_id"):
+                _reject(_("For target_type=appointment provide only appointment_id."))
             try:
-                appointment = Appointment.objects.select_related().get(id=appointment_id)
+                appointment = Appointment.objects.select_related().get(id=attrs["appointment_id"])
             except Appointment.DoesNotExist:
                 raise serializers.ValidationError({"appointment_id": _("Appointment not found.")})
+            # best-effort mapping to case/university if your appointment has case
+            case = getattr(appointment, "case", None)
+        else:
+            _reject(_("Invalid target_type."))
 
-            # Adjust these fields according to your Appointment model:
-            # some projects use appointment.student or appointment.user
-            appt_student = getattr(appointment, "student", None) or getattr(appointment, "user", None)
-            if appt_student and appt_student != student:
-                raise serializers.ValidationError(_("Student does not match the appointment student."))
+        # University scope resolution:
+        # prefer case.university if available, else student's university
+        university = getattr(case, "university", None) if case else getattr(student, "university", None)
+        if not university:
+            raise serializers.ValidationError(_("University could not be resolved for this evaluation."))
 
-        # -------------------------
-        # Prevent duplicates
-        # -------------------------
-        duplicate_qs = Evaluation.objects.filter(
-            evaluator=user,
-            student=student,
-            target_type=target_type,
-        )
-        if target_type == EvaluationTargetType.CASE:
-            duplicate_qs = duplicate_qs.filter(case=case)
-        elif target_type == EvaluationTargetType.SESSION:
-            duplicate_qs = duplicate_qs.filter(session=session)
-        elif target_type == EvaluationTargetType.APPOINTMENT:
-            duplicate_qs = duplicate_qs.filter(appointment=appointment)
-
-        if duplicate_qs.exists():
-            raise serializers.ValidationError(_("An evaluation already exists for this target by the same evaluator."))
-
-        # Attach resolved objects to attrs for create()
-        attrs["_student_obj"] = student
-        attrs["_case_obj"] = case
-        attrs["_session_obj"] = session
-        attrs["_appointment_obj"] = appointment
+        attrs["student"] = student
+        attrs["case"] = case if target_type == EvaluationTargetType.CASE else None
+        attrs["session"] = session if target_type == EvaluationTargetType.SESSION else None
+        attrs["appointment"] = appointment if target_type == EvaluationTargetType.APPOINTMENT else None
+        attrs["university"] = university
 
         return attrs
 
-    def create(self, validated_data):
-        request = self.context.get("request")
-        user = request.user
 
-        # Pop helper objects
-        student = validated_data.pop("_student_obj")
-        case = validated_data.pop("_case_obj")
-        session = validated_data.pop("_session_obj")
-        appointment = validated_data.pop("_appointment_obj")
-
-        # Remove incoming IDs
-        validated_data.pop("student_id", None)
-        validated_data.pop("case_id", None)
-        validated_data.pop("session_id", None)
-        validated_data.pop("appointment_id", None)
-
-        evaluation = Evaluation.objects.create(
-            university=user.university,
-            evaluator=user,
-            student=student,
-            case=case,
-            session=session,
-            appointment=appointment,
-            status=EvaluationStatus.DRAFT,
-            **validated_data,
-        )
-        return evaluation
-
-
-class EvaluationUpdateSerializer(serializers.ModelSerializer):
-    """
-    Update evaluation while respecting status rules.
-    - Draft: can be updated
-    - Submitted: optional restriction (here: allow comment/rubric/score by evaluator only)
-    - Final: locked
-    """
-
-    class Meta:
-        model = Evaluation
-        fields = ["score", "rubric", "comment"]
-        extra_kwargs = {
-            "comment": {"required": False, "allow_blank": True},
-            "rubric": {"required": False},
-        }
-
-    def validate_score(self, value):
-        if value < 0 or value > 100:
-            raise serializers.ValidationError(_("Score must be between 0 and 100."))
-        return value
+class EvaluationUpdateSerializer(serializers.Serializer):
+    score = serializers.IntegerField(min_value=0, max_value=100, required=False)
+    rubric = serializers.JSONField(required=False)
+    comment = serializers.CharField(required=False, allow_blank=True)
 
     def validate(self, attrs):
-        instance: Evaluation = self.instance
-        request = self.context.get("request")
-        user = getattr(request, "user", None)
-
-        if instance.status == EvaluationStatus.FINAL:
-            raise serializers.ValidationError(_("Final evaluations are locked and cannot be modified."))
-
-        # Only evaluator (or university admin) can update
-        if user and user.role not in ["supervisor", "university_admin"]:
-            raise serializers.ValidationError(_("Not allowed."))
-
-        # If you want to block updates when submitted, uncomment:
-        # if instance.status == EvaluationStatus.SUBMITTED:
-        #     raise serializers.ValidationError(_("Submitted evaluations cannot be edited."))
-
+        if not attrs:
+            raise serializers.ValidationError(_("No fields to update."))
         return attrs
-
-
-class EvaluationActionSerializer(serializers.Serializer):
-    """
-    Used for submit/finalize actions.
-    """
-    action = serializers.ChoiceField(choices=["submit", "finalize"])
-
-    def validate(self, attrs):
-        evaluation: Evaluation = self.context.get("evaluation")
-        request = self.context.get("request")
-        user = getattr(request, "user", None)
-
-        if evaluation.status == EvaluationStatus.FINAL:
-            raise serializers.ValidationError(_("This evaluation is final and cannot be modified."))
-
-        action = attrs["action"]
-        if action == "submit":
-            if user.role not in ["supervisor", "university_admin"]:
-                raise serializers.ValidationError(_("Not allowed."))
-        elif action == "finalize":
-            if user.role not in ["supervisor", "university_admin"]:
-                raise serializers.ValidationError(_("Not allowed."))
-
-        return attrs
-
-    def save(self, **kwargs):
-        evaluation: Evaluation = self.context["evaluation"]
-        action = self.validated_data["action"]
-
-        if action == "submit":
-            evaluation.status = EvaluationStatus.SUBMITTED
-            evaluation.submitted_at = timezone.now()
-            evaluation.save(update_fields=["status", "submitted_at", "updated_at"])
-
-        elif action == "finalize":
-            evaluation.status = EvaluationStatus.FINAL
-            evaluation.finalized_at = timezone.now()
-            evaluation.save(update_fields=["status", "finalized_at", "updated_at"])
-
-        return evaluation

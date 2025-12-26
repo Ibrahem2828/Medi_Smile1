@@ -1,41 +1,72 @@
-# apps/audit/serializers.py
-
 from rest_framework import serializers
-from django.utils.translation import gettext_lazy as _
 
 from .models import AuditLog
-from apps.accounts.serializers import UserSerializer
+from apps.accounts.models import User
 
 
+# ============================================================
+# Minimal User Serializer (Audit Scope)
+# ============================================================
+class AuditUserSerializer(serializers.ModelSerializer):
+    """
+    Minimal, read-only user representation for audit logs.
+    """
+
+    class Meta:
+        model = User
+        fields = (
+            "id",
+            "first_name",
+            "last_name",
+        )
+        read_only_fields = fields
+
+
+# ============================================================
+# Audit Log Serializer
+# ============================================================
 class AuditLogSerializer(serializers.ModelSerializer):
     """
-    Read-only serializer for audit log entries.
+    Read-only serializer for audit logs.
+    Used by:
+    - Audit dashboard
+    - IT Support
+    - University Admin (scoped)
     """
 
-    user = UserSerializer(read_only=True)
+    actor = AuditUserSerializer(read_only=True)
     university_name = serializers.CharField(
         source="university.name",
         read_only=True,
     )
-
-    content_type = serializers.CharField(
-        source="content_type.model",
-        read_only=True,
-    )
+    target_type = serializers.SerializerMethodField()
+    target_id = serializers.SerializerMethodField()
 
     class Meta:
         model = AuditLog
-        fields = [
+        fields = (
             "id",
-            "user",
+            "actor",
             "university_name",
             "action",
             "description",
-            "content_type",
-            "object_id",
+            "target_type",
+            "target_id",
             "metadata",
             "ip_address",
             "user_agent",
             "created_at",
-        ]
+        )
         read_only_fields = fields
+
+    # =========================
+    # Generic Target Helpers
+    # =========================
+
+    def get_target_type(self, obj):
+        if obj.target_content_type:
+            return obj.target_content_type.model
+        return None
+
+    def get_target_id(self, obj):
+        return obj.target_object_id

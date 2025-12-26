@@ -1,10 +1,11 @@
+# apps/community/models.py
 import uuid
 from django.db import models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 
-from apps.accounts.models import User
+from apps.accounts.models import User, Role
 
 
 # ============================================================
@@ -15,14 +16,15 @@ class Content(models.Model):
     """
     Educational / medical content inside MediSmile community.
 
-    - Students: content requires approval
-    - Supervisors / Admins: auto-approved
-    - Patients: read-only (likes only)
+    Rules:
+    - Student: requires approval
+    - Supervisor / University Admin / Tech Support: auto-approved
+    - Patient: read-only (likes only)
     """
 
-    # ----------------------------
+    # =========================
     # Enums
-    # ----------------------------
+    # =========================
 
     class ContentType(models.TextChoices):
         ARTICLE = "article", _("Article")
@@ -43,9 +45,9 @@ class Content(models.Model):
         APPROVED = "approved", _("Approved")
         REJECTED = "rejected", _("Rejected")
 
-    # ----------------------------
+    # =========================
     # Fields
-    # ----------------------------
+    # =========================
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
@@ -100,9 +102,48 @@ class Content(models.Model):
         verbose_name=_("Tags (comma separated)"),
     )
 
-    # ----------------------------
-    # Visibility & Moderation
-    # ----------------------------
+    # =========================
+    # Moderation
+    # =========================
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+        verbose_name=_("Approval Status"),
+    )
+
+    approved_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="approved_content",
+        limit_choices_to={
+            "role__name__in": [
+                Role.SUPERVISOR,
+                Role.UNIVERSITY_ADMIN,
+                Role.TECH_SUPPORT,
+            ]
+        },
+        verbose_name=_("Approved / Rejected By"),
+    )
+
+    approved_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name=_("Approved At"),
+    )
+
+    rejection_reason = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name=_("Rejection Reason"),
+    )
+
+    # =========================
+    # Visibility
+    # =========================
 
     is_public = models.BooleanField(
         default=True,
@@ -115,47 +156,18 @@ class Content(models.Model):
         verbose_name=_("Featured Content"),
     )
 
-    status = models.CharField(
-        max_length=20,
-        choices=Status.choices,
-        default=Status.APPROVED,
-        verbose_name=_("Approval Status"),
-    )
-
-    approved_by = models.ForeignKey(
-        User,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="approved_community_content",
-        limit_choices_to={"role__in": ["supervisor", "university_admin", "tech_support"]},
-        verbose_name=_("Approved / Rejected By"),
-    )
-
-    rejection_reason = models.TextField(
-        blank=True,
-        null=True,
-        verbose_name=_("Rejection Reason"),
-    )
-
-    approved_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        verbose_name=_("Approved At"),
-    )
-
-    # ----------------------------
+    # =========================
     # Stats
-    # ----------------------------
+    # =========================
 
     view_count = models.PositiveIntegerField(default=0, verbose_name=_("View Count"))
 
     created_at = models.DateTimeField(auto_now_add=True, verbose_name=_("Created At"))
     updated_at = models.DateTimeField(auto_now=True, verbose_name=_("Updated At"))
 
-    # ----------------------------
+    # =========================
     # Meta
-    # ----------------------------
+    # =========================
 
     class Meta:
         db_table = "community_content"
@@ -168,43 +180,65 @@ class Content(models.Model):
             models.Index(fields=["university"]),
         ]
 
-    # ----------------------------
-    # Business Rules
-    # ----------------------------
+    # =========================
+    # Validation
+    # =========================
 
     def clean(self):
-        # File OR URL must exist depending on type
+        # File / URL validation
         if self.content_type == self.ContentType.LINK and not self.url:
             raise ValidationError(_("URL is required for link content."))
 
         if self.content_type != self.ContentType.LINK and not self.file:
             raise ValidationError(_("File is required for this content type."))
 
-        # Students cannot auto-approve
-        if self.author.role == "student" and self.status == self.Status.APPROVED:
-            raise ValidationError(_("Student content must be approved by a supervisor."))
+        # Patient cannot create content
+        if self.author.role.name == Role.PATIENT:
+            raise ValidationError(_("Patients are not allowed to create content."))
+
+    # =========================
+    # Save Logic
+    # =========================
 
     def save(self, *args, **kwargs):
-        # Auto approval logic
-        if self.author.role in ["supervisor", "university_admin", "tech_support"]:
+        """
+        Auto-approval rules:
+        - Student → Pending
+        - Supervisor / University Admin / Tech → Approved
+        """
+
+        role_name = getattr(getattr(self.author, "role", None), "name", None)
+
+        if role_name in {
+            Role.SUPERVISOR,
+            Role.UNIVERSITY_ADMIN,
+            Role.TECH_SUPPORT,
+        }:
             self.status = self.Status.APPROVED
             self.approved_at = self.approved_at or timezone.now()
+
+        elif role_name == Role.STUDENT:
+            if self.status == self.Status.APPROVED:
+                raise ValidationError(_("Student content must be approved by a supervisor."))
+
+            self.status = self.Status.PENDING
 
         super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.title} ({self.get_status_display()})"
-
-
 # ============================================================
-# Content Like (Patients allowed)
+# Content Like
 # ============================================================
 
 class ContentLike(models.Model):
     """
-    Simple like system.
-    - Patients: allowed
-    - Students / Supervisors: allowed
+    Like interaction on community content.
+
+    Rules:
+    - Patient: allowed
+    - Student / Supervisor / Admin: allowed
+    - One like per user per content
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -223,28 +257,32 @@ class ContentLike(models.Model):
         verbose_name=_("User"),
     )
 
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name=_("Created At"))
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "community_content_likes"
         verbose_name = _("Content Like")
         verbose_name_plural = _("Content Likes")
-        unique_together = ["content", "user"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["content", "user"],
+                name="unique_like_per_user_per_content",
+            )
+        ]
 
     def __str__(self):
-        return f"{self.user.email} ❤️ {self.content.title}"
-
-
+        return f"{self.user} liked {self.content}"
 # ============================================================
-# Content Comment (Students & Supervisors only)
+# Content Comment
 # ============================================================
 
 class ContentComment(models.Model):
     """
-    Educational discussion comments.
+    Comment on community content.
 
-    - Patients: ❌ no comments
-    - Students / Supervisors: ✅
+    Rules:
+    - Patient: NOT allowed
+    - Student / Supervisor / Admin: allowed
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -259,28 +297,19 @@ class ContentComment(models.Model):
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        related_name="community_comments",
+        related_name="content_comments",
         verbose_name=_("User"),
     )
 
-    parent = models.ForeignKey(
-        "self",
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name="replies",
-        verbose_name=_("Parent Comment"),
-    )
-
-    text = models.TextField(verbose_name=_("Comment Text"))
+    text = models.TextField(verbose_name=_("Comment"))
 
     is_approved = models.BooleanField(
         default=True,
         verbose_name=_("Approved"),
+        help_text=_("Future moderation support."),
     )
 
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name=_("Created At"))
-    updated_at = models.DateTimeField(auto_now=True, verbose_name=_("Updated At"))
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "community_content_comments"
@@ -289,8 +318,8 @@ class ContentComment(models.Model):
         ordering = ["created_at"]
 
     def clean(self):
-        if self.user.role == "patient":
+        if self.user.role.name == Role.PATIENT:
             raise ValidationError(_("Patients are not allowed to comment."))
 
     def __str__(self):
-        return f"{self.user.email}: {self.text[:40]}"
+        return f"Comment by {self.user} on {self.content}"

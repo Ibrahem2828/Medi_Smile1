@@ -13,110 +13,85 @@ from .models import (
     TechSupportProfile,
 )
 
+
 # ============================================================
-# Role Admin
+# ROLE ADMIN
 # ============================================================
 @admin.register(Role)
 class RoleAdmin(admin.ModelAdmin):
-    """
-    Admin configuration for Role model (RBAC core).
-    """
-    list_display = ("id", "name", "description", "created_at")
+    list_display = ("name", "description", "created_at")
     search_fields = ("name",)
     ordering = ("name",)
-    readonly_fields = ("id", "created_at")
+    readonly_fields = ("created_at",)
 
 
 # ============================================================
-# Profile Inlines (attached to User)
+# PROFILE INLINES
 # ============================================================
-class PatientProfileInline(admin.StackedInline):
+class BaseProfileInline(admin.StackedInline):
+    extra = 0
+    can_delete = False
+    verbose_name_plural = _("Profile")
+
+
+class PatientProfileInline(BaseProfileInline):
     model = PatientProfile
-    can_delete = False
-    verbose_name_plural = _("Patient Profile")
-    fk_name = "user"
 
 
-class StudentProfileInline(admin.StackedInline):
+class StudentProfileInline(BaseProfileInline):
     model = StudentProfile
-    can_delete = False
-    verbose_name_plural = _("Student Profile")
-    fk_name = "user"
 
 
-class SupervisorProfileInline(admin.StackedInline):
+class SupervisorProfileInline(BaseProfileInline):
     model = SupervisorProfile
-    can_delete = False
-    verbose_name_plural = _("Supervisor Profile")
-    fk_name = "user"
 
 
-class UniversityAdminProfileInline(admin.StackedInline):
+class UniversityAdminProfileInline(BaseProfileInline):
     model = UniversityAdminProfile
-    can_delete = False
-    verbose_name_plural = _("University Admin Profile")
-    fk_name = "user"
 
 
-class TechSupportProfileInline(admin.StackedInline):
+class TechSupportProfileInline(BaseProfileInline):
     model = TechSupportProfile
-    can_delete = False
-    verbose_name_plural = _("Tech Support Profile")
-    fk_name = "user"
 
 
 # ============================================================
-# User Admin
+# USER ADMIN
 # ============================================================
 @admin.register(User)
 class UserAdmin(DjangoUserAdmin):
     """
-    Custom User admin with Role (RBAC), audit fields,
-    and inline profile management.
+    Central User admin.
+    Roles and profiles are managed here in a controlled way.
     """
 
-    ordering = ("-date_joined",)
     list_display = (
-        "id",
         "email",
         "username",
-        "first_name",
-        "last_name",
         "role",
         "is_active",
         "is_staff",
         "created_by",
         "date_joined",
     )
-    list_filter = (
-        "is_active",
-        "is_staff",
-        "is_superuser",
-        "role",
-    )
-    search_fields = (
-        "email",
-        "username",
-        "first_name",
-        "last_name",
-    )
+    list_filter = ("role", "is_active", "is_staff")
+    search_fields = ("email", "username", "first_name", "last_name")
+    ordering = ("-date_joined",)
+
     readonly_fields = (
-        "id",
-        "created_at",
-        "updated_at",
         "last_login",
         "date_joined",
+        "created_at",
+        "updated_at",
     )
 
     fieldsets = (
-        (None, {"fields": ("id", "email", "password")}),
-        (_("Personal info"), {"fields": ("username", "first_name", "last_name")}),
+        (None, {"fields": ("email", "password")}),
+        (_("Personal Info"), {"fields": ("username", "first_name", "last_name")}),
         (
-            _("Role & System"),
+            _("Role & Ownership"),
             {
                 "fields": (
                     "role",
-                    "fcm_token",
                     "created_by",
                 )
             },
@@ -128,13 +103,11 @@ class UserAdmin(DjangoUserAdmin):
                     "is_active",
                     "is_staff",
                     "is_superuser",
-                    "groups",
-                    "user_permissions",
                 )
             },
         ),
         (
-            _("Important dates"),
+            _("Important Dates"),
             {
                 "fields": (
                     "last_login",
@@ -171,51 +144,3 @@ class UserAdmin(DjangoUserAdmin):
         UniversityAdminProfileInline,
         TechSupportProfileInline,
     ]
-
-
-# ============================================================
-# Profile Admins (standalone access if needed)
-# ============================================================
-@admin.register(PatientProfile)
-class PatientProfileAdmin(admin.ModelAdmin):
-    list_display = ("user", "phone_number", "gender", "date_of_birth", "created_at")
-    search_fields = ("user__email", "user__username", "user__first_name", "user__last_name")
-    list_select_related = ("user",)
-    ordering = ("-created_at",)
-    readonly_fields = ("created_at", "updated_at")
-
-
-@admin.register(StudentProfile)
-class StudentProfileAdmin(admin.ModelAdmin):
-    list_display = ("user", "university", "student_id", "year_of_study", "created_at")
-    search_fields = ("user__email", "user__username", "student_id")
-    list_select_related = ("user", "university")
-    ordering = ("-created_at",)
-    readonly_fields = ("created_at", "updated_at")
-
-
-@admin.register(SupervisorProfile)
-class SupervisorProfileAdmin(admin.ModelAdmin):
-    list_display = ("user", "university", "department", "position", "created_at")
-    search_fields = ("user__email", "user__username", "department", "position")
-    list_select_related = ("user", "university")
-    ordering = ("-created_at",)
-    readonly_fields = ("created_at", "updated_at")
-
-
-@admin.register(UniversityAdminProfile)
-class UniversityAdminProfileAdmin(admin.ModelAdmin):
-    list_display = ("user", "university", "department", "position", "created_at")
-    search_fields = ("user__email", "user__username", "department", "position")
-    list_select_related = ("user", "university")
-    ordering = ("-created_at",)
-    readonly_fields = ("created_at", "updated_at")
-
-
-@admin.register(TechSupportProfile)
-class TechSupportProfileAdmin(admin.ModelAdmin):
-    list_display = ("user", "department", "position", "created_at")
-    search_fields = ("user__email", "user__username", "department", "position")
-    list_select_related = ("user",)
-    ordering = ("-created_at",)
-    readonly_fields = ("created_at", "updated_at")

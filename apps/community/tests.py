@@ -1,161 +1,147 @@
-from django.test import TestCase
-from django.contrib.auth import get_user_model
-from django.utils import timezone
+# apps/community/tests.py
+from django.urls import reverse
+from rest_framework import status
+from rest_framework.test import APITestCase
 
-from .models import Content, ContentLike, ContentComment
+from apps.accounts.models import User, Role
 from apps.universities.models import University
+from apps.evaluations.models import Evaluation, EvaluationStatus
+from apps.notifications.models import Notification
+from apps.audit.models import AuditLog
 
-User = get_user_model()
+from .models import Content
 
 
-class CommunityContentTestCase(TestCase):
-    """
-    Tests for Community Content logic and permissions.
-    """
+class CommunityAPITests(APITestCase):
 
     def setUp(self):
-        self.university = University.objects.create(
-            name="Test University"
-        )
+        self.university = University.objects.create(name="Test University")
 
         self.student = User.objects.create_user(
-            email="student@test.com",
             username="student",
-            password="pass123",
-            role="student"
+            password="pass",
+            role=Role.objects.get(name=Role.STUDENT),
+            university=self.university,
         )
 
         self.supervisor = User.objects.create_user(
-            email="supervisor@test.com",
             username="supervisor",
-            password="pass123",
-            role="supervisor"
+            password="pass",
+            role=Role.objects.get(name=Role.SUPERVISOR),
+            university=self.university,
         )
 
         self.patient = User.objects.create_user(
-            email="patient@test.com",
             username="patient",
-            password="pass123",
-            role="patient"
+            password="pass",
+            role=Role.objects.get(name=Role.PATIENT),
         )
 
-    def test_student_content_requires_approval(self):
-        """
-        Student-created content must be pending approval.
-        """
+    # ---------------------------------------------------------
+    # Public Rating
+    # ---------------------------------------------------------
+
+    def test_student_rating_endpoint(self):
+        Evaluation.objects.create(
+            university=self.university,
+            evaluator=self.supervisor,
+            student=self.student,
+            target_type="case",
+            score=90,
+            status=EvaluationStatus.FINAL,
+        )
+
+        self.client.force_authenticate(self.patient)
+        url = reverse("community:student-public-rating", args=[self.student.id])
+        res = self.client.get(url)
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["stars"], 5)
+
+    # ---------------------------------------------------------
+    # Content Flow
+    # ---------------------------------------------------------
+
+    def test_student_content_is_pending_by_default(self):
+        self.client.force_authenticate(self.student)
+        url = reverse("community:content-list")
+
+        res = self.client.post(
+            url,
+            {
+                "title": "Post",
+                "description": "Desc",
+                "content_type": "link",
+                "category": "general",
+                "url": "https://example.com",
+            },
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        content = Content.objects.first()
+        self.assertEqual(content.status, Content.Status.PENDING)
+
+    # ---------------------------------------------------------
+    # Audit + Notification
+    # ---------------------------------------------------------
+
+    def test_approve_content_creates_audit_and_notification(self):
         content = Content.objects.create(
-            title="Student Post",
-            description="Educational content",
-            content_type="article",
-            category="educational",
             author=self.student,
             university=self.university,
+            title="Pending Post",
+            status=Content.Status.PENDING,
         )
 
-        self.assertEqual(content.status, "pending")
+        self.client.force_authenticate(self.supervisor)
+        url = reverse("community:content-approve", args=[content.id])
+        res = self.client.post(url)
 
-    def test_supervisor_content_auto_approved(self):
-        """
-        Supervisor-created content is auto-approved.
-        """
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        # Audit log
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action="community.content.approved",
+                user=self.supervisor,
+            ).exists()
+        )
+
+        # Notification to student
+        self.assertTrue(
+            Notification.objects.filter(
+                recipient=self.student,
+                notification_type="community_content_approved",
+            ).exists()
+        )
+
+    def test_reject_content_creates_audit_and_notification(self):
         content = Content.objects.create(
-            title="Supervisor Post",
-            description="Medical article",
-            content_type="article",
-            category="medical",
-            author=self.supervisor,
+            author=self.student,
             university=self.university,
-            status="approved",
+            title="Pending Post",
+            status=Content.Status.PENDING,
         )
 
-        self.assertEqual(content.status, "approved")
+        self.client.force_authenticate(self.supervisor)
+        url = reverse("community:content-reject", args=[content.id])
+        res = self.client.post(url, {"reason": "Not suitable"}, format="json")
 
-    def test_like_content_once(self):
-        """
-        User can like content only once.
-        """
-        content = Content.objects.create(
-            title="Like Test",
-            description="Test",
-            content_type="article",
-            category="general",
-            author=self.supervisor,
-            status="approved",
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        # Audit log
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action="community.content.rejected",
+                user=self.supervisor,
+            ).exists()
         )
 
-        like1 = ContentLike.objects.create(
-            content=content,
-            user=self.student
+        # Notification to student
+        self.assertTrue(
+            Notification.objects.filter(
+                recipient=self.student,
+                notification_type="community_content_rejected",
+            ).exists()
         )
-
-        self.assertEqual(ContentLike.objects.count(), 1)
-
-        # Duplicate like should not create new one
-        with self.assertRaises(Exception):
-            ContentLike.objects.create(
-                content=content,
-                user=self.student
-            )
-
-    def test_comment_creation(self):
-        """
-        Authenticated users can comment on approved content.
-        """
-        content = Content.objects.create(
-            title="Comment Test",
-            description="Test",
-            content_type="article",
-            category="general",
-            author=self.supervisor,
-            status="approved",
-        )
-
-        comment = ContentComment.objects.create(
-            content=content,
-            user=self.student,
-            text="Great article!"
-        )
-
-        self.assertEqual(comment.content, content)
-        self.assertEqual(comment.user, self.student)
-        self.assertTrue(comment.is_approved)
-
-
-class CommunityVisibilityTestCase(TestCase):
-    """
-    Tests for content visibility rules.
-    """
-
-    def setUp(self):
-        self.student = User.objects.create_user(
-            email="student2@test.com",
-            username="student2",
-            password="pass123",
-            role="student"
-        )
-
-    def test_public_content_visible(self):
-        content = Content.objects.create(
-            title="Public Content",
-            description="Visible",
-            content_type="article",
-            category="general",
-            author=self.student,
-            status="approved",
-            is_public=True,
-        )
-
-        self.assertTrue(content.is_public)
-
-    def test_private_content_hidden(self):
-        content = Content.objects.create(
-            title="Private Content",
-            description="Hidden",
-            content_type="article",
-            category="general",
-            author=self.student,
-            status="approved",
-            is_public=False,
-        )
-
-        self.assertFalse(content.is_public)

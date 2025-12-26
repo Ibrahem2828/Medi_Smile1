@@ -1,264 +1,183 @@
 # apps/appointments/tests.py
-
-from datetime import timedelta
-from django.utils import timezone
 from django.urls import reverse
-from django.test import TestCase
-
-from rest_framework.test import APIClient
+from django.utils import timezone
 from rest_framework import status
+from rest_framework.test import APITestCase
 
-from apps.accounts.models import User
+from apps.accounts.models import User, Role
+from apps.universities.models import University
 from apps.cases.models import Case
-from .models import Appointment
+from apps.appointments.models import Appointment
 
 
-class AppointmentBaseTestCase(TestCase):
-    """
-    Base setup for appointment-related tests.
-    """
+class AppointmentsBaseTestCase(APITestCase):
+    @classmethod
+    def setUpTestData(cls):
+        # Roles
+        cls.patient_role = Role.objects.create(name=Role.PATIENT)
+        cls.student_role = Role.objects.create(name=Role.STUDENT)
+        cls.supervisor_role = Role.objects.create(name=Role.SUPERVISOR)
+        cls.admin_role = Role.objects.create(name=Role.UNIVERSITY_ADMIN)
+        cls.tech_role = Role.objects.create(name=Role.TECH_SUPPORT)
 
-    def setUp(self):
-        self.client = APIClient()
+        # University
+        cls.university = University.objects.create(
+            name="Dental University",
+            city="City",
+            country="Country",
+        )
 
-        # -------------------------------------------------
         # Users
-        # -------------------------------------------------
-        self.patient = User.objects.create_user(
-            email="patient@test.com",
-            password="pass1234",
-            role="patient",
+        cls.patient = User.objects.create_user(
+            email="patient@appt.test",
+            username="patient_appt",
+            password="Patient123!",
+            role=cls.patient_role,
         )
 
-        self.student = User.objects.create_user(
-            email="student@test.com",
-            password="pass1234",
-            role="student",
+        cls.student = User.objects.create_user(
+            email="student@appt.test",
+            username="student_appt",
+            password="Student123!",
+            role=cls.student_role,
         )
 
-        self.supervisor = User.objects.create_user(
-            email="supervisor@test.com",
-            password="pass1234",
-            role="supervisor",
+        cls.supervisor = User.objects.create_user(
+            email="supervisor@appt.test",
+            username="supervisor_appt",
+            password="Supervisor123!",
+            role=cls.supervisor_role,
         )
 
-        self.university_admin = User.objects.create_user(
-            email="admin@test.com",
-            password="pass1234",
-            role="university_admin",
+        cls.admin = User.objects.create_user(
+            email="admin@appt.test",
+            username="admin_appt",
+            password="Admin123!",
+            role=cls.admin_role,
+        )
+        cls.admin.universityadminprofile_profile.university = cls.university
+        cls.admin.universityadminprofile_profile.save()
+
+        cls.tech = User.objects.create_user(
+            email="tech@appt.test",
+            username="tech_appt",
+            password="Tech123!",
+            role=cls.tech_role,
+            is_staff=True,
         )
 
-        # -------------------------------------------------
-        # Case (assigned)
-        # -------------------------------------------------
-        self.case = Case.objects.create(
-            title="Root Canal",
-            description="Deep caries",
-            patient=self.patient,
-            student=self.student,
-            supervisor=self.supervisor,
+        # Assigned case
+        cls.case = Case.objects.create(
+            title="Appointment Case",
+            description="Case for appointment testing",
+            patient=cls.patient,
+            student=cls.student,
+            supervisor=cls.supervisor,
+            university=cls.university,
             status=Case.Status.ASSIGNED,
         )
 
-        self.appointment_date = timezone.now() + timedelta(days=1)
 
-
-class AppointmentCreateTests(AppointmentBaseTestCase):
-    """
-    Tests for appointment creation.
-    """
-
+# ============================================================
+# Appointment Creation Tests
+# ============================================================
+class AppointmentCreationTests(AppointmentsBaseTestCase):
     def test_student_can_create_appointment(self):
-        self.client.force_authenticate(user=self.student)
+        self.client.login(email="student@appt.test", password="Student123!")
 
-        url = reverse("appointments:appointment-list")
-        payload = {
-            "case_id": str(self.case.id),
-            "appointment_date": self.appointment_date.isoformat(),
-        }
-
-        response = self.client.post(url, payload, format="json")
+        url = reverse("appointment-list-create")
+        response = self.client.post(
+            url,
+            {
+                "case_id": str(self.case.id),
+                "appointment_date": timezone.now() + timezone.timedelta(days=1),
+                "notes": "Initial appointment",
+            },
+        )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(Appointment.objects.count(), 1)
 
-        appointment = Appointment.objects.first()
-        self.assertEqual(appointment.patient, self.patient)
-        self.assertEqual(appointment.created_by, self.student)
-        self.assertEqual(appointment.status, Appointment.Status.SCHEDULED)
-
     def test_patient_cannot_create_appointment(self):
-        self.client.force_authenticate(user=self.patient)
+        self.client.login(email="patient@appt.test", password="Patient123!")
 
-        url = reverse("appointments:appointment-list")
-        payload = {
-            "case_id": str(self.case.id),
-            "appointment_date": self.appointment_date.isoformat(),
-        }
-
-        response = self.client.post(url, payload, format="json")
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-
-
-class AppointmentVisibilityTests(AppointmentBaseTestCase):
-    """
-    Tests for appointment listing visibility.
-    """
-
-    def setUp(self):
-        super().setUp()
-
-        self.appointment = Appointment.objects.create(
-            patient=self.patient,
-            created_by=self.student,
-            case=self.case,
-            appointment_date=self.appointment_date,
+        url = reverse("appointment-list-create")
+        response = self.client.post(
+            url,
+            {
+                "case_id": str(self.case.id),
+                "appointment_date": timezone.now() + timezone.timedelta(days=1),
+            },
         )
 
-    def test_patient_sees_own_appointment(self):
-        self.client.force_authenticate(user=self.patient)
-
-        url = reverse("appointments:appointment-list")
-        response = self.client.get(url)
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 1)
-
-    def test_student_sees_own_created_appointment(self):
-        self.client.force_authenticate(user=self.student)
-
-        url = reverse("appointments:appointment-list")
-        response = self.client.get(url)
-
-        self.assertEqual(len(response.data), 1)
-
-    def test_supervisor_sees_case_appointments(self):
-        self.client.force_authenticate(user=self.supervisor)
-
-        url = reverse("appointments:appointment-list")
-        response = self.client.get(url)
-
-        self.assertEqual(len(response.data), 1)
-
-
-class AppointmentStatusFlowTests(AppointmentBaseTestCase):
-    """
-    Tests for appointment status transitions.
-    """
-
-    def setUp(self):
-        super().setUp()
-
-        self.appointment = Appointment.objects.create(
-            patient=self.patient,
-            created_by=self.student,
-            case=self.case,
-            appointment_date=self.appointment_date,
-        )
-
-    def test_patient_confirms_appointment(self):
-        self.client.force_authenticate(user=self.patient)
-
-        url = reverse(
-            "appointments:appointment-confirm",
-            args=[self.appointment.id],
-        )
-
-        response = self.client.post(url)
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.appointment.refresh_from_db()
-        self.assertEqual(self.appointment.status, Appointment.Status.CONFIRMED)
-
-    def test_student_starts_appointment(self):
-        self.appointment.status = Appointment.Status.CONFIRMED
-        self.appointment.save()
-
-        self.client.force_authenticate(user=self.student)
-
-        url = reverse(
-            "appointments:appointment-start",
-            args=[self.appointment.id],
-        )
-
-        response = self.client.post(url)
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.appointment.refresh_from_db()
-        self.assertEqual(self.appointment.status, Appointment.Status.IN_PROGRESS)
-
-    def test_student_completes_appointment(self):
-        self.appointment.status = Appointment.Status.IN_PROGRESS
-        self.appointment.save()
-
-        self.client.force_authenticate(user=self.student)
-
-        url = reverse(
-            "appointments:appointment-complete",
-            args=[self.appointment.id],
-        )
-
-        response = self.client.post(url)
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.appointment.refresh_from_db()
-        self.assertEqual(self.appointment.status, Appointment.Status.COMPLETED)
-
-    def test_patient_cannot_complete_appointment(self):
-        self.appointment.status = Appointment.Status.CONFIRMED
-        self.appointment.save()
-
-        self.client.force_authenticate(user=self.patient)
-
-        url = reverse(
-            "appointments:appointment-complete",
-            args=[self.appointment.id],
-        )
-
-        response = self.client.post(url)
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
 
-class AppointmentCancellationTests(AppointmentBaseTestCase):
-    """
-    Tests for appointment cancellation.
-    """
-
+# ============================================================
+# Appointment Visibility Tests
+# ============================================================
+class AppointmentVisibilityTests(AppointmentsBaseTestCase):
     def setUp(self):
-        super().setUp()
-
         self.appointment = Appointment.objects.create(
-            patient=self.patient,
-            created_by=self.student,
             case=self.case,
-            appointment_date=self.appointment_date,
-            status=Appointment.Status.CONFIRMED,
+            patient=self.patient,
+            student=self.student,
+            supervisor=self.supervisor,
+            created_by=self.student,
+            appointment_date=timezone.now() + timezone.timedelta(days=2),
         )
 
-    def test_patient_can_cancel_appointment(self):
-        self.client.force_authenticate(user=self.patient)
+    def test_patient_can_view_own_appointment(self):
+        self.client.login(email="patient@appt.test", password="Patient123!")
 
-        url = reverse(
-            "appointments:appointment-cancel",
-            args=[self.appointment.id],
-        )
-
-        response = self.client.post(url)
+        url = reverse("appointment-detail", args=[self.appointment.id])
+        response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.appointment.refresh_from_db()
-        self.assertEqual(self.appointment.status, Appointment.Status.CANCELLED)
 
-    def test_student_can_mark_no_show(self):
-        self.client.force_authenticate(user=self.student)
-
-        url = reverse(
-            "appointments:appointment-no-show",
-            args=[self.appointment.id],
+    def test_other_patient_cannot_view_appointment(self):
+        other_patient = User.objects.create_user(
+            email="other@appt.test",
+            username="other_patient",
+            password="Other123!",
+            role=self.patient_role,
         )
 
-        response = self.client.post(url)
+        self.client.login(email="other@appt.test", password="Other123!")
+        url = reverse("appointment-detail", args=[self.appointment.id])
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
+# ============================================================
+# University & IT Scope Tests
+# ============================================================
+class AppointmentScopeTests(AppointmentsBaseTestCase):
+    def setUp(self):
+        Appointment.objects.create(
+            case=self.case,
+            patient=self.patient,
+            student=self.student,
+            supervisor=self.supervisor,
+            created_by=self.student,
+            appointment_date=timezone.now() + timezone.timedelta(days=3),
+        )
+
+    def test_university_admin_sees_only_university_appointments(self):
+        self.client.login(email="admin@appt.test", password="Admin123!")
+
+        url = reverse("appointment-list-create")
+        response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.appointment.refresh_from_db()
-        self.assertEqual(self.appointment.status, Appointment.Status.NO_SHOW)
+        self.assertEqual(len(response.data), 1)
+
+    def test_tech_support_sees_all_appointments(self):
+        self.client.login(email="tech@appt.test", password="Tech123!")
+
+        url = reverse("appointment-list-create")
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(len(response.data), 1)

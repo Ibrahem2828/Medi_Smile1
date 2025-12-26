@@ -3,28 +3,41 @@ from django.contrib.contenttypes.models import ContentType
 from django.utils.translation import gettext_lazy as _
 
 from .models import Notification
-from apps.accounts.serializers import UserSerializer
-from apps.appointments.serializers import AppointmentSerializer
+from apps.accounts.models import User, Role
+from apps.appointments.models import Appointment
 from medismile.utils.auth import resolve_request_user
+
+
+# ============================================================
+# Minimal User Serializer (Notifications Scope Only)
+# ============================================================
+class NotificationUserSerializer(serializers.ModelSerializer):
+    """
+    Minimal, read-only user representation for notifications.
+    Avoids coupling with accounts.serializers.
+    """
+
+    class Meta:
+        model = User
+        fields = (
+            "id",
+            "first_name",
+            "last_name",
+        )
+        read_only_fields = fields
 
 
 # ============================================================
 # Read Serializer (Inbox / Detail)
 # ============================================================
-
 class NotificationSerializer(serializers.ModelSerializer):
     """
     Read-only serializer for notifications.
-
-    Used for:
-    - Inbox
-    - Detail view
-    - Admin / audit
+    Used for inbox, detail view, admin, audit.
     """
 
-    sender = UserSerializer(read_only=True)
-    recipient = UserSerializer(read_only=True)
-    appointment = AppointmentSerializer(read_only=True)
+    sender = NotificationUserSerializer(read_only=True)
+    recipient = NotificationUserSerializer(read_only=True)
 
     target_type = serializers.SerializerMethodField()
     target_id = serializers.SerializerMethodField()
@@ -32,30 +45,27 @@ class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
         fields = [
-            'id',
-            'sender',
-            'recipient',
-            'notification_type',
-            'priority',
-            'appointment',
-            'target_type',
-            'target_id',
-            'title',
-            'message',
-            'status',
-            'response_message',
-            'proposed_changes',
-            'is_read',
-            'read_at',
-            'created_at',
-            'updated_at',
+            "id",
+            "sender",
+            "recipient",
+            "notification_type",
+            "priority",
+            "title",
+            "message",
+            "status",
+            "response_message",
+            "proposed_changes",
+            "is_read",
+            "read_at",
+            "created_at",
+            "updated_at",
+            "target_type",
+            "target_id",
         ]
         read_only_fields = fields
 
     def get_target_type(self, obj):
-        if obj.target_content_type:
-            return obj.target_content_type.model
-        return None
+        return obj.target_content_type.model if obj.target_content_type else None
 
     def get_target_id(self, obj):
         return obj.target_object_id
@@ -64,78 +74,100 @@ class NotificationSerializer(serializers.ModelSerializer):
 # ============================================================
 # Create Serializer
 # ============================================================
-
 class NotificationCreateSerializer(serializers.ModelSerializer):
     """
-    Serializer for creating notifications.
+    Safe notification creation serializer.
 
     Supports:
-    - Appointment-based notifications (legacy)
-    - Generic target notifications (case / session / content)
+    - Legacy appointment_id
+    - Generic target (target_type + target_id)
     """
 
-    # --- Legacy / Backward compatible ---
     appointment_id = serializers.UUIDField(write_only=True, required=False)
 
-    # --- Generic Target ---
     target_type = serializers.CharField(
         write_only=True,
         required=False,
-        help_text=_("Model name of the target (case, casesession, content, etc.)")
+        help_text=_("Target model name (case, content, report, etc.)"),
     )
     target_id = serializers.UUIDField(write_only=True, required=False)
 
-    # --- Users ---
     recipient_id = serializers.UUIDField(write_only=True)
     sender_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
 
     class Meta:
         model = Notification
         fields = [
-            'notification_type',
-            'priority',
-            'appointment_id',
-            'target_type',
-            'target_id',
-            'recipient_id',
-            'sender_id',
-            'title',
-            'message',
-            'proposed_changes',
+            "notification_type",
+            "priority",
+            "appointment_id",
+            "target_type",
+            "target_id",
+            "recipient_id",
+            "sender_id",
+            "title",
+            "message",
+            "proposed_changes",
         ]
 
     def validate(self, attrs):
-        request = self.context.get('request')
+        request = self.context.get("request")
         sender = resolve_request_user(request) if request else None
 
-        if not sender and not attrs.get('sender_id'):
+        # Sender must exist
+        if not sender and not attrs.get("sender_id"):
             raise serializers.ValidationError(
-                {'sender_id': _('Sender is required when authentication is disabled.')}
+                {"sender_id": _("Sender is required.")}
             )
 
-        # Must reference something (appointment OR generic target)
-        if not attrs.get('appointment_id') and not (
-            attrs.get('target_type') and attrs.get('target_id')
+        # Must reference something
+        if not attrs.get("appointment_id") and not (
+            attrs.get("target_type") and attrs.get("target_id")
         ):
             raise serializers.ValidationError(
-                _('Notification must reference an appointment or a target object.')
+                _("Notification must reference an appointment or a target object.")
             )
+
+        # Role-based creation rules
+        if sender:
+            role = sender.role.name
+
+            if role == Role.PATIENT:
+                if attrs.get("notification_type") not in {
+                    "appointment_update_request",
+                    "appointment_cancel_request",
+                }:
+                    raise serializers.ValidationError(
+                        _("Patients can only create appointment request notifications.")
+                    )
+
+            elif role == Role.STUDENT:
+                # Student allowed (informational / appointment related)
+                pass
+
+            elif role in {
+                Role.SUPERVISOR,
+                Role.UNIVERSITY_ADMIN,
+                Role.TECH_SUPPORT,
+            }:
+                pass
+
+            else:
+                raise serializers.ValidationError(
+                    _("Your role is not allowed to create notifications.")
+                )
 
         return attrs
 
     def create(self, validated_data):
-        from apps.accounts.models import User
-        from apps.appointments.models import Appointment
+        appointment_id = validated_data.pop("appointment_id", None)
+        target_type = validated_data.pop("target_type", None)
+        target_id = validated_data.pop("target_id", None)
 
-        appointment_id = validated_data.pop('appointment_id', None)
-        target_type = validated_data.pop('target_type', None)
-        target_id = validated_data.pop('target_id', None)
+        recipient_id = validated_data.pop("recipient_id")
+        sender_id = validated_data.pop("sender_id", None)
 
-        recipient_id = validated_data.pop('recipient_id')
-        sender_id = validated_data.pop('sender_id', None)
-
-        # Resolve sender
-        request = self.context.get('request')
+        request = self.context.get("request")
         sender = resolve_request_user(request) if request else None
         if sender is None and sender_id:
             sender = User.objects.get(id=sender_id)
@@ -145,14 +177,14 @@ class NotificationCreateSerializer(serializers.ModelSerializer):
         notification = Notification(
             sender=sender,
             recipient=recipient,
-            **validated_data
+            **validated_data,
         )
 
-        # Legacy appointment support
+        # Legacy appointment
         if appointment_id:
             notification.appointment = Appointment.objects.get(id=appointment_id)
 
-        # Generic target support
+        # Generic target
         if target_type and target_id:
             content_type = ContentType.objects.get(model=target_type.lower())
             notification.target_content_type = content_type
@@ -163,28 +195,29 @@ class NotificationCreateSerializer(serializers.ModelSerializer):
 
 
 # ============================================================
-# Update Serializer (Respond / Mark)
+# Update Serializer (Respond / Mark as Read)
 # ============================================================
-
 class NotificationUpdateSerializer(serializers.ModelSerializer):
     """
     Update notification:
-    - Accept / Reject requests
+    - Accept / Reject
     - Mark as read
     """
 
     class Meta:
         model = Notification
         fields = [
-            'status',
-            'response_message',
-            'is_read',
+            "status",
+            "response_message",
+            "is_read",
         ]
 
     def validate(self, attrs):
-        if 'status' in attrs:
-            if attrs['status'] not in ['accepted', 'rejected', 'info']:
-                raise serializers.ValidationError(
-                    _("Invalid notification status.")
-                )
+        if "status" in attrs and attrs["status"] not in {
+            "pending",
+            "accepted",
+            "rejected",
+            "info",
+        }:
+            raise serializers.ValidationError(_("Invalid notification status."))
         return attrs

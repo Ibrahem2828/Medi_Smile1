@@ -1,149 +1,115 @@
 # apps/evaluations/views.py
-
-from django.db.models import Avg
-from django.utils import timezone
-from django.utils.translation import gettext_lazy as _
-
 from rest_framework import status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from .models import Evaluation, EvaluationStatus
+from apps.accounts.models import User, Role
+from medismile.utils.auth import resolve_request_user
+
+from .models import Evaluation
 from .serializers import (
     EvaluationSerializer,
     EvaluationCreateSerializer,
     EvaluationUpdateSerializer,
-    EvaluationActionSerializer,
 )
+from .permissions import (
+    CanViewEvaluation,
+    CanCreateEvaluation,
+    CanUpdateEvaluation,
+    CanChangeEvaluationStatus,
+)
+from .selectors import evaluations_queryset_for_user, student_statistics
+from .services import create_evaluation, update_evaluation, submit_evaluation, finalize_evaluation
 
-from apps.accounts.models import User
 
-
-class EvaluationViewSet(viewsets.ModelViewSet):
-    """
-    Evaluation API:
-    - Student: read own evaluations
-    - Supervisor: create / read evaluations within university
-    - University Admin: full read + finalize
-    """
-
+class EvaluationViewSet(viewsets.GenericViewSet):
     permission_classes = [IsAuthenticated]
+    serializer_class = EvaluationSerializer
 
     def get_queryset(self):
-        user = self.request.user
-        queryset = Evaluation.objects.select_related(
-            "university",
-            "evaluator",
-            "student",
-            "case",
-            "session",
-            "appointment",
-        )
+        user = resolve_request_user(self.request)
+        return evaluations_queryset_for_user(user)
 
-        if user.role == "student":
-            return queryset.filter(student=user)
+    def list(self, request):
+        qs = self.get_queryset()
+        serializer = EvaluationSerializer(qs, many=True, context={"request": request})
+        return Response(serializer.data)
 
-        if user.role in ["supervisor", "university_admin"]:
-            return queryset.filter(university=user.university)
+    def retrieve(self, request, pk=None):
+        evaluation = self.get_object()
+        self.check_object_permissions(request, evaluation)
+        return Response(EvaluationSerializer(evaluation, context={"request": request}).data)
 
-        return queryset.none()
+    def create(self, request):
+        self.permission_classes = [IsAuthenticated, CanCreateEvaluation]
+        self.check_permissions(request)
 
-    def get_serializer_class(self):
-        if self.action == "create":
-            return EvaluationCreateSerializer
-        if self.action in ["update", "partial_update"]:
-            return EvaluationUpdateSerializer
-        return EvaluationSerializer
+        ser = EvaluationCreateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
 
-    def perform_create(self, serializer):
-        user = self.request.user
-        if user.role not in ["supervisor", "university_admin"]:
-            raise PermissionError(_("Only supervisors or university admins can create evaluations."))
-        serializer.save()
+        actor = resolve_request_user(request)
+        evaluation = create_evaluation(actor=actor, data=ser.validated_data)
+
+        return Response(EvaluationSerializer(evaluation).data, status=status.HTTP_201_CREATED)
+
+    def partial_update(self, request, pk=None):
+        evaluation = self.get_object()
+        self.permission_classes = [IsAuthenticated, CanUpdateEvaluation]
+        self.check_object_permissions(request, evaluation)
+
+        ser = EvaluationUpdateSerializer(data=request.data, partial=True)
+        ser.is_valid(raise_exception=True)
+
+        actor = resolve_request_user(request)
+        evaluation = update_evaluation(actor=actor, evaluation=evaluation, data=ser.validated_data)
+
+        return Response(EvaluationSerializer(evaluation).data, status=status.HTTP_200_OK)
+
+    def get_object(self):
+        obj = super().get_object()
+        # Enforce object view permission
+        self.permission_classes = [IsAuthenticated, CanViewEvaluation]
+        self.check_object_permissions(self.request, obj)
+        return obj
 
     @action(detail=True, methods=["post"])
     def submit(self, request, pk=None):
         evaluation = self.get_object()
-        serializer = EvaluationActionSerializer(
-            data={"action": "submit"},
-            context={"evaluation": evaluation, "request": request},
-        )
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
+        self.permission_classes = [IsAuthenticated, CanChangeEvaluationStatus]
+        self.check_object_permissions(request, evaluation)
 
-        return Response(
-            EvaluationSerializer(evaluation, context={"request": request}).data,
-            status=status.HTTP_200_OK,
-        )
+        actor = resolve_request_user(request)
+        evaluation = submit_evaluation(actor=actor, evaluation=evaluation)
+        return Response(EvaluationSerializer(evaluation).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"])
     def finalize(self, request, pk=None):
         evaluation = self.get_object()
-        serializer = EvaluationActionSerializer(
-            data={"action": "finalize"},
-            context={"evaluation": evaluation, "request": request},
-        )
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
+        self.permission_classes = [IsAuthenticated, CanChangeEvaluationStatus]
+        self.check_object_permissions(request, evaluation)
 
-        return Response(
-            EvaluationSerializer(evaluation, context={"request": request}).data,
-            status=status.HTTP_200_OK,
-        )
+        actor = resolve_request_user(request)
+        evaluation = finalize_evaluation(actor=actor, evaluation=evaluation)
+        return Response(EvaluationSerializer(evaluation).data, status=status.HTTP_200_OK)
 
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def student_evaluation_statistics(request, student_id):
-    """
-    Get evaluation statistics for a student.
-    Accessible by:
-    - Student (self)
-    - Supervisor / University Admin (same university)
-    """
-
-    user = request.user
+    user = resolve_request_user(request)
 
     try:
-        student = User.objects.get(id=student_id, role="student")
+        student = User.objects.get(id=student_id, role__name=Role.STUDENT)
     except User.DoesNotExist:
-        return Response(
-            {"detail": _("Student not found.")},
-            status=status.HTTP_404_NOT_FOUND,
-        )
+        return Response({"detail": "Student not found."}, status=status.HTTP_404_NOT_FOUND)
 
-    if user.role == "student" and user != student:
-        return Response({"detail": _("Not allowed.")}, status=status.HTTP_403_FORBIDDEN)
+    # Authorization (same rules)
+    if getattr(getattr(user, "role", None), "name", None) == Role.STUDENT and user.id != student.id:
+        return Response({"detail": "Not allowed."}, status=status.HTTP_403_FORBIDDEN)
 
-    if user.role in ["supervisor", "university_admin"]:
-        if student.university_id != user.university_id:
-            return Response({"detail": _("Not allowed.")}, status=status.HTTP_403_FORBIDDEN)
+    if getattr(getattr(user, "role", None), "name", None) in {Role.SUPERVISOR, Role.UNIVERSITY_ADMIN}:
+        if student.university_id not in {getattr(user, "university_id", None)}:
+            return Response({"detail": "Not allowed."}, status=status.HTTP_403_FORBIDDEN)
 
-    evaluations = Evaluation.objects.filter(student=student)
-
-    if not evaluations.exists():
-        return Response(
-            {
-                "student_id": str(student.id),
-                "average_score": None,
-                "total_evaluations": 0,
-            },
-            status=status.HTTP_200_OK,
-        )
-
-    average_score = evaluations.aggregate(avg=Avg("score"))["avg"]
-
-    return Response(
-        {
-            "student_id": str(student.id),
-            "student_name": student.get_full_name() or student.username,
-            "average_score": round(average_score, 2) if average_score else None,
-            "total_evaluations": evaluations.count(),
-            "by_status": {
-                status_key: evaluations.filter(status=status_key).count()
-                for status_key, _ in EvaluationStatus.choices
-            },
-        },
-        status=status.HTTP_200_OK,
-    )
+    return Response(student_statistics(student), status=status.HTTP_200_OK)

@@ -1,9 +1,17 @@
+# apps/evaluations/models.py
 import uuid
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
+from django.core.exceptions import ValidationError
 
+from apps.accounts.models import Role
+
+
+# ============================================================
+# Enums
+# ============================================================
 
 class EvaluationStatus(models.TextChoices):
     DRAFT = "draft", _("Draft")
@@ -17,10 +25,19 @@ class EvaluationTargetType(models.TextChoices):
     APPOINTMENT = "appointment", _("Appointment")
 
 
+# ============================================================
+# Model
+# ============================================================
+
 class Evaluation(models.Model):
     """
-    Academic & clinical evaluation model.
-    Core evaluator: Supervisor
+    Academic & clinical evaluation.
+
+    Core rules:
+    - Evaluator: Supervisor or University Admin
+    - Student: must belong to same university
+    - Exactly ONE target (case OR session OR appointment)
+    - FINAL evaluations are immutable
     """
 
     id = models.UUIDField(
@@ -30,9 +47,10 @@ class Evaluation(models.Model):
         verbose_name=_("ID"),
     )
 
-    # =========================
+    # ============================================================
     # Academic Scope
-    # =========================
+    # ============================================================
+
     university = models.ForeignKey(
         "universities.University",
         on_delete=models.PROTECT,
@@ -44,7 +62,12 @@ class Evaluation(models.Model):
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
         related_name="given_evaluations",
-        limit_choices_to={"role__in": ["supervisor", "university_admin"]},
+        limit_choices_to={
+            "role__name__in": [
+                Role.SUPERVISOR,
+                Role.UNIVERSITY_ADMIN,
+            ]
+        },
         verbose_name=_("Evaluator"),
         help_text=_("Supervisor or university admin who performed the evaluation"),
     )
@@ -53,13 +76,14 @@ class Evaluation(models.Model):
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
         related_name="received_evaluations",
-        limit_choices_to={"role": "student"},
+        limit_choices_to={"role__name": Role.STUDENT},
         verbose_name=_("Student"),
     )
 
-    # =========================
+    # ============================================================
     # Evaluation Target
-    # =========================
+    # ============================================================
+
     target_type = models.CharField(
         max_length=20,
         choices=EvaluationTargetType.choices,
@@ -93,9 +117,10 @@ class Evaluation(models.Model):
         verbose_name=_("Appointment"),
     )
 
-    # =========================
+    # ============================================================
     # Evaluation Content
-    # =========================
+    # ============================================================
+
     status = models.CharField(
         max_length=20,
         choices=EvaluationStatus.choices,
@@ -120,9 +145,10 @@ class Evaluation(models.Model):
         verbose_name=_("Evaluator Comment"),
     )
 
-    # =========================
+    # ============================================================
     # Timestamps
-    # =========================
+    # ============================================================
+
     submitted_at = models.DateTimeField(
         null=True,
         blank=True,
@@ -146,28 +172,91 @@ class Evaluation(models.Model):
         verbose_name=_("Updated At"),
     )
 
-    # =========================
+    # ============================================================
     # Meta
-    # =========================
+    # ============================================================
+
     class Meta:
         db_table = "evaluations"
         verbose_name = _("Evaluation")
         verbose_name_plural = _("Evaluations")
         ordering = ["-created_at"]
+
         constraints = [
+            # Score range safety
             models.CheckConstraint(
                 check=models.Q(score__gte=0) & models.Q(score__lte=100),
                 name="evaluation_score_between_0_and_100",
             ),
+
+            # Exactly one target must be set
+            models.CheckConstraint(
+                check=(
+                    (
+                        models.Q(target_type=EvaluationTargetType.CASE) &
+                        models.Q(case__isnull=False) &
+                        models.Q(session__isnull=True) &
+                        models.Q(appointment__isnull=True)
+                    ) |
+                    (
+                        models.Q(target_type=EvaluationTargetType.SESSION) &
+                        models.Q(case__isnull=True) &
+                        models.Q(session__isnull=False) &
+                        models.Q(appointment__isnull=True)
+                    ) |
+                    (
+                        models.Q(target_type=EvaluationTargetType.APPOINTMENT) &
+                        models.Q(case__isnull=True) &
+                        models.Q(session__isnull=True) &
+                        models.Q(appointment__isnull=False)
+                    )
+                ),
+                name="evaluation_exactly_one_target",
+            ),
+
+            # Prevent duplicate evaluations by same evaluator on same target
+            models.UniqueConstraint(
+                fields=["evaluator", "student", "case"],
+                condition=models.Q(case__isnull=False),
+                name="unique_case_evaluation_per_evaluator",
+            ),
+            models.UniqueConstraint(
+                fields=["evaluator", "student", "session"],
+                condition=models.Q(session__isnull=False),
+                name="unique_session_evaluation_per_evaluator",
+            ),
+            models.UniqueConstraint(
+                fields=["evaluator", "student", "appointment"],
+                condition=models.Q(appointment__isnull=False),
+                name="unique_appointment_evaluation_per_evaluator",
+            ),
         ]
 
-    # =========================
-    # Business Logic
-    # =========================
+    # ============================================================
+    # Validation
+    # ============================================================
+
     def clean(self):
         """
-        Ensure target_type matches exactly one related object.
+        Defensive validation (in addition to DB constraints).
         """
+
+        # Student must be student
+        if getattr(getattr(self.student, "role", None), "name", None) != Role.STUDENT:
+            raise ValidationError({"student": _("Selected user must be a student.")})
+
+        # Evaluator role check
+        if getattr(getattr(self.evaluator, "role", None), "name", None) not in {
+            Role.SUPERVISOR,
+            Role.UNIVERSITY_ADMIN,
+        }:
+            raise ValidationError({"evaluator": _("Evaluator must be supervisor or university admin.")})
+
+        # University consistency
+        if self.student and self.university and getattr(self.student, "university_id", None) != self.university_id:
+            raise ValidationError(_("Student must belong to the same university as the evaluation."))
+
+        # Target consistency (defensive – DB already enforces)
         targets = {
             EvaluationTargetType.CASE: self.case,
             EvaluationTargetType.SESSION: self.session,
@@ -176,9 +265,16 @@ class Evaluation(models.Model):
 
         for t_type, value in targets.items():
             if self.target_type == t_type and value is None:
-                raise ValueError(f"{t_type} evaluation requires its related object.")
+                raise ValidationError(_("%(type)s evaluation requires its related object.") % {"type": t_type})
             if self.target_type != t_type and value is not None:
-                raise ValueError(f"{t_type} object must be null when target_type != {t_type}.")
+                raise ValidationError(
+                    _("%(type)s object must be null when target_type != %(type)s.")
+                    % {"type": t_type}
+                )
+
+    # ============================================================
+    # Properties
+    # ============================================================
 
     @property
     def is_locked(self) -> bool:

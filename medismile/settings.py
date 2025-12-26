@@ -210,6 +210,8 @@ SIMPLE_JWT = {
 
 
 # AI_ENGINE_URL = "https://medismile-ai-production.up.railway.app/analyze/symptoms"
+AI_ENGINE_BASE_URL = "http://127.0.0.1:8001"  # FastAPI engine
+AI_ENGINE_TIMEOUT = 30
 
 
 # ============================================================

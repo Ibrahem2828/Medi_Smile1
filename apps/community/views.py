@@ -1,339 +1,168 @@
-from __future__ import annotations
-
-from django.db import transaction
-from django.db.models import Count, Q
-from django.utils import timezone
-from django.utils.translation import gettext_lazy as _
-
-from rest_framework import generics, status
+# apps/community/views.py
+from rest_framework import status, viewsets
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
-from .models import Content, ContentLike, ContentComment
+from medismile.utils.auth import resolve_request_user
+from apps.accounts.models import User, Role
+
+from .models import Content
+from .permissions import (
+    CanCreateContent,
+    CanViewContent,
+    CanModerateContent,
+    CanLikeContent,
+    CanCommentContent,
+)
+from .selectors import (
+    content_queryset_for_user,
+    pending_content_for_moderator,
+    student_public_rating,
+)
+from .services import (
+    create_content,
+    approve_content,
+    reject_content,
+    toggle_like,
+    add_comment,
+)
 from .serializers import (
     ContentSerializer,
     ContentCreateSerializer,
-    ContentUpdateSerializer,
+    ContentRejectSerializer,
     ContentCommentSerializer,
     ContentCommentCreateSerializer,
+    ToggleLikeResponseSerializer,
+    StudentPublicRatingSerializer,
 )
 
-from apps.accounts.permissions import (
-    IsStudent,
-    IsSupervisor,
-    IsUniversityAdmin,
-)
-from medismile.utils.auth import resolve_request_user, require_request_user
 
-
-# ============================================================
-# Content List & Create
-# ============================================================
-
-class ContentListView(generics.ListCreateAPIView):
-    """
-    Community content list & creation.
-
-    Visibility rules:
-    - Public approved content: visible to everyone
-    - Student: sees own pending / rejected content
-    - Supervisor / Admin: see approved public content only here
-    """
-
+class ContentViewSet(viewsets.GenericViewSet):
     permission_classes = [IsAuthenticated]
+    serializer_class = ContentSerializer
 
     def get_queryset(self):
         user = resolve_request_user(self.request)
-
-        qs = Content.objects.select_related(
-            "author",
-            "approved_by",
-            "university",
-        ).prefetch_related(
-            "likes",
-            "comments",
-        )
-
-        # Base: approved + public
-        queryset = qs.filter(is_public=True, status=Content.Status.APPROVED)
-
-        # Student sees his own drafts
-        if user and user.role == "student":
-            queryset = qs.filter(
-                Q(is_public=True, status=Content.Status.APPROVED)
-                | Q(author=user)
-            )
-
-        # Filters
-        params = self.request.query_params
-
-        if params.get("type"):
-            queryset = queryset.filter(content_type=params["type"])
-
-        if params.get("category"):
-            queryset = queryset.filter(category=params["category"])
-
-        if params.get("university"):
-            queryset = queryset.filter(university_id=params["university"])
-
-        if params.get("featured") == "true":
-            queryset = queryset.filter(is_featured=True)
-
-        # Student-only status filter (own content)
-        if params.get("status") and user and user.role == "student":
-            queryset = queryset.filter(author=user, status=params["status"])
-
-        # Ordering whitelist
-        order_by = params.get("order_by", "-created_at")
-        if order_by in {
-            "created_at", "-created_at",
-            "view_count", "-view_count",
-            "title", "-title",
-        }:
-            queryset = queryset.order_by(order_by)
-
-        return queryset
-
-    def get_serializer_class(self):
-        return ContentCreateSerializer if self.request.method == "POST" else ContentSerializer
-
-    def perform_create(self, serializer):
-        """
-        Create content.
-        If student → send approval notification.
-        """
-        content = serializer.save()
-
-        if content.author.role == "student" and content.status == Content.Status.PENDING:
-            from apps.notifications.utils import create_content_approval_notification
-            create_content_approval_notification(content)
-
-
-# ============================================================
-# Content Detail
-# ============================================================
-
-class ContentDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """
-    Retrieve / Update / Delete content.
-
-    - View: increments view_count safely
-    - Update/Delete:
-        * Author: only before approval
-        * Supervisor / Admin: anytime
-    """
-
-    queryset = Content.objects.select_related(
-        "author",
-        "approved_by",
-        "university",
-    )
-    permission_classes = [IsAuthenticated]
-
-    def get_serializer_class(self):
-        return ContentUpdateSerializer if self.request.method in {"PUT", "PATCH"} else ContentSerializer
+        return content_queryset_for_user(user)
 
     def get_permissions(self):
-        if self.request.method in {"PUT", "PATCH", "DELETE"}:
-            return [IsAuthenticated(), IsStudent() | IsSupervisor() | IsUniversityAdmin()]
+        if self.action == "create":
+            return [IsAuthenticated(), CanCreateContent()]
+        if self.action == "retrieve":
+            return [IsAuthenticated(), CanViewContent()]
+        if self.action in {"pending", "approve", "reject"}:
+            return [IsAuthenticated(), CanModerateContent()]
+        if self.action == "like":
+            return [IsAuthenticated(), CanLikeContent()]
+        if self.action == "comment":
+            return [IsAuthenticated(), CanCommentContent()]
         return [IsAuthenticated()]
 
-    def retrieve(self, request, *args, **kwargs):
-        """
-        Increment view counter atomically.
-        """
-        instance = self.get_object()
-        Content.objects.filter(id=instance.id).update(view_count=Count("view_count") + 1)
-        instance.refresh_from_db(fields=["view_count"])
-
-        serializer = self.get_serializer(instance, context={"request": request})
-        return Response(serializer.data)
-
-
-# ============================================================
-# Comments
-# ============================================================
-
-class ContentCommentListView(generics.ListCreateAPIView):
-    """
-    List / Create comments.
-
-    Rules:
-    - Patient: ❌ cannot comment
-    - Student / Supervisor: ✅
-    """
-
-    permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        content_id = self.kwargs["content_id"]
-        return ContentComment.objects.select_related("user").filter(
-            content_id=content_id,
-            is_approved=True,
-            parent__isnull=True,
-        )
-
     def get_serializer_class(self):
-        return ContentCommentCreateSerializer if self.request.method == "POST" else ContentCommentSerializer
+        if self.action == "create":
+            return ContentCreateSerializer
+        if self.action == "reject":
+            return ContentRejectSerializer
+        if self.action == "comment":
+            return ContentCommentCreateSerializer
+        return ContentSerializer
 
-    def perform_create(self, serializer):
-        serializer.save(content_id=self.kwargs["content_id"])
+    # ---------------------------------------------------------
+    # CRUD
+    # ---------------------------------------------------------
 
+    def list(self, request):
+        qs = self.get_queryset()
+        return Response(ContentSerializer(qs, many=True).data)
 
-# ============================================================
-# Likes
-# ============================================================
+    def retrieve(self, request, pk=None):
+        content = self.get_object()
+        self.check_object_permissions(request, content)
+        return Response(ContentSerializer(content).data)
 
-@api_view(["POST"])
-@permission_classes([IsAuthenticated])
-def like_content(request, content_id):
-    """
-    Toggle like / unlike.
-    """
+    def create(self, request):
+        user = resolve_request_user(request)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
-    user, error = require_request_user(request)
-    if error:
-        return error
+        content = create_content(author=user, data=serializer.validated_data)
+        return Response(ContentSerializer(content).data, status=status.HTTP_201_CREATED)
 
-    try:
-        content = Content.objects.get(
-            id=content_id,
-            is_public=True,
-            status=Content.Status.APPROVED,
+    # ---------------------------------------------------------
+    # Moderation
+    # ---------------------------------------------------------
+
+    @action(detail=False, methods=["get"])
+    def pending(self, request):
+        user = resolve_request_user(request)
+        qs = pending_content_for_moderator(user)
+        return Response(ContentSerializer(qs, many=True).data)
+
+    @action(detail=True, methods=["post"])
+    def approve(self, request, pk=None):
+        content = Content.objects.get(pk=pk)
+        self.check_object_permissions(request, content)
+
+        user = resolve_request_user(request)
+        content = approve_content(moderator=user, content=content)
+        return Response(ContentSerializer(content).data)
+
+    @action(detail=True, methods=["post"])
+    def reject(self, request, pk=None):
+        content = Content.objects.get(pk=pk)
+        self.check_object_permissions(request, content)
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = resolve_request_user(request)
+        content = reject_content(
+            moderator=user,
+            content=content,
+            reason=serializer.validated_data["reason"],
         )
-    except Content.DoesNotExist:
-        return Response({"error": _("Content not found")}, status=status.HTTP_404_NOT_FOUND)
+        return Response(ContentSerializer(content).data)
 
-    like, created = ContentLike.objects.get_or_create(
-        content=content,
-        user=user,
-    )
+    # ---------------------------------------------------------
+    # Interactions
+    # ---------------------------------------------------------
 
-    if not created:
-        like.delete()
-        return Response({"liked": False}, status=status.HTTP_200_OK)
+    @action(detail=True, methods=["post"])
+    def like(self, request, pk=None):
+        content = Content.objects.get(pk=pk)
+        user = resolve_request_user(request)
 
-    return Response({"liked": True}, status=status.HTTP_201_CREATED)
+        liked = toggle_like(user=user, content=content)
+        return Response(ToggleLikeResponseSerializer({"liked": liked}).data)
+
+    @action(detail=True, methods=["post"])
+    def comment(self, request, pk=None):
+        content = Content.objects.get(pk=pk)
+        user = resolve_request_user(request)
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        comment = add_comment(
+            user=user,
+            content=content,
+            text=serializer.validated_data["text"],
+        )
+        return Response(ContentCommentSerializer(comment).data, status=status.HTTP_201_CREATED)
 
 
 # ============================================================
-# Trending Content
+# ⭐ Student Public Rating API
 # ============================================================
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
-def trending_content(request):
-    """
-    Top content in last 7 days based on views & likes.
-    """
-
-    from datetime import timedelta
-
-    week_ago = timezone.now() - timedelta(days=7)
-
-    qs = (
-        Content.objects.filter(
-            created_at__gte=week_ago,
-            is_public=True,
-            status=Content.Status.APPROVED,
-        )
-        .annotate(likes_count=Count("likes"))
-        .order_by("-view_count", "-likes_count")[:10]
-    )
-
-    serializer = ContentSerializer(qs, many=True, context={"request": request})
-    return Response(serializer.data)
-
-
-# ============================================================
-# Moderation (Supervisor / Admin)
-# ============================================================
-
-@api_view(["GET"])
-@permission_classes([IsAuthenticated, IsSupervisor | IsUniversityAdmin])
-def pending_content(request):
-    """
-    List pending content for moderation.
-    """
-
-    user, error = require_request_user(request)
-    if error:
-        return error
-
-    qs = Content.objects.filter(status=Content.Status.PENDING)
-
-    if user.role == "supervisor" and hasattr(user, "supervisorprofile"):
-        if user.supervisorprofile.university:
-            qs = qs.filter(university=user.supervisorprofile.university)
-
-    serializer = ContentSerializer(qs, many=True, context={"request": request})
-    return Response(serializer.data)
-
-
-@api_view(["POST"])
-@permission_classes([IsAuthenticated, IsSupervisor | IsUniversityAdmin])
-@transaction.atomic
-def approve_content(request, content_id):
-    """
-    Approve pending content.
-    """
-
-    user, error = require_request_user(request)
-    if error:
-        return error
-
+def student_public_rating_view(request, student_id):
     try:
-        content = Content.objects.select_for_update().get(
-            id=content_id,
-            status=Content.Status.PENDING,
-        )
-    except Content.DoesNotExist:
-        return Response({"error": _("Content not found")}, status=status.HTTP_404_NOT_FOUND)
+        student = User.objects.get(id=student_id, role__name=Role.STUDENT)
+    except User.DoesNotExist:
+        return Response({"detail": "Student not found."}, status=status.HTTP_404_NOT_FOUND)
 
-    content.status = Content.Status.APPROVED
-    content.approved_by = user
-    content.approved_at = timezone.now()
-    content.rejection_reason = None
-    content.save()
-
-    from apps.notifications.utils import create_content_approved_notification
-    create_content_approved_notification(content, user)
-
-    serializer = ContentSerializer(content, context={"request": request})
-    return Response(serializer.data)
-
-
-@api_view(["POST"])
-@permission_classes([IsAuthenticated, IsSupervisor | IsUniversityAdmin])
-@transaction.atomic
-def reject_content(request, content_id):
-    """
-    Reject pending content.
-    """
-
-    user, error = require_request_user(request)
-    if error:
-        return error
-
-    try:
-        content = Content.objects.select_for_update().get(
-            id=content_id,
-            status=Content.Status.PENDING,
-        )
-    except Content.DoesNotExist:
-        return Response({"error": _("Content not found")}, status=status.HTTP_404_NOT_FOUND)
-
-    reason = request.data.get("rejection_reason", "")
-
-    content.status = Content.Status.REJECTED
-    content.approved_by = user
-    content.approved_at = timezone.now()
-    content.rejection_reason = reason
-    content.save()
-
-    from apps.notifications.utils import create_content_rejected_notification
-    create_content_rejected_notification(content, user, reason)
-
-    serializer = ContentSerializer(content, context={"request": request})
-    return Response(serializer.data)
+    data = student_public_rating(student)
+    return Response(StudentPublicRatingSerializer(data).data)

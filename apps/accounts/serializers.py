@@ -1,7 +1,6 @@
 from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.db import transaction
-from django.core.exceptions import ObjectDoesNotExist
 
 from rest_framework import serializers
 
@@ -17,14 +16,15 @@ from .models import (
 User = get_user_model()
 
 # ============================================================
-# AUTH SERIALIZERS
+# LOGIN SERIALIZERS
 # ============================================================
+
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
-    password = serializers.CharField(write_only=True, trim_whitespace=False)
+    password = serializers.CharField(write_only=True)
 
     def validate(self, attrs):
-        email = attrs.get("email")
+        email = attrs.get("email", "").strip().lower()
         password = attrs.get("password")
 
         user = authenticate(
@@ -47,32 +47,47 @@ class LoginSerializer(serializers.Serializer):
         return attrs
 
 
-class LogoutSerializer(serializers.Serializer):
-    refresh = serializers.CharField()
+class RoleBasedLoginSerializer(LoginSerializer):
+    """
+    Login serializer enforcing role-based access.
+    """
+    allowed_role: str | None = None
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        user = attrs["user"]
+
+        if not self.allowed_role:
+            raise serializers.ValidationError(
+                "Internal role configuration error."
+            )
+
+        if user.role.name != self.allowed_role:
+            raise serializers.ValidationError(
+                {"detail": "لا يمكنك تسجيل الدخول من هذه البوابة."}
+            )
+
+        return attrs
 
 
 # ============================================================
-# BASE USER CREATE SERIALIZER
+# BASE USER CREATION
 # ============================================================
+
 class BaseUserCreateSerializer(serializers.ModelSerializer):
-    """
-    Base serializer for controlled user creation.
-    Role is enforced internally – never from request.
-    """
-
     password = serializers.CharField(
         write_only=True,
         validators=[validate_password],
     )
     password_confirm = serializers.CharField(write_only=True)
 
-    role_name: str = None  # MUST be defined in subclasses
+    role_name: str | None = None  # MUST be defined in subclass
 
     class Meta:
         model = User
         fields = (
-            "username",
             "email",
+            "username",
             "first_name",
             "last_name",
             "password",
@@ -82,21 +97,18 @@ class BaseUserCreateSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         if attrs["password"] != attrs["password_confirm"]:
             raise serializers.ValidationError(
-                {"password": "Passwords do not match."}
+                {"password": "كلمتا المرور غير متطابقتين."}
             )
+
+        attrs["email"] = attrs["email"].strip().lower()
         return attrs
 
-    def validate_role(self):
-        if not self.role_name:
-            raise serializers.ValidationError(
-                "Internal error: role_name not defined."
-            )
-
+    def _get_role(self) -> Role:
         try:
             return Role.objects.get(name=self.role_name)
         except Role.DoesNotExist:
             raise serializers.ValidationError(
-                f"Role `{self.role_name}` does not exist."
+                {"role": "الدور غير موجود في النظام."}
             )
 
     @transaction.atomic
@@ -104,26 +116,23 @@ class BaseUserCreateSerializer(serializers.ModelSerializer):
         validated_data.pop("password_confirm")
         password = validated_data.pop("password")
 
-        role = self.validate_role()
-
         user = User(**validated_data)
-        user.role = role
+        user.role = self._get_role()
         user.set_password(password)
 
-        # Audit support
         request = self.context.get("request")
         if request and request.user.is_authenticated:
             user.created_by = request.user
 
         user.full_clean()
         user.save()
-
         return user
 
 
 # ============================================================
-# CREATE SERIALIZERS
+# CREATE SERIALIZERS (BY ROLE)
 # ============================================================
+
 class PatientCreateSerializer(BaseUserCreateSerializer):
     role_name = Role.PATIENT
 
@@ -141,186 +150,62 @@ class UniversityAdminCreateSerializer(BaseUserCreateSerializer):
 
 
 class TechSupportCreateSerializer(BaseUserCreateSerializer):
-    """
-    🔐 Internal API – Only System Admin can use this
-    """
     role_name = Role.TECH_SUPPORT
 
 
 # ============================================================
-# BASE PROFILE LIST SERIALIZER
+# PROFILE SERIALIZERS
 # ============================================================
-class BaseProfileListSerializer(serializers.ModelSerializer):
+
+class BaseProfileSerializer(serializers.ModelSerializer):
     user_id = serializers.UUIDField(source="user.id", read_only=True)
     email = serializers.EmailField(source="user.email", read_only=True)
-    username = serializers.CharField(source="user.username", read_only=True)
-    first_name = serializers.CharField(source="user.first_name", read_only=True)
-    last_name = serializers.CharField(source="user.last_name", read_only=True)
     role = serializers.CharField(source="user.role.name", read_only=True)
 
     class Meta:
         abstract = True
 
 
-# ============================================================
-# LIST SERIALIZERS
-# ============================================================
-class PatientListSerializer(BaseProfileListSerializer):
-    class Meta:
-        model = PatientProfile
-        fields = "__all__"
-
-
-class StudentListSerializer(BaseProfileListSerializer):
-    university_name = serializers.CharField(
-        source="university.name", read_only=True
-    )
-
-    class Meta:
-        model = StudentProfile
-        fields = "__all__"
-
-
-class SupervisorListSerializer(BaseProfileListSerializer):
-    university_name = serializers.CharField(
-        source="university.name", read_only=True
-    )
-
-    class Meta:
-        model = SupervisorProfile
-        fields = "__all__"
-
-
-class UniversityAdminListSerializer(BaseProfileListSerializer):
-    university_name = serializers.CharField(
-        source="university.name", read_only=True
-    )
-
-    class Meta:
-        model = UniversityAdminProfile
-        fields = "__all__"
-
-
-class TechSupportListSerializer(BaseProfileListSerializer):
-    class Meta:
-        model = TechSupportProfile
-        fields = "__all__"
-
-
-# ============================================================
-# BASE PROFILE DETAIL SERIALIZER
-# ============================================================
-class BaseProfileDetailSerializer(serializers.ModelSerializer):
-    user_id = serializers.UUIDField(source="user.id", read_only=True)
-    email = serializers.EmailField(source="user.email", read_only=True)
-    username = serializers.CharField(source="user.username", read_only=True)
-    role = serializers.CharField(source="user.role.name", read_only=True)
-    is_active = serializers.BooleanField(source="user.is_active", read_only=True)
-    date_joined = serializers.DateTimeField(
-        source="user.date_joined", read_only=True
-    )
-    last_login = serializers.DateTimeField(
-        source="user.last_login", read_only=True
-    )
-
-    class Meta:
-        abstract = True
-
-
-# ============================================================
-# DETAIL SERIALIZERS
-# ============================================================
-class PatientDetailSerializer(BaseProfileDetailSerializer):
-    class Meta:
-        model = PatientProfile
-        fields = "__all__"
-
-
-class StudentDetailSerializer(BaseProfileDetailSerializer):
-    university_name = serializers.CharField(
-        source="university.name", read_only=True
-    )
-
-    class Meta:
-        model = StudentProfile
-        fields = "__all__"
-
-
-class SupervisorDetailSerializer(BaseProfileDetailSerializer):
-    university_name = serializers.CharField(
-        source="university.name", read_only=True
-    )
-
-    class Meta:
-        model = SupervisorProfile
-        fields = "__all__"
-
-
-class UniversityAdminDetailSerializer(BaseProfileDetailSerializer):
-    university_name = serializers.CharField(
-        source="university.name", read_only=True
-    )
-
-    class Meta:
-        model = UniversityAdminProfile
-        fields = "__all__"
-
-
-class TechSupportDetailSerializer(BaseProfileDetailSerializer):
-    class Meta:
-        model = TechSupportProfile
-        fields = "__all__"
-
-
-# ============================================================
-# UPDATE SERIALIZERS
-# ============================================================
-class PatientUpdateSerializer(serializers.ModelSerializer):
+class PatientProfileSerializer(BaseProfileSerializer):
     class Meta:
         model = PatientProfile
         exclude = ("user",)
 
 
-class StudentUpdateSerializer(serializers.ModelSerializer):
+class StudentProfileSerializer(BaseProfileSerializer):
+    university_name = serializers.CharField(
+        source="university.name",
+        read_only=True,
+    )
+
     class Meta:
         model = StudentProfile
         exclude = ("user",)
 
 
-class SupervisorUpdateSerializer(serializers.ModelSerializer):
+class SupervisorProfileSerializer(BaseProfileSerializer):
+    university_name = serializers.CharField(
+        source="university.name",
+        read_only=True,
+    )
+
     class Meta:
         model = SupervisorProfile
         exclude = ("user",)
 
 
-class UniversityAdminUpdateSerializer(serializers.ModelSerializer):
+class UniversityAdminProfileSerializer(BaseProfileSerializer):
+    university_name = serializers.CharField(
+        source="university.name",
+        read_only=True,
+    )
+
     class Meta:
         model = UniversityAdminProfile
         exclude = ("user",)
 
 
-class TechSupportUpdateSerializer(serializers.ModelSerializer):
+class TechSupportProfileSerializer(BaseProfileSerializer):
     class Meta:
         model = TechSupportProfile
         exclude = ("user",)
-
-
-# ============================================================
-# USER SERIALIZER (GENERIC / READ-ONLY)
-# ============================================================
-class UserSerializer(serializers.ModelSerializer):
-    role = serializers.CharField(source="role.name", read_only=True)
-
-    class Meta:
-        model = User
-        fields = (
-            "id",
-            "email",
-            "username",
-            "first_name",
-            "last_name",
-            "role",
-            "is_active",
-            "date_joined",
-            "last_login",
-        )

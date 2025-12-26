@@ -1,10 +1,9 @@
-from django.shortcuts import get_object_or_404
-from django.utils.translation import gettext_lazy as _
+# apps/universities/views.py
 from django.core.exceptions import ObjectDoesNotExist
+from django.utils.translation import gettext_lazy as _
 
-from rest_framework import generics, status
+from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
 
 from .models import University, Faculty, AcademicProgram, AcademicYear
@@ -21,27 +20,9 @@ from apps.accounts.permissions import IsUniversityAdmin, IsTechSupport
 
 
 # ============================================================
-# Standard API Response
-# ============================================================
-class APIResponse:
-    @staticmethod
-    def success(message, data=None, status_code=status.HTTP_200_OK):
-        return Response(
-            {"status": "success", "message": message, "data": data},
-            status=status_code,
-        )
-
-    @staticmethod
-    def error(message, errors=None, status_code=status.HTTP_400_BAD_REQUEST):
-        return Response(
-            {"status": "error", "message": message, "errors": errors},
-            status=status_code,
-        )
-
-
-# ============================================================
 # Helpers (University Scoping)
 # ============================================================
+
 def get_admin_university(request):
     """
     Returns the university linked to the logged-in University Admin.
@@ -59,8 +40,9 @@ def get_admin_university(request):
 
 
 # ============================================================
-# University Views
+# University Views (System Level)
 # ============================================================
+
 class UniversityListView(generics.ListAPIView):
     """
     List active universities.
@@ -74,13 +56,10 @@ class UniversityListView(generics.ListAPIView):
 class UniversityCreateView(generics.CreateAPIView):
     """
     Create university.
-    🔐 Only Tech Support can create universities.
+    🔐 Only IT Support.
     """
     serializer_class = UniversityCreateSerializer
     permission_classes = [IsAuthenticated, IsTechSupport]
-
-    def perform_create(self, serializer):
-        serializer.save()
 
 
 class UniversityDetailView(generics.RetrieveAPIView):
@@ -92,7 +71,7 @@ class UniversityDetailView(generics.RetrieveAPIView):
 class UniversityUpdateView(generics.UpdateAPIView):
     """
     Update university data.
-    🔐 Only Tech Support can update universities.
+    🔐 Only IT Support.
     """
     queryset = University.objects.all()
     serializer_class = UniversityDetailSerializer
@@ -102,7 +81,7 @@ class UniversityUpdateView(generics.UpdateAPIView):
 class UniversityDeleteView(generics.DestroyAPIView):
     """
     Soft delete (deactivate) university.
-    🔐 Only Tech Support.
+    🔐 Only IT Support.
     """
     queryset = University.objects.all()
     permission_classes = [IsAuthenticated, IsTechSupport]
@@ -113,8 +92,9 @@ class UniversityDeleteView(generics.DestroyAPIView):
 
 
 # ============================================================
-# Faculty Views
+# Faculty Views (University Admin Scoped)
 # ============================================================
+
 class FacultyListCreateView(generics.ListCreateAPIView):
     """
     List & create faculties within the admin's university.
@@ -124,7 +104,10 @@ class FacultyListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         university = get_admin_university(self.request)
-        return Faculty.objects.filter(university=university, is_active=True)
+        return Faculty.objects.filter(
+            university=university,
+            is_active=True,
+        )
 
     def perform_create(self, serializer):
         university = get_admin_university(self.request)
@@ -132,8 +115,9 @@ class FacultyListCreateView(generics.ListCreateAPIView):
 
 
 # ============================================================
-# Academic Program Views
+# Academic Program Views (University Admin Scoped)
 # ============================================================
+
 class AcademicProgramListCreateView(generics.ListCreateAPIView):
     """
     List & create academic programs within the admin's university.
@@ -154,8 +138,9 @@ class AcademicProgramListCreateView(generics.ListCreateAPIView):
 
 
 # ============================================================
-# Academic Year Views
+# Academic Year Views (University Admin Scoped)
 # ============================================================
+
 class AcademicYearListCreateView(generics.ListCreateAPIView):
     """
     List & create academic years within the admin's university.

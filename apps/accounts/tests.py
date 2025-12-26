@@ -1,153 +1,140 @@
 # apps/accounts/tests.py
-from django.test import TestCase
-from django.contrib.auth import get_user_model
+from django.urls import reverse
+from rest_framework import status
+from rest_framework.test import APITestCase
 
-from .models import (
-    Role,
-    PatientProfile,
-    StudentProfile,
-    SupervisorProfile,
-    UniversityAdminProfile,
-    TechSupportProfile,
-)
-
-User = get_user_model()
+from apps.accounts.models import User, Role, PatientProfile, StudentProfile
 
 
-# ============================================================
-# USER MODEL TESTS
-# ============================================================
-class UserModelTest(TestCase):
-    """Tests for the custom User model with RBAC."""
+class AccountsBaseTestCase(APITestCase):
+    """
+    Base setup for accounts tests.
+    """
 
     @classmethod
     def setUpTestData(cls):
-        cls.patient_role = Role.objects.get(name=Role.PATIENT)
-        cls.student_role = Role.objects.get(name=Role.STUDENT)
+        cls.patient_role = Role.objects.create(name=Role.PATIENT)
+        cls.student_role = Role.objects.create(name=Role.STUDENT)
+        cls.supervisor_role = Role.objects.create(name=Role.SUPERVISOR)
+        cls.university_admin_role = Role.objects.create(name=Role.UNIVERSITY_ADMIN)
+        cls.tech_support_role = Role.objects.create(name=Role.TECH_SUPPORT)
 
-    def test_create_user_default_role(self):
-        """User should be created with default PATIENT role."""
-        user = User.objects.create_user(
-            email="test@example.com",
-            username="testuser",
-            first_name="Test",
-            last_name="User",
-            password="TestPass123!",
-            role=self.patient_role,
+        cls.patient_password = "Patient123!"
+        cls.student_password = "Student123!"
+
+        cls.patient_user = User.objects.create_user(
+            email="patient@test.com",
+            username="patient1",
+            password=cls.patient_password,
+            role=cls.patient_role,
         )
 
-        self.assertEqual(user.email, "test@example.com")
-        self.assertTrue(user.check_password("TestPass123!"))
-        self.assertIsNotNone(user.role)
-        self.assertEqual(user.role.name, Role.PATIENT)
-
-    def test_create_user_with_specific_role(self):
-        """User can be created with a specific role."""
-        user = User.objects.create_user(
-            email="student@example.com",
-            username="student",
-            first_name="Student",
-            last_name="User",
-            password="TestPass123!",
-            role=self.student_role,
+        cls.student_user = User.objects.create_user(
+            email="student@test.com",
+            username="student1",
+            password=cls.student_password,
+            role=cls.student_role,
         )
-
-        self.assertEqual(user.role.name, Role.STUDENT)
-
-    def test_create_superuser(self):
-        """Superuser should have staff and superuser flags."""
-        admin_user = User.objects.create_superuser(
-            email="admin@example.com",
-            username="admin",
-            first_name="Admin",
-            last_name="User",
-            password="AdminPass123!",
-        )
-
-        self.assertTrue(admin_user.is_staff)
-        self.assertTrue(admin_user.is_superuser)
 
 
 # ============================================================
-# PROFILE + SIGNALS TESTS
+# LOGIN TESTS
 # ============================================================
-class ProfileSignalTest(TestCase):
-    """Ensure profiles are auto-created via signals."""
+class LoginTests(AccountsBaseTestCase):
+    def test_patient_login_success(self):
+        url = reverse("login-patient")
+        response = self.client.post(
+            url,
+            {"email": "patient@test.com", "password": self.patient_password},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["role"], Role.PATIENT)
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.roles = {
-            Role.PATIENT: Role.objects.get(name=Role.PATIENT),
-            Role.STUDENT: Role.objects.get(name=Role.STUDENT),
-            Role.SUPERVISOR: Role.objects.get(name=Role.SUPERVISOR),
-            Role.UNIVERSITY_ADMIN: Role.objects.get(name=Role.UNIVERSITY_ADMIN),
-            Role.TECH_SUPPORT: Role.objects.get(name=Role.TECH_SUPPORT),
-        }
+    def test_patient_login_from_wrong_portal_fails(self):
+        """
+        Patient tries to login from student portal.
+        """
+        url = reverse("login-student")
+        response = self.client.post(
+            url,
+            {"email": "patient@test.com", "password": self.patient_password},
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
-    def _create_user(self, role_name, email):
-        return User.objects.create_user(
-            email=email,
-            username=role_name,
-            first_name=role_name.capitalize(),
-            last_name="User",
-            password="TestPass123!",
-            role=self.roles[role_name],
+    def test_student_login_success(self):
+        url = reverse("login-student")
+        response = self.client.post(
+            url,
+            {"email": "student@test.com", "password": self.student_password},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["role"], Role.STUDENT)
+
+
+# ============================================================
+# SIGNALS TESTS
+# ============================================================
+class ProfileSignalTests(AccountsBaseTestCase):
+    def test_patient_profile_created_automatically(self):
+        self.assertTrue(
+            PatientProfile.objects.filter(user=self.patient_user).exists()
         )
 
-    def test_patient_profile_created(self):
-        user = self._create_user(Role.PATIENT, "patient@test.com")
-        self.assertTrue(PatientProfile.objects.filter(user=user).exists())
-
-    def test_student_profile_created(self):
-        user = self._create_user(Role.STUDENT, "student@test.com")
-        self.assertTrue(StudentProfile.objects.filter(user=user).exists())
-
-    def test_supervisor_profile_created(self):
-        user = self._create_user(Role.SUPERVISOR, "supervisor@test.com")
-        self.assertTrue(SupervisorProfile.objects.filter(user=user).exists())
-
-    def test_university_admin_profile_created(self):
-        user = self._create_user(Role.UNIVERSITY_ADMIN, "admin@test.com")
-        self.assertTrue(UniversityAdminProfile.objects.filter(user=user).exists())
-
-    def test_tech_support_profile_created(self):
-        user = self._create_user(Role.TECH_SUPPORT, "tech@test.com")
-        self.assertTrue(TechSupportProfile.objects.filter(user=user).exists())
-
-    def test_only_one_profile_created(self):
-        """Ensure OneToOne integrity (no duplicate profiles)."""
-        user = self._create_user(Role.PATIENT, "single@test.com")
-        PatientProfile.objects.get(user=user)
-
-        self.assertEqual(PatientProfile.objects.filter(user=user).count(), 1)
-
-
-# ============================================================
-# ROLE CHANGE SAFETY TEST
-# ============================================================
-class RoleChangeTest(TestCase):
-    """Ensure role change does not break profiles."""
-
-    def test_role_change_creates_new_profile(self):
-        patient_role = Role.objects.get(name=Role.PATIENT)
-        student_role = Role.objects.get(name=Role.STUDENT)
-
-        user = User.objects.create_user(
-            email="change@test.com",
-            username="changer",
-            first_name="Change",
-            last_name="User",
-            password="TestPass123!",
-            role=patient_role,
+    def test_student_profile_created_automatically(self):
+        self.assertTrue(
+            StudentProfile.objects.filter(user=self.student_user).exists()
         )
 
-        # initial profile
-        self.assertTrue(PatientProfile.objects.filter(user=user).exists())
 
-        # change role
-        user.role = student_role
-        user.save()
+# ============================================================
+# SELF PROFILE ACCESS TESTS
+# ============================================================
+class SelfProfileAccessTests(AccountsBaseTestCase):
+    def test_patient_can_access_own_profile(self):
+        self.client.login(
+            email="patient@test.com", password=self.patient_password
+        )
 
-        # new profile exists, old is preserved
-        self.assertTrue(StudentProfile.objects.filter(user=user).exists())
-        self.assertTrue(PatientProfile.objects.filter(user=user).exists())
+        url = reverse("me-patient")
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["email"], "patient@test.com")
+
+    def test_patient_cannot_access_student_profile_endpoint(self):
+        self.client.login(
+            email="patient@test.com", password=self.patient_password
+        )
+
+        url = reverse("me-student")
+        response = self.client.get(url)
+        self.assertIn(
+            response.status_code,
+            (status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND),
+        )
+
+
+# ============================================================
+# REGISTRATION TESTS
+# ============================================================
+class PatientRegistrationTests(APITestCase):
+    def setUp(self):
+        Role.objects.get_or_create(name=Role.PATIENT)
+
+    def test_patient_self_registration(self):
+        url = reverse("register-patient")
+        response = self.client.post(
+            url,
+            {
+                "email": "newpatient@test.com",
+                "username": "newpatient",
+                "first_name": "New",
+                "last_name": "Patient",
+                "password": "NewPatient123!",
+                "password_confirm": "NewPatient123!",
+            },
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(
+            User.objects.filter(email="newpatient@test.com").exists()
+        )

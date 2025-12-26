@@ -1,7 +1,10 @@
+# apps/universities/models.py
 import uuid
-from django.db import models
-from django.utils.translation import gettext_lazy as _
+
 from django.core.exceptions import ValidationError
+from django.db import models
+from django.db.models import Q
+from django.utils.translation import gettext_lazy as _
 
 
 # ============================================================
@@ -55,9 +58,20 @@ class University(models.Model):
         verbose_name = _("University")
         verbose_name_plural = _("Universities")
         ordering = ["name"]
+        indexes = [
+            models.Index(fields=["is_active"], name="idx_univ_active"),
+            models.Index(fields=["country", "city"], name="idx_univ_country_city"),
+        ]
 
     def clean(self):
         super().clean()
+
+        # Normalize small fields
+        if self.short_name is not None:
+            self.short_name = self.short_name.strip() or None
+
+        if self.name:
+            self.name = self.name.strip()
 
         if self.short_name and len(self.short_name) < 2:
             raise ValidationError(
@@ -66,9 +80,9 @@ class University(models.Model):
 
     def save(self, *args, **kwargs):
         self.full_clean()
-        super().save(*args, **kwargs)
+        return super().save(*args, **kwargs)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.name
 
 
@@ -77,8 +91,7 @@ class University(models.Model):
 # ============================================================
 class Faculty(models.Model):
     """
-    Faculty or College within a university
-    (e.g. Faculty of Dentistry).
+    Faculty or College within a university (e.g. Faculty of Dentistry).
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -105,22 +118,31 @@ class Faculty(models.Model):
         db_table = "faculties"
         verbose_name = _("Faculty")
         verbose_name_plural = _("Faculties")
-        unique_together = ("university", "name")
         ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["university", "name"],
+                name="uq_faculty_university_name",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["university", "is_active"], name="idx_faculty_univ_active"),
+        ]
 
     def clean(self):
         super().clean()
 
-        if not self.university.is_active:
-            raise ValidationError(
-                _("Cannot add faculty to an inactive university.")
-            )
+        if self.name:
+            self.name = self.name.strip()
+
+        if self.university and not self.university.is_active:
+            raise ValidationError(_("Cannot add faculty to an inactive university."))
 
     def save(self, *args, **kwargs):
         self.full_clean()
-        super().save(*args, **kwargs)
+        return super().save(*args, **kwargs)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.name} - {self.university.name}"
 
 
@@ -178,27 +200,39 @@ class AcademicProgram(models.Model):
         db_table = "academic_programs"
         verbose_name = _("Academic Program")
         verbose_name_plural = _("Academic Programs")
-        unique_together = ("university", "code")
         ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["university", "code"],
+                name="uq_program_university_code",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["university", "is_active"], name="idx_program_univ_active"),
+            models.Index(fields=["code"], name="idx_program_code"),
+        ]
 
     def clean(self):
         super().clean()
 
-        if self.faculty and self.faculty.university != self.university:
+        if self.name:
+            self.name = self.name.strip()
+        if self.code:
+            self.code = self.code.strip()
+
+        if self.faculty and self.faculty.university_id != self.university_id:
             raise ValidationError(
                 _("Faculty must belong to the same university as the program.")
             )
 
         if self.duration_years <= 0:
-            raise ValidationError(
-                _("Program duration must be greater than zero.")
-            )
+            raise ValidationError(_("Program duration must be greater than zero."))
 
     def save(self, *args, **kwargs):
         self.full_clean()
-        super().save(*args, **kwargs)
+        return super().save(*args, **kwargs)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.name} ({self.code})"
 
 
@@ -237,17 +271,33 @@ class AcademicYear(models.Model):
         db_table = "academic_years"
         verbose_name = _("Academic Year")
         verbose_name_plural = _("Academic Years")
-        unique_together = ("university", "name")
         ordering = ["-start_date"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["university", "name"],
+                name="uq_academic_year_university_name",
+            ),
+            # DB-level guard: only one active per university
+            models.UniqueConstraint(
+                fields=["university"],
+                condition=Q(is_active=True),
+                name="uq_one_active_academic_year_per_university",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["university", "is_active"], name="idx_year_univ_active"),
+        ]
 
     def clean(self):
         super().clean()
 
-        if self.start_date >= self.end_date:
-            raise ValidationError(
-                _("Academic year start date must be before end date.")
-            )
+        if self.name:
+            self.name = self.name.strip()
 
+        if self.start_date and self.end_date and self.start_date >= self.end_date:
+            raise ValidationError(_("Academic year start date must be before end date."))
+
+        # Keep your existing application-level guard as well
         if self.is_active:
             qs = AcademicYear.objects.filter(
                 university=self.university,
@@ -263,7 +313,7 @@ class AcademicYear(models.Model):
 
     def save(self, *args, **kwargs):
         self.full_clean()
-        super().save(*args, **kwargs)
+        return super().save(*args, **kwargs)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.name} - {self.university.name}"

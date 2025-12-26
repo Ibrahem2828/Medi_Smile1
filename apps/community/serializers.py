@@ -1,113 +1,21 @@
+# apps/community/serializers.py
 from rest_framework import serializers
 from django.utils.translation import gettext_lazy as _
 
-from .models import Content, ContentLike, ContentComment
-from apps.accounts.serializers import UserSerializer
-from apps.universities.serializers import UniversitySerializer
-from medismile.utils.auth import resolve_request_user
+from .models import Content, ContentComment
 
 
 # ============================================================
-# Content Comment (Read)
-# ============================================================
-
-class ContentCommentSerializer(serializers.ModelSerializer):
-    """
-    Read-only serializer for content comments.
-    """
-
-    user = UserSerializer(read_only=True)
-
-    class Meta:
-        model = ContentComment
-        fields = [
-            "id",
-            "user",
-            "text",
-            "is_approved",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = fields
-
-
-# ============================================================
-# Content Comment (Create)
-# ============================================================
-
-class ContentCommentCreateSerializer(serializers.ModelSerializer):
-    """
-    Create comment on content.
-
-    Rules:
-    - Patient: ❌ not allowed
-    - Student / Supervisor: ✅
-    """
-
-    class Meta:
-        model = ContentComment
-        fields = [
-            "content",
-            "text",
-            "parent",
-        ]
-
-    def validate(self, attrs):
-        request = self.context.get("request")
-        user = resolve_request_user(request)
-
-        if not user:
-            raise serializers.ValidationError(_("Authentication required."))
-
-        if user.role == "patient":
-            raise serializers.ValidationError(_("Patients are not allowed to comment."))
-
-        return attrs
-
-    def create(self, validated_data):
-        request = self.context.get("request")
-        user = resolve_request_user(request)
-        validated_data["user"] = user
-        return super().create(validated_data)
-
-
-# ============================================================
-# Content Like
-# ============================================================
-
-class ContentLikeSerializer(serializers.ModelSerializer):
-    """
-    Serializer for content likes.
-    """
-
-    user = UserSerializer(read_only=True)
-
-    class Meta:
-        model = ContentLike
-        fields = [
-            "id",
-            "user",
-            "created_at",
-        ]
-        read_only_fields = fields
-
-
-# ============================================================
-# Content (Read)
+# Content Read
 # ============================================================
 
 class ContentSerializer(serializers.ModelSerializer):
-    """
-    Main read serializer for community content.
-    """
+    author_name = serializers.SerializerMethodField()
+    university_name = serializers.CharField(source="university.name", read_only=True)
+    approved_by_name = serializers.SerializerMethodField()
 
-    author = UserSerializer(read_only=True)
-    university = UniversitySerializer(read_only=True)
-    approved_by = UserSerializer(read_only=True)
-
-    likes_count = serializers.SerializerMethodField()
-    comments_count = serializers.SerializerMethodField()
-    is_liked = serializers.SerializerMethodField()
+    likes_count = serializers.IntegerField(read_only=True)
+    comments_count = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = Content
@@ -119,51 +27,40 @@ class ContentSerializer(serializers.ModelSerializer):
             "category",
             "file",
             "url",
-            "author",
-            "university",
             "tags",
-            "is_public",
-            "is_featured",
+            "author",
+            "author_name",
+            "university",
+            "university_name",
             "status",
             "approved_by",
-            "rejection_reason",
+            "approved_by_name",
             "approved_at",
+            "rejection_reason",
+            "is_public",
+            "is_featured",
             "view_count",
-            "created_at",
-            "updated_at",
             "likes_count",
             "comments_count",
-            "is_liked",
+            "created_at",
+            "updated_at",
         ]
         read_only_fields = fields
 
-    def get_likes_count(self, obj):
-        return obj.likes.count()
+    def get_author_name(self, obj):
+        return obj.author.get_full_name() or obj.author.username
 
-    def get_comments_count(self, obj):
-        return obj.comments.filter(is_approved=True).count()
-
-    def get_is_liked(self, obj):
-        request = self.context.get("request")
-        user = resolve_request_user(request)
-        if not user:
-            return False
-        return obj.likes.filter(user=user).exists()
+    def get_approved_by_name(self, obj):
+        if not obj.approved_by:
+            return None
+        return obj.approved_by.get_full_name() or obj.approved_by.username
 
 
 # ============================================================
-# Content (Create)
+# Content Create
 # ============================================================
 
 class ContentCreateSerializer(serializers.ModelSerializer):
-    """
-    Create new community content.
-
-    Rules:
-    - Student: status = pending
-    - Supervisor / Admin / Tech: auto-approved
-    """
-
     class Meta:
         model = Content
         fields = [
@@ -173,83 +70,69 @@ class ContentCreateSerializer(serializers.ModelSerializer):
             "category",
             "file",
             "url",
-            "university",
-            "tags",
-            "is_public",
-        ]
-
-    def validate(self, attrs):
-        # Either file or URL must exist
-        if not attrs.get("file") and not attrs.get("url"):
-            raise serializers.ValidationError(
-                _("Either file or URL must be provided.")
-            )
-        return attrs
-
-    def create(self, validated_data):
-        request = self.context.get("request")
-        user = resolve_request_user(request)
-
-        if not user:
-            raise serializers.ValidationError(_("Authentication required."))
-
-        validated_data["author"] = user
-
-        # Student content requires approval
-        if user.role == "student":
-            validated_data["status"] = Content.Status.PENDING
-        else:
-            validated_data["status"] = Content.Status.APPROVED
-
-        return super().create(validated_data)
-
-
-# ============================================================
-# Content (Update)
-# ============================================================
-
-class ContentUpdateSerializer(serializers.ModelSerializer):
-    """
-    Update content.
-
-    Rules:
-    - Author can edit ONLY if content is not approved yet
-    - Supervisor / Admin can edit anytime
-    """
-
-    class Meta:
-        model = Content
-        fields = [
-            "title",
-            "description",
-            "content_type",
-            "category",
-            "file",
-            "url",
-            "university",
             "tags",
             "is_public",
             "is_featured",
         ]
 
     def validate(self, attrs):
-        instance = self.instance
-        request = self.context.get("request")
-        user = resolve_request_user(request)
+        ctype = attrs.get("content_type")
 
-        if not user:
-            raise serializers.ValidationError(_("Authentication required."))
+        if ctype == Content.ContentType.LINK and not attrs.get("url"):
+            raise serializers.ValidationError({"url": _("URL is required for link content.")})
 
-        # Author restrictions
-        if user == instance.author and instance.status == Content.Status.APPROVED:
-            raise serializers.ValidationError(
-                _("Approved content cannot be modified by the author.")
-            )
-
-        # File / URL rule
-        if not attrs.get("file") and not attrs.get("url"):
-            raise serializers.ValidationError(
-                _("Either file or URL must be provided.")
-            )
+        if ctype != Content.ContentType.LINK and not attrs.get("file"):
+            raise serializers.ValidationError({"file": _("File is required for this content type.")})
 
         return attrs
+
+
+# ============================================================
+# Moderation
+# ============================================================
+
+class ContentRejectSerializer(serializers.Serializer):
+    reason = serializers.CharField(min_length=3, max_length=2000)
+
+
+# ============================================================
+# Comments
+# ============================================================
+
+class ContentCommentSerializer(serializers.ModelSerializer):
+    user_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ContentComment
+        fields = [
+            "id",
+            "content",
+            "user",
+            "user_name",
+            "text",
+            "is_approved",
+            "created_at",
+        ]
+        read_only_fields = fields
+
+    def get_user_name(self, obj):
+        return obj.user.get_full_name() or obj.user.username
+
+
+class ContentCommentCreateSerializer(serializers.Serializer):
+    text = serializers.CharField(min_length=1, max_length=5000)
+
+
+# ============================================================
+# ⭐ Student Rating
+# ============================================================
+
+class StudentPublicRatingSerializer(serializers.Serializer):
+    student_id = serializers.UUIDField()
+    average_score = serializers.FloatField(allow_null=True)
+    stars = serializers.IntegerField(min_value=0, max_value=5)
+    total_evaluations = serializers.IntegerField()
+
+
+class ToggleLikeResponseSerializer(serializers.Serializer):
+    liked = serializers.BooleanField()

@@ -1,5 +1,4 @@
 # apps/attachments/admin.py
-
 from django.contrib import admin
 from django.utils.translation import gettext_lazy as _
 
@@ -9,23 +8,18 @@ from .models import Attachment
 @admin.register(Attachment)
 class AttachmentAdmin(admin.ModelAdmin):
     """
-    Admin configuration for Attachment model.
+    Attachment Admin Configuration.
 
-    Purpose:
-    - Technical auditing
-    - File inspection
-    - Debugging & support
-    NOT for medical or academic decision making.
+    - Read-only medical & academic attachments
+    - No hard delete to preserve integrity
     """
 
-    # --------------------------------------------------
-    # List view
-    # --------------------------------------------------
     list_display = (
         "original_filename",
         "attachment_type",
         "file_category",
-        "file_size",
+        "case",
+        "appointment",
         "uploaded_by",
         "is_visible_to_patient",
         "created_at",
@@ -41,75 +35,61 @@ class AttachmentAdmin(admin.ModelAdmin):
     search_fields = (
         "original_filename",
         "uploaded_by__email",
-        "uploaded_by__username",
-        "mime_type",
+        "case__title",
     )
 
     ordering = ("-created_at",)
 
-    # --------------------------------------------------
-    # Read-only enforcement
-    # --------------------------------------------------
     readonly_fields = (
         "id",
-        "file",
+        "case",
+        "appointment",
+        "uploaded_by",
         "original_filename",
-        "attachment_type",
-        "file_category",
         "file_size",
         "mime_type",
-        "case",
-        "session",
-        "uploaded_by",
-        "is_visible_to_patient",
+        "file",
         "created_at",
     )
 
-    # --------------------------------------------------
-    # Field layout
-    # --------------------------------------------------
     fieldsets = (
-        (_("File Information"), {
+        (_("Attachment Info"), {
+            "fields": (
+                "attachment_type",
+                "file_category",
+                "is_visible_to_patient",
+            )
+        }),
+        (_("Relations"), {
+            "fields": (
+                "case",
+                "appointment",
+                "uploaded_by",
+            )
+        }),
+        (_("File Data"), {
             "fields": (
                 "file",
                 "original_filename",
-                "attachment_type",
-                "file_category",
                 "file_size",
                 "mime_type",
             )
         }),
-        (_("Medical Relations"), {
-            "fields": (
-                "case",
-                "session",
-            )
-        }),
-        (_("Ownership & Visibility"), {
-            "fields": (
-                "uploaded_by",
-                "is_visible_to_patient",
-            )
-        }),
         (_("System"), {
             "fields": (
-                "id",
                 "created_at",
             )
         }),
     )
 
-    # --------------------------------------------------
-    # Permissions
-    # --------------------------------------------------
     def has_add_permission(self, request):
-        """Prevent manual upload from admin."""
-        return False
-
-    def has_change_permission(self, request, obj=None):
-        """Prevent editing attachment metadata."""
+        """
+        Uploads are handled via API (students only).
+        """
         return False
 
     def has_delete_permission(self, request, obj=None):
-        """Allow delete ONLY for superusers."""
-        return request.user.is_superuser
+        """
+        Prevent hard delete of medical attachments.
+        """
+        return False

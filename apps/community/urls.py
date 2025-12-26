@@ -1,79 +1,22 @@
-from django.urls import path
-from . import views
+# apps/community/urls.py
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+
+from .views import ContentViewSet, student_public_rating_view
 
 app_name = "community"
 
+router = DefaultRouter()
+router.register(r"content", ContentViewSet, basename="content")
+
 urlpatterns = [
+    # Community content APIs
+    path("", include(router.urls)),
 
-    # =========================================================
-    # Content (Public & User Scope)
-    # =========================================================
-
-    # List content / Create new content
+    # ⭐ Student public rating
     path(
-        "",
-        views.ContentListView.as_view(),
-        name="content-list",
-    ),
-
-    # Retrieve / Update / Delete single content
-    path(
-        "<uuid:pk>/",
-        views.ContentDetailView.as_view(),
-        name="content-detail",
-    ),
-
-    # =========================================================
-    # Content Interactions
-    # =========================================================
-
-    # Like / Unlike content
-    path(
-        "<uuid:content_id>/like/",
-        views.like_content,
-        name="content-like",
-    ),
-
-    # Comments (list / create)
-    path(
-        "<uuid:content_id>/comments/",
-        views.ContentCommentListView.as_view(),
-        name="content-comments",
-    ),
-
-    # =========================================================
-    # Discovery
-    # =========================================================
-
-    # Trending content
-    path(
-        "trending/",
-        views.trending_content,
-        name="content-trending",
-    ),
-
-    # =========================================================
-    # Moderation (Supervisor / University Admin)
-    # =========================================================
-
-    # List pending content for approval
-    path(
-        "moderation/pending/",
-        views.pending_content,
-        name="content-pending",
-    ),
-
-    # Approve content
-    path(
-        "moderation/<uuid:content_id>/approve/",
-        views.approve_content,
-        name="content-approve",
-    ),
-
-    # Reject content
-    path(
-        "moderation/<uuid:content_id>/reject/",
-        views.reject_content,
-        name="content-reject",
+        "students/<uuid:student_id>/rating/",
+        student_public_rating_view,
+        name="student-public-rating",
     ),
 ]

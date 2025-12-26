@@ -1,10 +1,37 @@
-# apps/support/admin.py
-
 from django.contrib import admin
 from django.utils.translation import gettext_lazy as _
 
 from .models import SupportTicket, SupportTicketResponse
 
+
+# ============================================================
+# Inline Responses (inside Ticket)
+# ============================================================
+
+class SupportTicketResponseInline(admin.TabularInline):
+    model = SupportTicketResponse
+    extra = 0
+    can_delete = False
+    show_change_link = False
+
+    readonly_fields = (
+        "author",
+        "message",
+        "is_internal",
+        "created_at",
+    )
+
+    fields = (
+        "author",
+        "message",
+        "is_internal",
+        "created_at",
+    )
+
+
+# ============================================================
+# Support Ticket Admin
+# ============================================================
 
 @admin.register(SupportTicket)
 class SupportTicketAdmin(admin.ModelAdmin):
@@ -16,6 +43,8 @@ class SupportTicketAdmin(admin.ModelAdmin):
         "status",
         "assigned_to",
         "created_at",
+        "resolved_at",
+        "closed_at",
     )
 
     list_filter = (
@@ -33,12 +62,13 @@ class SupportTicketAdmin(admin.ModelAdmin):
     )
 
     ordering = ("-created_at",)
+    date_hierarchy = "created_at"
+    list_select_related = ("created_by", "assigned_to")
 
     readonly_fields = (
         "id",
         "created_by",
         "created_at",
-        "updated_at",
         "resolved_at",
         "closed_at",
     )
@@ -53,12 +83,11 @@ class SupportTicketAdmin(admin.ModelAdmin):
                 "description",
                 "priority",
                 "status",
+                "created_at",
             )
         }),
         (_("Assignment"), {
-            "fields": (
-                "assigned_to",
-            )
+            "fields": ("assigned_to",)
         }),
         (_("Resolution"), {
             "fields": (
@@ -67,10 +96,44 @@ class SupportTicketAdmin(admin.ModelAdmin):
                 "closed_at",
             )
         }),
-        (_("Timestamps"), {
-            "fields": (
-                "created_at",
-                "updated_at",
-            )
-        }),
+    )
+
+    inlines = (SupportTicketResponseInline,)
+
+
+# ============================================================
+# Support Ticket Response Admin (standalone)
+# ============================================================
+
+@admin.register(SupportTicketResponse)
+class SupportTicketResponseAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "ticket",
+        "author",
+        "is_internal",
+        "created_at",
+    )
+
+    list_filter = (
+        "is_internal",
+        "created_at",
+    )
+
+    search_fields = (
+        "ticket__subject",
+        "author__email",
+        "message",
+    )
+
+    ordering = ("-created_at",)
+    list_select_related = ("ticket", "author")
+
+    readonly_fields = (
+        "id",
+        "ticket",
+        "author",
+        "message",
+        "is_internal",
+        "created_at",
     )

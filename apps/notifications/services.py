@@ -1,182 +1,237 @@
-"""
-Notification delivery services.
-
-Supports:
-- Firebase Cloud Messaging (FCM)
-- Graceful fallback when disabled
-- Generic notification payloads
-"""
-
+# apps/notifications/services.py
 from __future__ import annotations
 
-import os
-from typing import Optional, Dict, Any
+from typing import Optional
+from django.contrib.contenttypes.models import ContentType
 
-from django.conf import settings
-from django.utils.translation import gettext_lazy as _
+from apps.accounts.models import User
+from apps.appointments.models import Appointment
+from apps.cases.models import Case
+from apps.messaging.models import Message
 
 from .models import Notification
+from .utils import (
+    get_users_for_appointment_notifications,
+    get_users_for_case_notifications,
+)
 
 
 # ============================================================
-# Firebase Availability
+# Core Factory (Single Source of Truth)
 # ============================================================
 
-try:
-    import firebase_admin
-    from firebase_admin import credentials, messaging
-    FIREBASE_AVAILABLE = True
-except ImportError:
-    FIREBASE_AVAILABLE = False
-
-
-# ============================================================
-# Firebase Initialization
-# ============================================================
-
-def initialize_firebase() -> bool:
-    """
-    Initialize Firebase Admin SDK (singleton-safe).
-
-    Returns:
-        bool: True if initialized or already initialized.
-    """
-    if not FIREBASE_AVAILABLE:
-        return False
-
-    try:
-        firebase_admin.get_app()
-        return True
-    except ValueError:
-        pass  # Not initialized yet
-
-    try:
-        # Priority 1: ENV path
-        cred_path = os.getenv("FIREBASE_CREDENTIALS_PATH")
-        if cred_path and os.path.exists(cred_path):
-            cred = credentials.Certificate(cred_path)
-            firebase_admin.initialize_app(cred)
-            return True
-
-        # Priority 2: Django settings dict
-        cred_dict = getattr(settings, "FIREBASE_CREDENTIALS", None)
-        if cred_dict:
-            cred = credentials.Certificate(cred_dict)
-            firebase_admin.initialize_app(cred)
-            return True
-
-    except Exception as exc:
-        # Silent fail (do not break business logic)
-        print(f"[FCM] Initialization failed: {exc}")
-
-    return False
-
-
-# ============================================================
-# Low-level Push Sender
-# ============================================================
-
-def send_push_notification(
+def create_notification(
     *,
-    fcm_token: str,
+    sender: Optional[User],
+    recipient: User,
+    notification_type: str,
     title: str,
-    body: str,
-    data: Optional[Dict[str, Any]] = None,
-) -> bool:
+    message: str,
+    priority: str = Notification.Priority.NORMAL,
+    appointment: Optional[Appointment] = None,
+    target_object=None,
+    proposed_changes: Optional[dict] = None,
+    payload: Optional[dict] = None,
+) -> Notification:
     """
-    Send a push notification via Firebase Cloud Messaging.
+    Central notification creation entry-point.
 
-    This function NEVER raises.
+    Notes:
+    - `payload` is generic extra data (frontend-friendly).
+    - `target_object` is linked via GenericFK (if your model supports it).
+    - `proposed_changes` is used for appointment update requests.
     """
+    notification = Notification(
+        sender=sender,
+        recipient=recipient,
+        notification_type=notification_type,
+        title=title,
+        message=message,
+        priority=priority,
+        proposed_changes=proposed_changes,
+    )
 
-    if not FIREBASE_AVAILABLE:
-        return False
+    # Optional generic payload if exists in your model
+    if hasattr(notification, "payload"):
+        notification.payload = payload or {}
 
-    if not initialize_firebase():
-        return False
+    if appointment:
+        notification.appointment = appointment
 
-    try:
-        message = messaging.Message(
-            notification=messaging.Notification(
-                title=title,
-                body=body,
-            ),
-            data={k: str(v) for k, v in (data or {}).items()},
-            token=fcm_token,
+    if target_object:
+        notification.target_content_type = ContentType.objects.get_for_model(
+            target_object.__class__
+        )
+        notification.target_object_id = target_object.id
+
+    notification.save()
+    return notification
+
+
+# ============================================================
+# Minimal Generic Helper (Used by audit bridge)
+# ============================================================
+
+def notify_user(
+    *,
+    recipient: User,
+    title: str,
+    message: str,
+    notification_type: str = "system",
+    sender: Optional[User] = None,
+    target_object=None,
+    payload: Optional[dict] = None,
+    priority: str = Notification.Priority.NORMAL,
+) -> Notification:
+    """
+    Lightweight wrapper for simple system notifications.
+    Keeps the Notification model usage consistent.
+    """
+    return create_notification(
+        sender=sender,
+        recipient=recipient,
+        notification_type=notification_type,
+        title=title,
+        message=message,
+        priority=priority,
+        target_object=target_object,
+        payload=payload,
+    )
+
+
+# ============================================================
+# Appointment Notifications
+# ============================================================
+
+def notify_appointment_update_request(
+    *,
+    sender: User,
+    appointment: Appointment,
+    proposed_changes: dict,
+):
+    """
+    Patient → Student / Supervisor
+    """
+    recipients = [
+        u
+        for u in get_users_for_appointment_notifications(appointment)
+        if u and u.id != sender.id
+    ]
+
+    for recipient in recipients:
+        create_notification(
+            sender=sender,
+            recipient=recipient,
+            notification_type="appointment_update_request",
+            title="Appointment Update Request",
+            message="A request to update the appointment has been submitted.",
+            appointment=appointment,
+            proposed_changes=proposed_changes,
+            payload={"appointment_id": str(appointment.id)},
         )
 
-        messaging.send(message)
-        return True
 
-    except Exception as exc:
-        print(f"[FCM] Send failed: {exc}")
-        return False
+def notify_appointment_confirmed(
+    *,
+    sender: User,
+    appointment: Appointment,
+):
+    """
+    Student → Patient
+    """
+    create_notification(
+        sender=sender,
+        recipient=appointment.patient,
+        notification_type="appointment_confirmed",
+        title="Appointment Confirmed",
+        message="Your appointment has been confirmed.",
+        appointment=appointment,
+        payload={"appointment_id": str(appointment.id)},
+    )
 
 
 # ============================================================
-# Payload Builder
+# Messaging Notifications
 # ============================================================
 
-def build_notification_payload(notification: Notification) -> Dict[str, Any]:
+def notify_new_message(
+    *,
+    message_obj: Message,
+):
     """
-    Build a unified payload for mobile / frontend clients.
+    Triggered when a new chat message is sent.
     """
+    room = message_obj.room
+    sender = message_obj.sender
 
-    payload = {
-        "notification_id": str(notification.id),
-        "type": notification.notification_type,
-        "status": notification.status,
-        "priority": notification.priority,
-    }
+    recipients = [room.participant1, room.participant2]
 
-    if notification.appointment_id:
-        payload["appointment_id"] = str(notification.appointment_id)
+    for user in recipients:
+        if not user or user.id == sender.id:
+            continue
 
-    if notification.target_content_type:
-        payload["target_type"] = notification.target_content_type.model
-        payload["target_id"] = str(notification.target_object_id)
-
-    return payload
-
-
-# ============================================================
-# High-level Dispatcher
-# ============================================================
-
-def dispatch_notification(notification: Notification) -> bool:
-    """
-    Dispatch notification to recipient using all available channels.
-
-    Currently:
-    - Push (FCM)
-
-    Future:
-    - WebSocket
-    - Email
-    """
-
-    recipient = notification.recipient
-
-    # Push notifications
-    if hasattr(recipient, "fcm_token") and recipient.fcm_token:
-        return send_push_notification(
-            fcm_token=recipient.fcm_token,
-            title=notification.title,
-            body=notification.message,
-            data=build_notification_payload(notification),
+        create_notification(
+            sender=sender,
+            recipient=user,
+            notification_type="new_message",
+            title="New Message",
+            message="You have received a new message.",
+            target_object=room.case,
+            payload={
+                "room_id": str(room.id),
+                "case_id": str(room.case_id),
+            },
         )
 
-    return False
-
 
 # ============================================================
-# Backward Compatible Helper
+# Case Notifications
 # ============================================================
 
-def send_notification_to_user(user, notification: Notification) -> bool:
+def notify_case_assigned(
+    *,
+    sender: User,
+    case: Case,
+):
     """
-    Backward-compatible wrapper.
+    University / Supervisor → Student
+    """
+    if not case.student:
+        return
 
-    DO NOT REMOVE.
+    create_notification(
+        sender=sender,
+        recipient=case.student,
+        notification_type="case_assigned",
+        title="New Case Assigned",
+        message="A new case has been assigned to you.",
+        target_object=case,
+        payload={"case_id": str(case.id)},
+    )
+
+
+def notify_case_update(
+    *,
+    sender: User,
+    case: Case,
+    title: str,
+    message: str,
+):
     """
-    return dispatch_notification(notification)
+    Notify related users in the case scope (patient, student, supervisor) except sender.
+    """
+    recipients = [
+        u for u in get_users_for_case_notifications(case)
+        if u and u.id != sender.id
+    ]
+
+    for recipient in recipients:
+        create_notification(
+            sender=sender,
+            recipient=recipient,
+            notification_type="case_update",
+            title=title,
+            message=message,
+            target_object=case,
+            payload={"case_id": str(case.id)},
+        )

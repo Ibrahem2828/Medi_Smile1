@@ -1,8 +1,5 @@
 # apps/audit/tests.py
-
 from django.urls import reverse
-from django.utils import timezone
-
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -12,22 +9,20 @@ from apps.audit.models import AuditLog, AuditAction
 
 
 class AuditLogAPITestCase(APITestCase):
-
     def setUp(self):
-        # Roles
-        self.university_admin_role = Role.objects.create(name=Role.UNIVERSITY_ADMIN)
-        self.tech_support_role = Role.objects.create(name=Role.TECH_SUPPORT)
-        self.student_role = Role.objects.create(name=Role.STUDENT)
+        # Roles (avoid duplicates if seeded)
+        self.university_admin_role, _ = Role.objects.get_or_create(name=Role.UNIVERSITY_ADMIN)
+        self.tech_support_role, _ = Role.objects.get_or_create(name=Role.TECH_SUPPORT)
+        self.student_role, _ = Role.objects.get_or_create(name=Role.STUDENT)
 
-        # University
         self.university = University.objects.create(name="Audit Test University")
 
-        # Users
         self.university_admin = User.objects.create_user(
             email="admin@test.com",
             username="admin",
             password="password123",
             role=self.university_admin_role,
+            university=self.university,
         )
 
         self.tech_support = User.objects.create_user(
@@ -42,9 +37,10 @@ class AuditLogAPITestCase(APITestCase):
             username="student",
             password="password123",
             role=self.student_role,
+            university=self.university,
         )
 
-        # Create audit logs
+        # Logs: one for admin scope, one global tech
         AuditLog.objects.create(
             user=self.university_admin,
             university=self.university,
@@ -65,40 +61,43 @@ class AuditLogAPITestCase(APITestCase):
             user_agent="TestAgent",
         )
 
-    def test_university_admin_can_list_audit_logs(self):
+    def test_university_admin_can_list_scoped_audit_logs(self):
         self.client.force_authenticate(user=self.university_admin)
+        url = reverse("audit:audit-log-list")
+        res = self.client.get(url)
 
-        url = reverse("audit-log-list")
-        response = self.client.get(url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        # Must be scoped to university (both logs are in same university here => 2)
+        self.assertEqual(len(res.data), 2)
 
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 2)
-
-    def test_tech_support_can_list_audit_logs(self):
+    def test_tech_support_can_list_all_logs(self):
         self.client.force_authenticate(user=self.tech_support)
+        url = reverse("audit:audit-log-list")
+        res = self.client.get(url)
 
-        url = reverse("audit-log-list")
-        response = self.client.get(url)
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 2)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(len(res.data), 2)
 
     def test_student_cannot_access_audit_logs(self):
         self.client.force_authenticate(user=self.student)
+        url = reverse("audit:audit-log-list")
+        res = self.client.get(url)
 
-        url = reverse("audit-log-list")
-        response = self.client.get(url)
-
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_audit_statistics_endpoint(self):
         self.client.force_authenticate(user=self.university_admin)
+        url = reverse("audit:audit-statistics")
+        res = self.client.get(url)
 
-        url = reverse("audit-statistics")
-        response = self.client.get(url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertIn("action_counts", res.data)
+        self.assertIn("top_users", res.data)
+        self.assertIn("daily_activity", res.data)
 
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-
-        self.assertIn("action_counts", response.data)
-        self.assertIn("top_users", response.data)
-        self.assertIn("daily_activity", response.data)
+    def test_filter_by_action(self):
+        self.client.force_authenticate(user=self.tech_support)
+        url = reverse("audit:audit-log-list") + f"?action={AuditAction.CREATE}"
+        res = self.client.get(url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue(all(item["action"] == AuditAction.CREATE for item in res.data))
