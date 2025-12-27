@@ -22,6 +22,10 @@ from .views import (
     UniversityAdminsListView,
     UniversityAdminsByUniversityView,
     UniversityAdminsAllView,
+    UniversityAdminStudentsManageView,
+    UniversityAdminStudentDetailView,
+    UniversityAdminSupervisorsManageView,
+    UniversityAdminSupervisorDetailView,
 
     # Self profile
     PatientMeView,
@@ -91,6 +95,26 @@ urlpatterns = [
         "university/admins/all/",
         UniversityAdminsAllView.as_view(),
         name="university-admins-all",
+    ),
+    path(
+        "university/students/manage/",
+        UniversityAdminStudentsManageView.as_view(),
+        name="university-students-manage",
+    ),
+    path(
+        "university/students/manage/<uuid:user_id>/",
+        UniversityAdminStudentDetailView.as_view(),
+        name="university-student-detail",
+    ),
+    path(
+        "university/supervisors/manage/",
+        UniversityAdminSupervisorsManageView.as_view(),
+        name="university-supervisors-manage",
+    ),
+    path(
+        "university/supervisors/manage/<uuid:user_id>/",
+        UniversityAdminSupervisorDetailView.as_view(),
+        name="university-supervisor-detail",
     ),
 
     # =====================================================

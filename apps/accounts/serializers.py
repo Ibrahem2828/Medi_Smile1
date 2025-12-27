@@ -147,6 +147,21 @@ class PatientCreateSerializer(BaseUserCreateSerializer):
 class StudentCreateSerializer(BaseUserCreateSerializer):
     role_name = Role.STUDENT
 
+    university = serializers.UUIDField(
+        source="studentprofile_profile.university_id",
+        read_only=True,
+    )
+    university_name = serializers.CharField(
+        source="studentprofile_profile.university.name",
+        read_only=True,
+    )
+
+    class Meta(BaseUserCreateSerializer.Meta):
+        fields = BaseUserCreateSerializer.Meta.fields + (
+            "university",
+            "university_name",
+        )
+
     def _get_admin_university_id(self):
         request = self.context.get("request")
         admin_profile = getattr(
@@ -165,29 +180,51 @@ class StudentCreateSerializer(BaseUserCreateSerializer):
         validated_data.pop("password_confirm")
         password = validated_data.pop("password")
 
-        user = User(**validated_data)
-        user.role = self._get_role()
-        # Pass university to signal/profile creation
-        user._desired_university_id = admin_university_id
-        user.set_password(password)
+        try:
+            user = User(**validated_data)
+            user.role = self._get_role()
+            # Pass university to signal/profile creation
+            user._desired_university_id = admin_university_id
+            user.set_password(password)
 
-        request = self.context.get("request")
-        if request and request.user.is_authenticated:
-            user.created_by = request.user
+            request = self.context.get("request")
+            if request and request.user.is_authenticated:
+                user.created_by = request.user
 
-        user.full_clean()
-        user.save()
+            user.full_clean()
+            user.save()
 
-        profile = user.studentprofile_profile
-        profile.university_id = admin_university_id
-        profile.full_clean()
-        profile.save(update_fields=["university"])
-        return user
+            profile = user.studentprofile_profile
+            profile.university_id = admin_university_id
+            profile.full_clean()
+            profile.save(update_fields=["university"])
+            return user
+        except IntegrityError as exc:
+            raise serializers.ValidationError(
+                {"detail": "User with same email or username already exists.", "error": str(exc)}
+            )
+        except Exception as exc:
+            raise serializers.ValidationError({"detail": "Failed to create student.", "error": str(exc)})
 
 
 class SupervisorCreateSerializer(BaseUserCreateSerializer):
     role_name = Role.SUPERVISOR
 
+    university = serializers.UUIDField(
+        source="supervisorprofile_profile.university_id",
+        read_only=True,
+    )
+    university_name = serializers.CharField(
+        source="supervisorprofile_profile.university.name",
+        read_only=True,
+    )
+
+    class Meta(BaseUserCreateSerializer.Meta):
+        fields = BaseUserCreateSerializer.Meta.fields + (
+            "university",
+            "university_name",
+        )
+
     def _get_admin_university_id(self):
         request = self.context.get("request")
         admin_profile = getattr(
@@ -206,23 +243,30 @@ class SupervisorCreateSerializer(BaseUserCreateSerializer):
         validated_data.pop("password_confirm")
         password = validated_data.pop("password")
 
-        user = User(**validated_data)
-        user.role = self._get_role()
-        user._desired_university_id = admin_university_id
-        user.set_password(password)
+        try:
+            user = User(**validated_data)
+            user.role = self._get_role()
+            user._desired_university_id = admin_university_id
+            user.set_password(password)
 
-        request = self.context.get("request")
-        if request and request.user.is_authenticated:
-            user.created_by = request.user
+            request = self.context.get("request")
+            if request and request.user.is_authenticated:
+                user.created_by = request.user
 
-        user.full_clean()
-        user.save()
+            user.full_clean()
+            user.save()
 
-        profile = user.supervisorprofile_profile
-        profile.university_id = admin_university_id
-        profile.full_clean()
-        profile.save(update_fields=["university"])
-        return user
+            profile = user.supervisorprofile_profile
+            profile.university_id = admin_university_id
+            profile.full_clean()
+            profile.save(update_fields=["university"])
+            return user
+        except IntegrityError as exc:
+            raise serializers.ValidationError(
+                {"detail": "User with same email or username already exists.", "error": str(exc)}
+            )
+        except Exception as exc:
+            raise serializers.ValidationError({"detail": "Failed to create supervisor.", "error": str(exc)})
 
 
 class UniversityAdminCreateSerializer(BaseUserCreateSerializer):

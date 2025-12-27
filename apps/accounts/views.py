@@ -242,6 +242,88 @@ class UniversityAdminsAllView(generics.ListAPIView):
 
 
 # ============================================================
+# UNIVERSITY ADMIN MANAGED STUDENTS & SUPERVISORS (CRUD)
+# ============================================================
+class _UniversityScopeMixin:
+    """
+    Resolve university_id from the current University Admin profile.
+    """
+
+    def _get_admin_university_id(self):
+        profile = getattr(self.request.user, "universityadminprofile_profile", None)
+        university_id = getattr(profile, "university_id", None)
+        if not university_id:
+            raise PermissionDenied("University Admin must belong to a university.")
+        return university_id
+
+
+class UniversityAdminStudentsManageView(_UniversityScopeMixin, generics.ListCreateAPIView):
+    permission_classes = [IsAuthenticatedAndActive, IsUniversityAdmin]
+
+    def get_queryset(self):
+        university_id = self._get_admin_university_id()
+        return (
+            StudentProfile.objects.select_related("user", "university")
+            .filter(university_id=university_id)
+            .order_by("user__first_name", "user__last_name")
+        )
+
+    def get_serializer_class(self):
+        if self.request.method.lower() == "post":
+            return StudentCreateSerializer
+        return StudentProfileSerializer
+
+    def perform_create(self, serializer):
+        serializer.save()
+
+
+class UniversityAdminStudentDetailView(_UniversityScopeMixin, generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [IsAuthenticatedAndActive, IsUniversityAdmin]
+    serializer_class = StudentProfileSerializer
+    lookup_field = "user_id"
+
+    def get_queryset(self):
+        university_id = self._get_admin_university_id()
+        return (
+            StudentProfile.objects.select_related("user", "university")
+            .filter(university_id=university_id)
+        )
+
+
+class UniversityAdminSupervisorsManageView(_UniversityScopeMixin, generics.ListCreateAPIView):
+    permission_classes = [IsAuthenticatedAndActive, IsUniversityAdmin]
+
+    def get_queryset(self):
+        university_id = self._get_admin_university_id()
+        return (
+            SupervisorProfile.objects.select_related("user", "university")
+            .filter(university_id=university_id)
+            .order_by("user__first_name", "user__last_name")
+        )
+
+    def get_serializer_class(self):
+        if self.request.method.lower() == "post":
+            return SupervisorCreateSerializer
+        return SupervisorProfileSerializer
+
+    def perform_create(self, serializer):
+        serializer.save()
+
+
+class UniversityAdminSupervisorDetailView(_UniversityScopeMixin, generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [IsAuthenticatedAndActive, IsUniversityAdmin]
+    serializer_class = SupervisorProfileSerializer
+    lookup_field = "user_id"
+
+    def get_queryset(self):
+        university_id = self._get_admin_university_id()
+        return (
+            SupervisorProfile.objects.select_related("user", "university")
+            .filter(university_id=university_id)
+        )
+
+
+# ============================================================
 # SELF PROFILE
 # ============================================================
 class _BaseMeView(generics.RetrieveUpdateAPIView):
