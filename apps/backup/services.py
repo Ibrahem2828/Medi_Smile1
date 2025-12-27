@@ -1,23 +1,25 @@
 import logging
 from typing import Optional
 
-from apps.notifications.services import notify_user
-from django.utils import timezone
 from django.core.exceptions import PermissionDenied
+from django.utils import timezone
 
-from apps.audit.services import log_audit_event
 from apps.accounts.models import Role
-from .models import Backup
+from apps.audit.services import log_audit_event
 from apps.backup.engine import BackupEngine
-
+from apps.notifications.services import notify_user
+from .models import Backup
 
 logger = logging.getLogger(__name__)
+
+
+def _role_name(user) -> Optional[str]:
+    return getattr(getattr(user, "role", None), "name", None)
 
 
 # ============================================================
 # Core Backup Services
 # ============================================================
-
 def create_backup(
     *,
     actor,
@@ -25,7 +27,8 @@ def create_backup(
     description: Optional[str] = None,
     trigger_source=Backup.TriggerSource.MANUAL,
 ) -> Backup:
-    if actor.role.name != Role.TECH_SUPPORT:
+    role_name = _role_name(actor)
+    if role_name != Role.TECH_SUPPORT and not getattr(actor, "is_superuser", False):
         raise PermissionDenied("Only Tech Support can create backups.")
 
     engine = BackupEngine()
@@ -79,21 +82,25 @@ def mark_backup_failed(backup: Backup, error: str):
         metadata={"error": error},
     )
 
-    # 🔔 Notify Tech Support
-    notify_user(
-        user=backup.created_by,
-        title="Backup Failed",
-        message=f"Backup {backup.id} failed. Error: {error}",
-        data={
-            "backup_id": str(backup.id),
-            "backup_type": backup.backup_type,
-        },
-    )
+    if backup.created_by:
+        try:
+            notify_user(
+                user=backup.created_by,
+                title="Backup Failed",
+                message=f"Backup {backup.id} failed. Error: {error}",
+                data={
+                    "backup_id": str(backup.id),
+                    "backup_type": backup.backup_type,
+                },
+            )
+        except Exception:
+            logger.exception("Failed to send backup failure notification")
 
 
 def restore_backup(*, actor, backup: Backup, restore_type: str):
-    if actor.role.name != Role.TECH_SUPPORT:
-        raise PermissionDenied
+    role_name = _role_name(actor)
+    if role_name != Role.TECH_SUPPORT and not getattr(actor, "is_superuser", False):
+        raise PermissionDenied("Only Tech Support can restore backups.")
 
     engine = BackupEngine()
 

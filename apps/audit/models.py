@@ -158,7 +158,9 @@ class AuditLog(models.Model):
     # Protection (Immutable)
     # =====================================================
     def save(self, *args, **kwargs):
-        if self.pk:
+        # Allow first insert even though UUID pk is pre-populated,
+        # block any subsequent updates.
+        if not self._state.adding:
             raise RuntimeError("Audit logs are immutable and cannot be modified.")
         return super().save(*args, **kwargs)
 

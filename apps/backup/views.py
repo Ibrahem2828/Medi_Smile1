@@ -6,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.accounts.models import Role
 from apps.audit.services import log_audit_event
+from .permissions import IsTechSupport
 
 from .models import Backup
 from .serializers import (
@@ -25,7 +26,7 @@ class BackupViewSet(GenericViewSet):
     - Action-based (not CRUD)
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsTechSupport]
     serializer_class = BackupSerializer
     queryset = Backup.objects.all().order_by("-created_at")
 
@@ -34,9 +35,8 @@ class BackupViewSet(GenericViewSet):
     # =========================
     def get_queryset(self):
         user = self.request.user
-        if user.role.name == Role.TECH_SUPPORT:
-            return self.queryset
-        return self.queryset.none()
+        role_name = getattr(getattr(user, "role", None), "name", None)
+        return self.queryset if role_name == Role.TECH_SUPPORT else self.queryset.none()
 
     # =========================
     # Actions
@@ -55,23 +55,39 @@ class BackupViewSet(GenericViewSet):
         """
         Trigger manual backup.
         """
-        if request.user.role.name != Role.TECH_SUPPORT:
-            return Response(
-                {"detail": "Permission denied."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
         serializer = BackupCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        backup = create_backup(
-            actor=request.user,
-            backup_type=serializer.validated_data["backup_type"],
-            description=serializer.validated_data.get("description"),
-        )
+        try:
+            backup = create_backup(
+                actor=request.user,
+                backup_type=serializer.validated_data["backup_type"],
+                description=serializer.validated_data.get("description"),
+            )
+        except Exception as exc:  # pragma: no cover - defensive guard
+            log_audit_event(
+                user=request.user,
+                action="backup.create.failed",
+                description=str(exc),
+            )
+            return Response(
+                {
+                    "detail": "Backup request failed to start.",
+                    "error": str(exc),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
-        # Run async task
-        run_backup_task.delay(str(backup.id))
+        # Run async task (do not break API if Celery is down)
+        try:
+            run_backup_task.delay(str(backup.id))
+        except Exception as exc:  # pragma: no cover - defensive guard
+            log_audit_event(
+                user=request.user,
+                action="backup.task.dispatch_failed",
+                description=str(exc),
+                content_object=backup,
+            )
 
         log_audit_event(
             user=request.user,
@@ -93,12 +109,6 @@ class BackupViewSet(GenericViewSet):
         """
         Restore a backup.
         """
-        if request.user.role.name != Role.TECH_SUPPORT:
-            return Response(
-                {"detail": "Permission denied."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
         backup = self.get_object()
 
         serializer = BackupRestoreSerializer(data=request.data)
