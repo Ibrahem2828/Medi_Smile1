@@ -135,6 +135,30 @@ class UniversityAdminCreateView(generics.CreateAPIView):
     serializer_class = UniversityAdminCreateSerializer
     permission_classes = [IsAuthenticatedAndActive, CanCreateUniversityAdmin]
 
+    def create(self, request, *args, **kwargs):
+        """
+        Fail-safe creation: أي فشل في المسارات الثانوية لا يكسر الاستجابة.
+        """
+        try:
+            return super().create(request, *args, **kwargs)
+        except Exception as exc:  # pragma: no cover - defensive guard
+            # سجل ولا تكسر
+            try:
+                log_audit_event(
+                    user=request.user,
+                    action="accounts.university_admin.create.failed",
+                    description=str(exc),
+                )
+            except Exception:
+                pass
+            return Response(
+                {
+                    "detail": "Failed to create university admin.",
+                    "error": str(exc),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
 
 class TechSupportCreateView(generics.CreateAPIView):
     serializer_class = TechSupportCreateSerializer

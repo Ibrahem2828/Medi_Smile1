@@ -1,6 +1,7 @@
 from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.db import transaction
+from django.db import IntegrityError
 
 from rest_framework import serializers
 
@@ -117,17 +118,22 @@ class BaseUserCreateSerializer(serializers.ModelSerializer):
         validated_data.pop("password_confirm")
         password = validated_data.pop("password")
 
-        user = User(**validated_data)
-        user.role = self._get_role()
-        user.set_password(password)
+        try:
+            user = User(**validated_data)
+            user.role = self._get_role()
+            user.set_password(password)
 
-        request = self.context.get("request")
-        if request and request.user.is_authenticated:
-            user.created_by = request.user
+            request = self.context.get("request")
+            if request and request.user.is_authenticated:
+                user.created_by = request.user
 
-        user.full_clean()
-        user.save()
-        return user
+            user.full_clean()
+            user.save()
+            return user
+        except IntegrityError as exc:
+            raise serializers.ValidationError(
+                {"detail": "User with same email or username already exists.", "error": str(exc)}
+            )
 
 
 # ============================================================
@@ -234,23 +240,30 @@ class UniversityAdminCreateSerializer(BaseUserCreateSerializer):
         validated_data.pop("password_confirm")
         password = validated_data.pop("password")
 
-        user = User(**validated_data)
-        user.role = self._get_role()
-        user._desired_university_id = university_id
-        user.set_password(password)
+        try:
+            user = User(**validated_data)
+            user.role = self._get_role()
+            user._desired_university_id = university_id
+            user.set_password(password)
 
-        request = self.context.get("request")
-        if request and request.user.is_authenticated:
-            user.created_by = request.user
+            request = self.context.get("request")
+            if request and request.user.is_authenticated:
+                user.created_by = request.user
 
-        user.full_clean()
-        user.save()
+            user.full_clean()
+            user.save()
 
-        profile = user.universityadminprofile_profile
-        profile.university_id = university_id
-        profile.full_clean()
-        profile.save(update_fields=["university"])
-        return user
+            profile = user.universityadminprofile_profile
+            profile.university_id = university_id
+            profile.full_clean()
+            profile.save(update_fields=["university"])
+            return user
+        except IntegrityError as exc:
+            raise serializers.ValidationError(
+                {"detail": "User with same email or username already exists.", "error": str(exc)}
+            )
+        except Exception as exc:
+            raise serializers.ValidationError({"detail": "Failed to create university admin.", "error": str(exc)})
 
 
 class TechSupportCreateSerializer(BaseUserCreateSerializer):
