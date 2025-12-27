@@ -1,143 +1,185 @@
-# MediSmile Backend Apps & APIs (Unified RBAC)
+# MediSmile Backend – Full Endpoint Handbook
 
-قاعدة ذهبية لكل Endpoint: Authentication → Role Check → Ownership → University Scope → State Check. الأدوار: tech_support > university_admin > supervisor > student > patient.
+مبدأ ثابت: Authentication → Role Check → Ownership → University Scope → State Check. الردود القياسية تستخدم JSON، مع حقل `detail` للرسائل، و`data` أو `results` حسب الحاجة. المصادقة عبر JWT (access/refresh) مع إرسال الـaccess في `Authorization: Bearer <token>`.
 
+النسخة التالية موجهة لفريق الفرونت وتحتوي على المسارات، الطلبات، والاستجابات المتوقعة لكل تطبيق.
+
+---
 ## 1) Accounts
-تسجيل دخول منفصل لكل دور:
+### Auth (منفصلة لكل دور)
 - POST `/api/accounts/login/patient/`
 - POST `/api/accounts/login/student/`
 - POST `/api/accounts/login/supervisor/`
 - POST `/api/accounts/login/university-admin/`
 - POST `/api/accounts/login/tech-support/`
 
-إنشاء المستخدمين:
-- POST `/api/accounts/register/patient/` — المريض يسجل نفسه فقط.
-- POST `/api/accounts/create/student/` — university_admin فقط، يربط الطالب بجامعته.
-- POST `/api/accounts/create/supervisor/` — university_admin فقط، ضمن جامعته.
-- POST `/api/accounts/create/university-admin/` — tech_support فقط، مع university_id.
-- POST `/api/accounts/create/tech-support/` — tech_support أو superuser فقط.
+Request Body:
+```json
+{ "email": "user@example.com", "password": "StrongPassword123" }
+```
 
-الملف الشخصي (self only؛ لا تغيير للدور/الجامعة من هنا):
+Response – Success (200):
+```json
+{
+  "detail": "Login successful.",
+  "tokens": { "refresh": "jwt-refresh-token", "access": "jwt-access-token" },
+  "user": {
+    "id": "uuid",
+    "email": "user@example.com",
+    "username": "username",
+    "first_name": "First",
+    "last_name": "Last",
+    "role": "patient",
+    "role_id": "uuid",
+    "fcm_token": null,
+    "is_active": true,
+    "created_at": "2025-12-20T10:15:30Z",
+    "updated_at": "2025-12-26T18:42:10Z"
+  }
+}
+```
+Errors: `{"detail": "Invalid credentials."}` | `{"detail": "You are not allowed to login with this role."}` | `{"detail": "User account is inactive."}`
+
+### إنشاء المستخدم
+- POST `/api/accounts/register/patient/` (AllowAny)  
+  Body: email, username, first_name, last_name, password, password_confirm  
+  201 → `{ "id": "...", "email": "...", "role": "patient" }`
+
+- POST `/api/accounts/create/student/` (university_admin)  
+  Body: email, username, first_name, last_name, password, password_confirm  
+  201 → user + ربط بالجامعة (تلقائياً)
+
+- POST `/api/accounts/create/supervisor/` (university_admin)
+- POST `/api/accounts/create/university-admin/` (tech_support) + `university_id`
+- POST `/api/accounts/create/tech-support/` (tech_support أو superuser)
+
+### الملف الشخصي (self only)
 - GET/PATCH `/api/accounts/me/patient/`
 - GET/PATCH `/api/accounts/me/student/`
 - GET/PATCH `/api/accounts/me/supervisor/`
 - GET/PATCH `/api/accounts/me/university-admin/`
 - GET/PATCH `/api/accounts/me/tech-support/`
+قيود: لا تغيير role/university من هذه المسارات.
 
-FCM Token:
-- POST `/api/accounts/me/token/` (تسجيل/تدوير)
-- DELETE `/api/accounts/me/token/` (إزالة)
+### FCM Token
+- POST `/api/accounts/me/token/` — `{ "fcm_token": "..." }` → 200 `{ "detail": "Token registered." }`
+- DELETE `/api/accounts/me/token/` → 200 `{ "detail": "Token removed." }`
 
+---
 ## 2) Universities
-- CRUD جامعة: tech_support فقط.
-- إدارة البرامج/الأعوام/المواد: university_admin داخل جامعته.
-- ربط الطلاب/المشرفين بالجامعة إلزامي.
-(راجع `apps/universities/` للحقول التفصيلية.)
+- GET `/api/universities/` (admin scoped) | POST `/api/universities/` (tech_support)
+- GET/PATCH `/api/universities/<id>/`
+- برامج/أعوام/مواد (أمثلة):
+  - GET/POST `/api/universities/programs/`
+  - GET/POST `/api/universities/academic-years/`
+صلاحيات: tech_support شامل؛ university_admin في نطاق جامعته.
 
+---
 ## 3) Cases
-- المريض: POST حالة واحدة نشطة، GET حالته فقط.
-- الطالب: يعمل فقط على الحالات المسندة؛ لا يغير الحالة بعد إغلاق/اعتماد المشرف.
-- المشرف: إسناد/اعتماد/إغلاق.
-Endpoints النموذجية:
-- GET/POST `/api/cases/` (حسب الدور)
-- GET/PATCH `/api/cases/<case_id>/`
-- تاريخ الحالة: GET `/api/cases/<case_id>/history/`
+- GET/POST `/api/cases/`  
+  - patient create: `{ "title": "...", "description": "..." }`
+  - responses تتضمن حالة case (new/pending_assignment/assigned/in_progress/completed/closed)
+- GET/PATCH `/api/cases/<id>/`
+- GET `/api/cases/<id>/history/`
+قيود: جلسة تتبع حالة؛ لا تعديل بعد closed؛ طالب يعمل فقط على assigned case.
 
+### Case Sessions
+- GET/POST `/api/cases/<case_id>/sessions/` (student على case مسند)  
+  Body: notes, status (draft/completed/needs_review/approved/rejected)
+- GET/PATCH `/api/case-sessions/<id>/`
+
+---
 ## 4) Appointments
-- الطالب: إنشاء/تعديل/إلغاء ضمن حالته.
-- المشرف: مراجعة/إلغاء حسب السياسة.
-- المريض: قراءة فقط.
-Endpoints:
-- GET/POST `/api/appointments/`
+- GET/POST `/api/appointments/` (student ينشئ/يعدل؛ patient قراءة فقط)  
+  Body: case_id, scheduled_at, notes
 - GET/PATCH `/api/appointments/<id>/`
+قيود: تعديل الموعد للطالب فقط؛ المشرف يمكنه إلغاء/مراجعة حسب السياسة.
 
-## 5) Messaging (Case-scoped)
-- غرفة واحدة لكل حالة.
-- الإرسال: patient/student فقط وحالة ASSIGNED أو IN_PROGRESS.
-- القراءة: patient/student/supervisor/university_admin (نطاق جامعته)/tech_support.
-Endpoints:
-- GET `/api/messaging/rooms/<uuid:pk>/`
-- POST `/api/messaging/rooms/` (إنشاء/جلب غرفة حالة)
-- GET/POST `/api/messaging/rooms/<uuid:room_id>/messages/`
+---
+## 5) Messaging (Case Chat)
+- GET `/api/messaging/rooms/<uuid:pk>/` — قراءة غرفة
+- POST `/api/messaging/rooms/` — إنشاء/جلب غرفة حالة واحدة  
+  Body: `{ "case": "<case_uuid>" }`
+- GET/POST `/api/messaging/rooms/<uuid:room_id>/messages/`  
+  Body (POST): `{ "content": "..." }`
 - GET `/api/messaging/messages/<uuid:pk>/`
-- WS: `ws/chat/<room_id>/` (نفس صلاحيات REST، المشرف/Admin قراءة فقط)
+- WebSocket: `ws/chat/<room_id>/`
+صلاحيات: إرسال للمريض/الطالب فقط وحالة ASSIGNED/IN_PROGRESS؛ مشرف/Admin جامعة/Tech Support قراءة فقط؛ غرفة واحدة لكل حالة؛ لا إرسال بعد إغلاق الحالة.  
+رد إرسال رسالة (201): `{ "id": "uuid", "sender": {id,first_name,last_name}, "content": "...", "sent_at": "...", "is_system": false }`
 
+---
 ## 6) Notifications
-- قراءة: المستلم فقط، Admin الجامعة لنفس الجامعة، Tech Support للكل (read).
-- إنشاء: النظام/الطلاب/المشرفون/Admin الجامعة/الدعم الفني (مع تحقق النوع).
-Endpoints:
-- GET `/api/notifications/`
-- POST `/api/notifications/`
-- GET/PATCH `/api/notifications/<id>/` (mark as read, accept/reject)
+- GET `/api/notifications/` — Inbox للمستلم
+- POST `/api/notifications/` — إنشاء إشعار  
+  Body: notification_type, priority, recipient_id, (appointment_id أو target_type+target_id), title, message, proposed_changes?
+- GET/PATCH `/api/notifications/<id>/` — تحديث (mark read/accept/reject)  
+  Body (PATCH): `{ "status": "accepted|rejected|pending|info", "response_message": "...", "is_read": true }`
+رد قراءة (200): Notification كامل مع sender/recipient مختصرين.
 
+---
 ## 7) Community
-- الطالب ينشر، المشرف يوافق، يظهر ضمن الجامعة.
-- المريض: إعجاب فقط.
-- Admin الجامعة يرى سجلات الموافقات.
-Endpoints (عينة):
-- GET/POST `/api/community/content/` (إنشاء الطالب، موافقة المشرف)
+- GET `/api/community/content/` — منشورات الجامعة
+- POST `/api/community/content/` (student)  
+  Body: title, body, attachments…
 - POST `/api/community/content/<id>/approve/` (supervisor)
 - POST `/api/community/content/<id>/reject/` (supervisor)
-- GET `/api/community/approvals/` (university_admin)
+- POST `/api/community/content/<id>/like/` (patient react only)
+- GET `/api/community/approvals/` (university_admin) — سجل الموافقات
 
+---
 ## 8) Reports
-- الطالب: إنشاء مسودة.
-- المشرف: اعتماد/رفض؛ التعديل مغلق بعد الاعتماد.
-- Admin الجامعة: قراءة فقط.
-Endpoints:
-- GET/POST `/api/reports/`
+- GET/POST `/api/reports/` (student draft)  
+  Body: case_id, content, attachments…
 - GET/PATCH `/api/reports/<id>/`
 - POST `/api/reports/<id>/approve/` (supervisor)
 - POST `/api/reports/<id>/reject/` (supervisor)
+قيود: لا تعديل بعد الاعتماد.
 
+---
 ## 9) Evaluations
-- المريض: تقييم الجلسة/الطالب.
-- المشرف: تقييم الطالب.
-- الجامعة: عرض مجمع.
-- حالة التقييم: draft → submitted → final (لا تعديل بعد final).
-Endpoints:
-- GET/POST `/api/evaluations/`
+- GET/POST `/api/evaluations/`  
+  Body مثال: `{ "student_id": "...", "target_type": "case|session|appointment", "target_id": "...", "score": 85, "rubric": { ... }, "comment": "..." }`
 - GET/PATCH `/api/evaluations/<id>/`
 - POST `/api/evaluations/<id>/submit/`
 - POST `/api/evaluations/<id>/finalize/`
 - GET `/api/evaluations/students/<student_id>/statistics/`
+حالات: draft → submitted → final (مغلق).
 
+---
 ## 10) Support
-- الكل ينشئ تذاكر.
-- Admin الجامعة يرى تذاكر جامعته؛ Tech Support يرى الجميع.
-Endpoints:
-- GET/POST `/api/support/tickets/`
+- GET/POST `/api/support/tickets/`  
+  Body: subject, body, priority (low/normal/high/critical), attachments[]
 - GET/PATCH `/api/support/tickets/<id>/`
+صلاحيات: المستخدم يرى تذاكره؛ Admin الجامعة يرى تذاكر جامعته؛ Tech Support يرى الجميع.
 
+---
 ## 11) Backup
-- IT Support فقط: إنشاء/استعادة/جدولة نسخ.
-Endpoints (مثال):
-- POST `/api/backup/jobs/`
 - GET `/api/backup/jobs/`
+- POST `/api/backup/jobs/` (tech_support) — إنشاء مهمة نسخ
 - POST `/api/backup/jobs/<id>/restore/`
+صلاحيات: tech_support فقط.
 
+---
 ## 12) AI
-- المريض: إنشاء/قراءة تشخيصه.
-- الطالب/المشرف: قراءة.
-- لا تعديل بعد الإنشاء (immutable).
-Endpoints:
-- POST `/api/ai/diagnosis/`
+- POST `/api/ai/diagnosis/` (patient create/read حالته؛ student/supervisor read)  
+  Body: images/text payload
 - GET `/api/ai/diagnosis/<id>/`
+Immutable بعد الإنشاء.
 
+---
 ## 13) Audit
-- تسجيل كل الأحداث الحساسة.
-- Tech Support يرى الكل؛ Admin الجامعة يرى نطاق جامعته.
-Endpoints:
-- GET `/api/audit/logs/`
+- GET `/api/audit/logs/` (tech_support كامل؛ admin الجامعة نطاق جامعته)
 - GET `/api/audit/logs/<id>/`
 
-## ملاحظات تشغيل واختبار
-- تأكد من ضبط متغيرات البيئة وقاعدة البيانات قبل الاختبارات.
-- اختبارات سريعة:
-  - `python manage.py test apps.accounts`
-  - `python manage.py test apps.messaging`
-  - `python manage.py test apps.notifications` (للتأكد من الصلاحيات والقراءة/التحديث)
-- Throttling مقترحة:
-  - messaging: `30/min`
-  - fcm token: `5/min`
-  - login: طبق معدلات مناسبة لحماية من الهجمات.
+---
+## نماذج أخطاء عامة
+- 400 Validation: `{ "field": ["error msg"] }`
+- 401 Auth: `{ "detail": "Authentication credentials were not provided." }` أو `{"detail": "token_not_valid", ...}`
+- 403 Permissions: `{ "detail": "permission_denied:role_forbidden" }`
+- 404 Not Found: `{ "detail": "Not found." }`
+
+---
+## ملاحظات للفرونت
+- استخدم access token في كل الطلبات المحمية.
+- عند 401 مع `token_not_valid` قم بتحديث باستخدام refresh.
+- احترم القيود: المريض لا يعدل مواعيد، الطالب لا يرسل/يعدل خارج الحالات المسندة، لا رسائل بعد إغلاق الحالة، لا تغيير role/university من مسارات “me”.

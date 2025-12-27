@@ -3,9 +3,17 @@ from rest_framework import generics, status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.audit.services import log_audit_event
-from .models import Role, PatientProfile, StudentProfile, SupervisorProfile, UniversityAdminProfile, TechSupportProfile
+from .models import (
+    Role,
+    PatientProfile,
+    StudentProfile,
+    SupervisorProfile,
+    UniversityAdminProfile,
+    TechSupportProfile,
+)
 from .serializers import (
     RoleBasedLoginSerializer,
     PatientCreateSerializer,
@@ -38,6 +46,28 @@ class BaseRoleLoginView(APIView):
     permission_classes = [AllowAny]
     role_name = None
 
+    def _user_payload(self, user):
+        return {
+            "id": str(user.id),
+            "email": user.email,
+            "username": user.username,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "role": getattr(user.role, "name", None),
+            "role_id": str(user.role_id) if user.role_id else None,
+            "fcm_token": user.fcm_token,
+            "is_active": user.is_active,
+            "created_at": user.created_at,
+            "updated_at": user.updated_at,
+        }
+
+    def _token_payload(self, user):
+        refresh = RefreshToken.for_user(user)
+        return {
+            "refresh": str(refresh),
+            "access": str(refresh.access_token),
+        }
+
     def post(self, request):
         serializer = RoleBasedLoginSerializer(
             data=request.data,
@@ -48,11 +78,14 @@ class BaseRoleLoginView(APIView):
 
         user = serializer.validated_data["user"]
 
+        tokens = self._token_payload(user)
+        user_data = self._user_payload(user)
+
         return Response(
             {
-                "detail": "تم تسجيل الدخول بنجاح.",
-                "user_id": user.id,
-                "role": user.role.name,
+                "detail": "Login successful.",
+                "tokens": tokens,
+                "user": user_data,
             },
             status=status.HTTP_200_OK,
         )
