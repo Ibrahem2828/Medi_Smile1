@@ -136,12 +136,19 @@ class CanCreateSupervisor(BasePermission):
 class CanCreateUniversityAdmin(BasePermission):
     """
     University Admin:
-    - Only Tech Support can create
+    - Only Tech Support (or superuser) can create
     """
 
     def has_permission(self, request, view):
         role_name = getattr(getattr(request, "user", None), "role", None)
-        return bool(getattr(request.user, "is_authenticated", False) and getattr(role_name, "name", None) == Role.TECH_SUPPORT)
+        return bool(
+            getattr(request.user, "is_authenticated", False)
+            and getattr(request.user, "is_active", False)
+            and (
+                getattr(request.user, "is_superuser", False)
+                or getattr(role_name, "name", None) == Role.TECH_SUPPORT
+            )
+        )
 
 
 class CanCreateTechSupport(BasePermission):

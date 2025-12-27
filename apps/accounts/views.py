@@ -133,7 +133,7 @@ class SupervisorCreateView(generics.CreateAPIView):
 
 class UniversityAdminCreateView(generics.CreateAPIView):
     serializer_class = UniversityAdminCreateSerializer
-    permission_classes = [CanCreateUniversityAdmin]
+    permission_classes = [IsAuthenticatedAndActive, CanCreateUniversityAdmin]
 
 
 class TechSupportCreateView(generics.CreateAPIView):
