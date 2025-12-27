@@ -229,6 +229,9 @@ class UniversityAdminCreateSerializer(BaseUserCreateSerializer):
     role_name = Role.UNIVERSITY_ADMIN
     university_id = serializers.UUIDField(write_only=True)
 
+    class Meta(BaseUserCreateSerializer.Meta):
+        fields = BaseUserCreateSerializer.Meta.fields + ("university_id",)
+
     @transaction.atomic
     def create(self, validated_data):
         university_id = validated_data.pop("university_id")
