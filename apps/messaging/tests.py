@@ -17,6 +17,7 @@ class MessagingBaseTestCase(APITestCase):
         cls.patient_role = Role.objects.create(name=Role.PATIENT)
         cls.student_role = Role.objects.create(name=Role.STUDENT)
         cls.supervisor_role = Role.objects.create(name=Role.SUPERVISOR)
+        cls.university_admin_role = Role.objects.create(name=Role.UNIVERSITY_ADMIN)
 
         # University
         cls.university = University.objects.create(
@@ -26,25 +27,35 @@ class MessagingBaseTestCase(APITestCase):
         )
 
         # Users
-        cls.patient = User.objects.create_user(
+        cls.patient = cls._create_user_with_role(
             email="patient@msg.test",
             username="patient_msg",
             password="Patient123!",
             role=cls.patient_role,
         )
 
-        cls.student = User.objects.create_user(
+        cls.student = cls._create_user_with_role(
             email="student@msg.test",
             username="student_msg",
             password="Student123!",
             role=cls.student_role,
+            university=cls.university,
         )
 
-        cls.supervisor = User.objects.create_user(
+        cls.supervisor = cls._create_user_with_role(
             email="supervisor@msg.test",
             username="supervisor_msg",
             password="Supervisor123!",
             role=cls.supervisor_role,
+            university=cls.university,
+        )
+
+        cls.university_admin = cls._create_user_with_role(
+            email="admin@msg.test",
+            username="admin_msg",
+            password="Admin123!",
+            role=cls.university_admin_role,
+            university=cls.university,
         )
 
         # Case
@@ -60,9 +71,36 @@ class MessagingBaseTestCase(APITestCase):
 
         cls.room = Room.objects.create(
             case=cls.case,
-            participant1=cls.patient,
-            participant2=cls.student,
+            participant_patient=cls.patient,
+            participant_student=cls.student,
         )
+
+    @classmethod
+    def _create_user_with_role(cls, *, email, username, password, role, university=None):
+        user = User(
+            email=email,
+            username=username,
+            role=role,
+        )
+        if university:
+            user._desired_university_id = university.id
+        user.set_password(password)
+        user.save()
+
+        # Ensure profile university linkage is set when required
+        if university and role.name == Role.STUDENT:
+            profile = user.studentprofile_profile
+            profile.university = university
+            profile.save(update_fields=["university"])
+        elif university and role.name == Role.SUPERVISOR:
+            profile = user.supervisorprofile_profile
+            profile.university = university
+            profile.save(update_fields=["university"])
+        elif university and role.name == Role.UNIVERSITY_ADMIN:
+            profile = user.universityadminprofile_profile
+            profile.university = university
+            profile.save(update_fields=["university"])
+        return user
 
 
 class MessageTests(MessagingBaseTestCase):
@@ -103,3 +141,53 @@ class MessageTests(MessagingBaseTestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_supervisor_can_view_room(self):
+        self.client.login(email="supervisor@msg.test", password="Supervisor123!")
+        url = reverse(
+            "messaging-room-detail",
+            kwargs={"pk": self.room.id},
+        )
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_university_admin_can_read_only(self):
+        self.client.login(email="admin@msg.test", password="Admin123!")
+        url = reverse(
+            "messaging-room-detail",
+            kwargs={"pk": self.room.id},
+        )
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Admin cannot send messages (should be forbidden)
+        msg_url = reverse(
+            "message-list-create",
+            kwargs={"room_id": self.room.id},
+        )
+        response = self.client.post(msg_url, {"content": "Admin attempt"})
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_cannot_send_when_case_closed(self):
+        self.case.status = Case.Status.COMPLETED
+        self.case.save(update_fields=["status"])
+
+        self.client.login(email="student@msg.test", password="Student123!")
+        url = reverse(
+            "message-list-create",
+            kwargs={"room_id": self.room.id},
+        )
+        response = self.client.post(url, {"content": "Late message"})
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_duplicate_room_requests_not_creating_new(self):
+        self.client.login(email="patient@msg.test", password="Patient123!")
+        url = reverse("messaging-room-create")
+        payload = {"case": str(self.case.id)}
+
+        first = self.client.post(url, payload)
+        second = self.client.post(url, payload)
+
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(second.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(Room.objects.filter(case=self.case).count(), 1)

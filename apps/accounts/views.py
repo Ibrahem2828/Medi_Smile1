@@ -4,6 +4,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.audit.services import log_audit_event
 from .models import Role, PatientProfile, StudentProfile, SupervisorProfile, UniversityAdminProfile, TechSupportProfile
 from .serializers import (
     RoleBasedLoginSerializer,
@@ -17,6 +18,7 @@ from .serializers import (
     SupervisorProfileSerializer,
     UniversityAdminProfileSerializer,
     TechSupportProfileSerializer,
+    FCMTokenSerializer,
 )
 from .permissions import (
     IsAuthenticatedAndActive,
@@ -152,3 +154,43 @@ class TechSupportMeView(_BaseMeView):
         return TechSupportProfile.objects.select_related("user").get(
             user=self.request.user
         )
+
+
+# ============================================================
+# FCM Token Register/Rotate
+# ============================================================
+class FCMTokenView(APIView):
+    permission_classes = [IsAuthenticatedAndActive]
+
+    def post(self, request):
+        serializer = FCMTokenSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        token = serializer.validated_data["fcm_token"]
+        request.user.fcm_token = token
+        request.user.save(update_fields=["fcm_token", "updated_at"])
+
+        log_audit_event(
+            user=request.user,
+            university=getattr(request.user, "universityadminprofile_profile", None)
+            and request.user.universityadminprofile_profile.university,
+            action="accounts.fcm_token.registered",
+            description="FCM token registered/rotated",
+            metadata={"token_present": bool(token)},
+        )
+
+        return Response({"detail": "Token registered."}, status=status.HTTP_200_OK)
+
+    def delete(self, request):
+        request.user.fcm_token = None
+        request.user.save(update_fields=["fcm_token", "updated_at"])
+
+        log_audit_event(
+            user=request.user,
+            university=getattr(request.user, "universityadminprofile_profile", None)
+            and request.user.universityadminprofile_profile.university,
+            action="accounts.fcm_token.removed",
+            description="FCM token removed",
+        )
+
+        return Response({"detail": "Token removed."}, status=status.HTTP_200_OK)

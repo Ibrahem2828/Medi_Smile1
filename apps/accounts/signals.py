@@ -1,6 +1,7 @@
 # apps/accounts/signals.py
 from django.db.models.signals import post_save
 from django.dispatch import receiver
+from django.core.exceptions import ValidationError
 
 from .models import (
     User,
@@ -36,13 +37,46 @@ def create_user_profile(sender, instance: User, created: bool, **kwargs):
         PatientProfile.objects.get_or_create(user=instance)
 
     elif role_name == Role.STUDENT:
-        StudentProfile.objects.get_or_create(user=instance)
+        desired_university_id = getattr(instance, "_desired_university_id", None)
+        if not desired_university_id:
+            raise ValidationError("Student must be linked to a university.")
+
+        profile, _ = StudentProfile.objects.get_or_create(
+            user=instance,
+            defaults={"university_id": desired_university_id},
+        )
+        if profile.university_id != desired_university_id:
+            profile.university_id = desired_university_id
+            profile.full_clean()
+            profile.save(update_fields=["university"])
 
     elif role_name == Role.SUPERVISOR:
-        SupervisorProfile.objects.get_or_create(user=instance)
+        desired_university_id = getattr(instance, "_desired_university_id", None)
+        if not desired_university_id:
+            raise ValidationError("Supervisor must be linked to a university.")
+
+        profile, _ = SupervisorProfile.objects.get_or_create(
+            user=instance,
+            defaults={"university_id": desired_university_id},
+        )
+        if profile.university_id != desired_university_id:
+            profile.university_id = desired_university_id
+            profile.full_clean()
+            profile.save(update_fields=["university"])
 
     elif role_name == Role.UNIVERSITY_ADMIN:
-        UniversityAdminProfile.objects.get_or_create(user=instance)
+        desired_university_id = getattr(instance, "_desired_university_id", None)
+        if not desired_university_id:
+            raise ValidationError("University Admin must be linked to a university.")
+
+        profile, _ = UniversityAdminProfile.objects.get_or_create(
+            user=instance,
+            defaults={"university_id": desired_university_id},
+        )
+        if profile.university_id != desired_university_id:
+            profile.university_id = desired_university_id
+            profile.full_clean()
+            profile.save(update_fields=["university"])
 
     elif role_name == Role.TECH_SUPPORT:
         TechSupportProfile.objects.get_or_create(user=instance)

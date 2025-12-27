@@ -4,6 +4,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import User, Role, PatientProfile, StudentProfile
+from apps.universities.models import University
 
 
 class AccountsBaseTestCase(APITestCase):
@@ -138,3 +139,112 @@ class PatientRegistrationTests(APITestCase):
         self.assertTrue(
             User.objects.filter(email="newpatient@test.com").exists()
         )
+
+
+# ============================================================
+# CREATION / SCOPING RULES
+# ============================================================
+class CreationAndMeScopeTests(APITestCase):
+    def setUp(self):
+        # Roles
+        self.patient_role = Role.objects.create(name=Role.PATIENT)
+        self.student_role = Role.objects.create(name=Role.STUDENT)
+        self.university_admin_role = Role.objects.create(name=Role.UNIVERSITY_ADMIN)
+
+        # University
+        self.university = University.objects.create(
+            name="Scope University",
+            city="City",
+            country="Country",
+        )
+
+        # Users
+        self.university_admin = User.objects.create_user(
+            email="admin@scope.test",
+            username="admin_scope",
+            password="Admin123!",
+            role=self.university_admin_role,
+        )
+        # attach university to admin profile
+        profile = self.university_admin.universityadminprofile_profile
+        profile.university = self.university
+        profile.save(update_fields=["university"])
+
+        self.patient = User.objects.create_user(
+            email="patient@scope.test",
+            username="patient_scope",
+            password="Patient123!",
+            role=self.patient_role,
+        )
+
+    def test_student_creation_requires_university_admin(self):
+        # patient cannot create student
+        self.client.login(email="patient@scope.test", password="Patient123!")
+        url = reverse("create-student")
+        res = self.client.post(
+            url,
+            {
+                "email": "student@scope.test",
+                "username": "student_scope",
+                "first_name": "Stu",
+                "last_name": "Dent",
+                "password": "Student123!",
+                "password_confirm": "Student123!",
+            },
+        )
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+        # admin can create student within their university
+        self.client.logout()
+        self.client.login(email="admin@scope.test", password="Admin123!")
+        res = self.client.post(
+            url,
+            {
+                "email": "student@scope.test",
+                "username": "student_scope",
+                "first_name": "Stu",
+                "last_name": "Dent",
+                "password": "Student123!",
+                "password_confirm": "Student123!",
+            },
+        )
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        student = User.objects.get(email="student@scope.test")
+        self.assertEqual(student.role.name, Role.STUDENT)
+        self.assertEqual(student.studentprofile_profile.university, self.university)
+
+    def test_me_endpoints_cannot_change_role_or_university(self):
+        # create a student via admin to ensure profile is set
+        self.client.login(email="admin@scope.test", password="Admin123!")
+        student_create_url = reverse("create-student")
+        self.client.post(
+            student_create_url,
+            {
+                "email": "student2@scope.test",
+                "username": "student_scope2",
+                "first_name": "Stu2",
+                "last_name": "Dent2",
+                "password": "Student123!",
+                "password_confirm": "Student123!",
+            },
+        )
+        self.client.logout()
+
+        self.client.login(email="student2@scope.test", password="Student123!")
+        me_url = reverse("me-student")
+
+        # attempt to patch role/university should not be applied
+        res = self.client.patch(
+            me_url,
+            {
+                "role": "tech_support",
+                "university": None,
+            },
+            format="json",
+        )
+        # either forbidden or ignored
+        self.assertIn(res.status_code, (status.HTTP_200_OK, status.HTTP_403_FORBIDDEN))
+
+        student = User.objects.get(email="student2@scope.test")
+        self.assertEqual(student.role.name, Role.STUDENT)
+        self.assertIsNotNone(student.studentprofile_profile.university)

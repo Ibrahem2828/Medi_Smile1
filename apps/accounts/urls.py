@@ -22,6 +22,7 @@ from .views import (
     SupervisorMeView,
     UniversityAdminMeView,
     TechSupportMeView,
+    FCMTokenView,
 )
 
 urlpatterns = [
@@ -72,4 +73,5 @@ urlpatterns = [
         name="me-university-admin",
     ),
     path("me/tech-support/", TechSupportMeView.as_view(), name="me-tech-support"),
+    path("me/token/", FCMTokenView.as_view(), name="me-fcm-token"),
 ]

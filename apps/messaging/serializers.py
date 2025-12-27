@@ -1,9 +1,10 @@
 from rest_framework import serializers
-from django.conf import settings
+from django.contrib.auth import get_user_model
 
+from apps.cases.models import Case
 from .models import Room, Message
 
-User = settings.AUTH_USER_MODEL
+User = get_user_model()
 
 
 # ============================================================
@@ -46,11 +47,24 @@ class MessageSerializer(serializers.ModelSerializer):
             "is_system",
         )
 
+    def validate_content(self, value: str) -> str:
+        if not value or not value.strip():
+            raise serializers.ValidationError("Message content cannot be empty.")
+        return value.strip()
+
 
 # ============================================================
 # Room Serializer
 # ============================================================
 class RoomSerializer(serializers.ModelSerializer):
+    case = serializers.PrimaryKeyRelatedField(
+        queryset=Case.objects.select_related(
+            "patient",
+            "student",
+            "supervisor",
+            "university",
+        ),
+    )
     participant_patient = MessagingUserSerializer(read_only=True)
     participant_student = MessagingUserSerializer(read_only=True)
     messages = MessageSerializer(many=True, read_only=True)
@@ -65,4 +79,22 @@ class RoomSerializer(serializers.ModelSerializer):
             "created_at",
             "messages",
         )
-        read_only_fields = fields
+        read_only_fields = (
+            "id",
+            "participant_patient",
+            "participant_student",
+            "created_at",
+            "messages",
+        )
+
+    def validate_case(self, case: Case) -> Case:
+        if not case.patient_id or not case.student_id:
+            raise serializers.ValidationError("Case must have both patient and assigned student.")
+
+        if case.status not in {
+            Case.Status.ASSIGNED,
+            Case.Status.IN_PROGRESS,
+        }:
+            raise serializers.ValidationError("Chat is available only for assigned / in-progress cases.")
+
+        return case

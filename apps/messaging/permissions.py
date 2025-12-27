@@ -10,15 +10,34 @@ from .models import Room, Message
 # Helpers
 # ============================================================
 def is_case_participant(user, case: Case) -> bool:
-    return user in [case.patient, case.student, case.supervisor]
+    """
+    Ownership check:
+    - Patient assigned to the case
+    - Student assigned to the case
+    - Supervisor of the case (read only)
+    """
+    return user in {case.patient, case.student, case.supervisor}
 
 
 def is_university_admin_for_case(user, case: Case) -> bool:
+    """
+    University Admin can read data scoped to their university only.
+    """
     try:
         profile = user.universityadminprofile_profile
     except Exception:
         return False
-    return case.university_id == profile.university_id
+    return bool(profile.university_id) and profile.university_id == case.university_id
+
+
+def is_case_chat_open(case: Case) -> bool:
+    """
+    State guard: chat is allowed only while the case is active with an assigned student.
+    """
+    return case.status in {
+        Case.Status.ASSIGNED,
+        Case.Status.IN_PROGRESS,
+    }
 
 
 # ============================================================
@@ -46,7 +65,7 @@ class CanViewRoom(BasePermission):
 
     def has_object_permission(self, request, view, obj: Room):
         user = request.user
-        role = user.role.name
+        role = getattr(user, "role_name", None)
         case = obj.case
 
         if role == Role.TECH_SUPPORT:
@@ -69,11 +88,8 @@ class CanCreateRoom(BasePermission):
     """
 
     def has_permission(self, request, view):
-        return request.user.role.name in [
-            Role.PATIENT,
-            Role.STUDENT,
-            Role.SUPERVISOR,
-        ]
+        role = getattr(request.user, "role_name", None)
+        return role in {Role.PATIENT, Role.STUDENT}
 
 
 # ============================================================
@@ -82,11 +98,21 @@ class CanCreateRoom(BasePermission):
 class CanSendMessage(BasePermission):
     """
     SEND message:
-    - Only participants of the room
+    - Only patient or assigned student while case is active
     """
 
     def has_object_permission(self, request, view, obj: Room):
-        return request.user in [obj.participant1, obj.participant2]
+        user = request.user
+        role = getattr(user, "role_name", None)
+        case = obj.case
+
+        if not is_case_chat_open(case):
+            return False
+
+        if role not in {Role.PATIENT, Role.STUDENT}:
+            return False
+
+        return user in {obj.participant_patient, obj.participant_student}
 
 
 class CanViewMessage(BasePermission):
@@ -99,7 +125,7 @@ class CanViewMessage(BasePermission):
 
     def has_object_permission(self, request, view, obj: Message):
         user = request.user
-        role = user.role.name
+        role = getattr(user, "role_name", None)
         room = obj.room
         case = room.case
 
@@ -107,7 +133,7 @@ class CanViewMessage(BasePermission):
             return True
 
         if role in [Role.PATIENT, Role.STUDENT, Role.SUPERVISOR]:
-            return user in [room.participant1, room.participant2]
+            return is_case_participant(user, case)
 
         if role == Role.UNIVERSITY_ADMIN:
             return is_university_admin_for_case(user, case)

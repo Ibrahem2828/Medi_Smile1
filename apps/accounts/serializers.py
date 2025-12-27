@@ -4,6 +4,7 @@ from django.db import transaction
 
 from rest_framework import serializers
 
+from apps.universities.models import University
 from .models import (
     Role,
     PatientProfile,
@@ -140,13 +141,116 @@ class PatientCreateSerializer(BaseUserCreateSerializer):
 class StudentCreateSerializer(BaseUserCreateSerializer):
     role_name = Role.STUDENT
 
+    def _get_admin_university_id(self):
+        request = self.context.get("request")
+        admin_profile = getattr(
+            getattr(request, "user", None), "universityadminprofile_profile", None
+        )
+        university_id = getattr(admin_profile, "university_id", None)
+        if not university_id:
+            raise serializers.ValidationError(
+                {"university": "University Admin must belong to a university."}
+            )
+        return university_id
+
+    @transaction.atomic
+    def create(self, validated_data):
+        admin_university_id = self._get_admin_university_id()
+        validated_data.pop("password_confirm")
+        password = validated_data.pop("password")
+
+        user = User(**validated_data)
+        user.role = self._get_role()
+        # Pass university to signal/profile creation
+        user._desired_university_id = admin_university_id
+        user.set_password(password)
+
+        request = self.context.get("request")
+        if request and request.user.is_authenticated:
+            user.created_by = request.user
+
+        user.full_clean()
+        user.save()
+
+        profile = user.studentprofile_profile
+        profile.university_id = admin_university_id
+        profile.full_clean()
+        profile.save(update_fields=["university"])
+        return user
+
 
 class SupervisorCreateSerializer(BaseUserCreateSerializer):
     role_name = Role.SUPERVISOR
 
+    def _get_admin_university_id(self):
+        request = self.context.get("request")
+        admin_profile = getattr(
+            getattr(request, "user", None), "universityadminprofile_profile", None
+        )
+        university_id = getattr(admin_profile, "university_id", None)
+        if not university_id:
+            raise serializers.ValidationError(
+                {"university": "University Admin must belong to a university."}
+            )
+        return university_id
+
+    @transaction.atomic
+    def create(self, validated_data):
+        admin_university_id = self._get_admin_university_id()
+        validated_data.pop("password_confirm")
+        password = validated_data.pop("password")
+
+        user = User(**validated_data)
+        user.role = self._get_role()
+        user._desired_university_id = admin_university_id
+        user.set_password(password)
+
+        request = self.context.get("request")
+        if request and request.user.is_authenticated:
+            user.created_by = request.user
+
+        user.full_clean()
+        user.save()
+
+        profile = user.supervisorprofile_profile
+        profile.university_id = admin_university_id
+        profile.full_clean()
+        profile.save(update_fields=["university"])
+        return user
+
 
 class UniversityAdminCreateSerializer(BaseUserCreateSerializer):
     role_name = Role.UNIVERSITY_ADMIN
+    university_id = serializers.UUIDField(write_only=True)
+
+    @transaction.atomic
+    def create(self, validated_data):
+        university_id = validated_data.pop("university_id")
+        try:
+            University.objects.get(id=university_id)
+        except University.DoesNotExist:
+            raise serializers.ValidationError({"university_id": "Invalid university id."})
+
+        validated_data.pop("password_confirm")
+        password = validated_data.pop("password")
+
+        user = User(**validated_data)
+        user.role = self._get_role()
+        user._desired_university_id = university_id
+        user.set_password(password)
+
+        request = self.context.get("request")
+        if request and request.user.is_authenticated:
+            user.created_by = request.user
+
+        user.full_clean()
+        user.save()
+
+        profile = user.universityadminprofile_profile
+        profile.university_id = university_id
+        profile.full_clean()
+        profile.save(update_fields=["university"])
+        return user
 
 
 class TechSupportCreateSerializer(BaseUserCreateSerializer):
@@ -181,6 +285,7 @@ class StudentProfileSerializer(BaseProfileSerializer):
     class Meta:
         model = StudentProfile
         exclude = ("user",)
+        read_only_fields = ("university",)
 
 
 class SupervisorProfileSerializer(BaseProfileSerializer):
@@ -192,6 +297,7 @@ class SupervisorProfileSerializer(BaseProfileSerializer):
     class Meta:
         model = SupervisorProfile
         exclude = ("user",)
+        read_only_fields = ("university",)
 
 
 class UniversityAdminProfileSerializer(BaseProfileSerializer):
@@ -203,9 +309,23 @@ class UniversityAdminProfileSerializer(BaseProfileSerializer):
     class Meta:
         model = UniversityAdminProfile
         exclude = ("user",)
+        read_only_fields = ("university",)
 
 
 class TechSupportProfileSerializer(BaseProfileSerializer):
     class Meta:
         model = TechSupportProfile
         exclude = ("user",)
+
+
+# ============================================================
+# FCM Token
+# ============================================================
+class FCMTokenSerializer(serializers.Serializer):
+    fcm_token = serializers.CharField(max_length=255)
+
+    def validate_fcm_token(self, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("FCM token cannot be empty.")
+        return value
