@@ -3,6 +3,7 @@ from rest_framework import generics, status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.exceptions import PermissionDenied
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.audit.services import log_audit_event
@@ -31,6 +32,7 @@ from .serializers import (
 from .permissions import (
     IsAuthenticatedAndActive,
     IsSelfOnly,
+    IsUniversityAdmin,
     CanCreatePatient,
     CanCreateStudent,
     CanCreateSupervisor,
@@ -137,6 +139,46 @@ class UniversityAdminCreateView(generics.CreateAPIView):
 class TechSupportCreateView(generics.CreateAPIView):
     serializer_class = TechSupportCreateSerializer
     permission_classes = [CanCreateTechSupport]
+
+
+# ============================================================
+# UNIVERSITY-SCOPED LISTING (ADMIN)
+# ============================================================
+class _BaseUniversityScopedListView(generics.ListAPIView):
+    permission_classes = [IsAuthenticatedAndActive, IsUniversityAdmin]
+    profile_model = None
+    serializer_class = None
+
+    def _get_university_id(self):
+        profile = getattr(self.request.user, "universityadminprofile_profile", None)
+        university_id = getattr(profile, "university_id", None)
+        if not university_id:
+            raise PermissionDenied("University Admin must belong to a university.")
+        return university_id
+
+    def get_queryset(self):
+        university_id = self._get_university_id()
+        base_qs = self.profile_model.objects.select_related("user")
+        if hasattr(self.profile_model, "university"):
+            base_qs = base_qs.select_related("university").filter(
+                university_id=university_id
+            )
+        return base_qs.order_by("user__first_name", "user__last_name")
+
+
+class UniversityStudentsListView(_BaseUniversityScopedListView):
+    profile_model = StudentProfile
+    serializer_class = StudentProfileSerializer
+
+
+class UniversitySupervisorsListView(_BaseUniversityScopedListView):
+    profile_model = SupervisorProfile
+    serializer_class = SupervisorProfileSerializer
+
+
+class UniversityAdminsListView(_BaseUniversityScopedListView):
+    profile_model = UniversityAdminProfile
+    serializer_class = UniversityAdminProfileSerializer
 
 
 # ============================================================

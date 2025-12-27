@@ -40,10 +40,8 @@ class IsTechSupport(BasePermission):
     """
 
     def has_permission(self, request, view):
-        return (
-            request.user.is_authenticated
-            and request.user.role.name == Role.TECH_SUPPORT
-        )
+        role_name = getattr(getattr(request, "user", None), "role", None)
+        return bool(getattr(request.user, "is_authenticated", False) and getattr(role_name, "name", None) == Role.TECH_SUPPORT)
 
 
 class IsUniversityAdmin(BasePermission):
@@ -52,34 +50,26 @@ class IsUniversityAdmin(BasePermission):
     """
 
     def has_permission(self, request, view):
-        return (
-            request.user.is_authenticated
-            and request.user.role.name == Role.UNIVERSITY_ADMIN
-        )
+        role_name = getattr(getattr(request, "user", None), "role", None)
+        return bool(getattr(request.user, "is_authenticated", False) and getattr(role_name, "name", None) == Role.UNIVERSITY_ADMIN)
 
 
 class IsSupervisor(BasePermission):
     def has_permission(self, request, view):
-        return (
-            request.user.is_authenticated
-            and request.user.role.name == Role.SUPERVISOR
-        )
+        role_name = getattr(getattr(request, "user", None), "role", None)
+        return bool(getattr(request.user, "is_authenticated", False) and getattr(role_name, "name", None) == Role.SUPERVISOR)
 
 
 class IsStudent(BasePermission):
     def has_permission(self, request, view):
-        return (
-            request.user.is_authenticated
-            and request.user.role.name == Role.STUDENT
-        )
+        role_name = getattr(getattr(request, "user", None), "role", None)
+        return bool(getattr(request.user, "is_authenticated", False) and getattr(role_name, "name", None) == Role.STUDENT)
 
 
 class IsPatient(BasePermission):
     def has_permission(self, request, view):
-        return (
-            request.user.is_authenticated
-            and request.user.role.name == Role.PATIENT
-        )
+        role_name = getattr(getattr(request, "user", None), "role", None)
+        return bool(getattr(request.user, "is_authenticated", False) and getattr(role_name, "name", None) == Role.PATIENT)
 
 
 # ============================================================
@@ -128,10 +118,8 @@ class CanCreateStudent(BasePermission):
     """
 
     def has_permission(self, request, view):
-        return (
-            request.user.is_authenticated
-            and request.user.role.name == Role.UNIVERSITY_ADMIN
-        )
+        role_name = getattr(getattr(request, "user", None), "role", None)
+        return bool(getattr(request.user, "is_authenticated", False) and getattr(role_name, "name", None) == Role.UNIVERSITY_ADMIN)
 
 
 class CanCreateSupervisor(BasePermission):
@@ -141,10 +129,8 @@ class CanCreateSupervisor(BasePermission):
     """
 
     def has_permission(self, request, view):
-        return (
-            request.user.is_authenticated
-            and request.user.role.name == Role.UNIVERSITY_ADMIN
-        )
+        role_name = getattr(getattr(request, "user", None), "role", None)
+        return bool(getattr(request.user, "is_authenticated", False) and getattr(role_name, "name", None) == Role.UNIVERSITY_ADMIN)
 
 
 class CanCreateUniversityAdmin(BasePermission):
@@ -154,10 +140,8 @@ class CanCreateUniversityAdmin(BasePermission):
     """
 
     def has_permission(self, request, view):
-        return (
-            request.user.is_authenticated
-            and request.user.role.name == Role.TECH_SUPPORT
-        )
+        role_name = getattr(getattr(request, "user", None), "role", None)
+        return bool(getattr(request.user, "is_authenticated", False) and getattr(role_name, "name", None) == Role.TECH_SUPPORT)
 
 
 class CanCreateTechSupport(BasePermission):
@@ -167,10 +151,11 @@ class CanCreateTechSupport(BasePermission):
     """
 
     def has_permission(self, request, view):
-        return (
-            request.user.is_authenticated
+        role_name = getattr(getattr(request, "user", None), "role", None)
+        return bool(
+            getattr(request.user, "is_authenticated", False)
             and (
-                request.user.is_superuser
-                or request.user.role.name == Role.TECH_SUPPORT
+                getattr(request.user, "is_superuser", False)
+                or getattr(role_name, "name", None) == Role.TECH_SUPPORT
             )
         )

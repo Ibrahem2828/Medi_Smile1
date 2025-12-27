@@ -16,6 +16,11 @@ from .views import (
     UniversityAdminCreateView,
     TechSupportCreateView,
 
+    # University scoped lists
+    UniversityStudentsListView,
+    UniversitySupervisorsListView,
+    UniversityAdminsListView,
+
     # Self profile
     PatientMeView,
     StudentMeView,
@@ -59,6 +64,21 @@ urlpatterns = [
         "create/tech-support/",
         TechSupportCreateView.as_view(),
         name="create-tech-support",
+    ),
+    path(
+        "university/students/",
+        UniversityStudentsListView.as_view(),
+        name="university-students",
+    ),
+    path(
+        "university/supervisors/",
+        UniversitySupervisorsListView.as_view(),
+        name="university-supervisors",
+    ),
+    path(
+        "university/admins/",
+        UniversityAdminsListView.as_view(),
+        name="university-admins",
     ),
 
     # =====================================================
