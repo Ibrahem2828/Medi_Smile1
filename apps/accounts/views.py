@@ -138,13 +138,13 @@ class UniversityAdminCreateView(generics.CreateAPIView):
 
     def create(self, request, *args, **kwargs):
         """
-        Fail-safe creation: أي فشل في المسارات الثانوية لا يكسر الاستجابة.
+        Fail-safe creation:
+        - اترك أخطاء الـ parsing/validation لتعود 400 من DRF تلقائياً.
+        - تعامل مع الأعطال غير المتوقعة فقط.
         """
         try:
-            response = super().create(request, *args, **kwargs)
-            return response
+            return super().create(request, *args, **kwargs)
         except Exception as exc:  # pragma: no cover - defensive guard
-            # سجل ولا تكسر
             try:
                 log_audit_event(
                     user=request.user,
@@ -223,6 +223,21 @@ class UniversityAdminsByUniversityView(generics.ListAPIView):
             UniversityAdminProfile.objects.select_related("user", "university")
             .filter(university_id=university_id)
             .order_by("user__first_name", "user__last_name")
+        )
+
+
+class UniversityAdminsAllView(generics.ListAPIView):
+    """
+    Tech Support: list all university admins across all universities.
+    """
+
+    permission_classes = [IsAuthenticatedAndActive, IsTechSupport]
+    serializer_class = UniversityAdminProfileSerializer
+
+    def get_queryset(self):
+        return (
+            UniversityAdminProfile.objects.select_related("user", "university")
+            .order_by("university__name", "user__first_name", "user__last_name")
         )
 
 

@@ -21,6 +21,7 @@ from .views import (
     UniversitySupervisorsListView,
     UniversityAdminsListView,
     UniversityAdminsByUniversityView,
+    UniversityAdminsAllView,
 
     # Self profile
     PatientMeView,
@@ -85,6 +86,11 @@ urlpatterns = [
         "university/admins/by-university/",
         UniversityAdminsByUniversityView.as_view(),
         name="university-admins-by-university",
+    ),
+    path(
+        "university/admins/all/",
+        UniversityAdminsAllView.as_view(),
+        name="university-admins-all",
     ),
 
     # =====================================================
