@@ -1,3 +1,5 @@
+import logging
+
 # apps/accounts/signals.py
 from django.db.models.signals import post_save
 from django.dispatch import receiver
@@ -12,6 +14,8 @@ from .models import (
     UniversityAdminProfile,
     TechSupportProfile,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -33,53 +37,63 @@ def create_user_profile(sender, instance: User, created: bool, **kwargs):
 
     role_name = instance.role.name
 
-    if role_name == Role.PATIENT:
-        PatientProfile.objects.get_or_create(user=instance)
+    try:
+        if role_name == Role.PATIENT:
+            PatientProfile.objects.get_or_create(user=instance)
 
-    elif role_name == Role.STUDENT:
-        desired_university_id = getattr(instance, "_desired_university_id", None)
-        if not desired_university_id:
-            raise ValidationError("Student must be linked to a university.")
+        elif role_name == Role.STUDENT:
+            desired_university_id = getattr(instance, "_desired_university_id", None)
+            if not desired_university_id:
+                logger.warning("Student profile skipped: missing desired_university_id")
+                return
 
-        profile, _ = StudentProfile.objects.get_or_create(
-            user=instance,
-            defaults={"university_id": desired_university_id},
-        )
-        if profile.university_id != desired_university_id:
-            profile.university_id = desired_university_id
-            profile.full_clean()
-            profile.save(update_fields=["university"])
+            profile, _ = StudentProfile.objects.get_or_create(
+                user=instance,
+                defaults={"university_id": desired_university_id},
+            )
+            if profile.university_id != desired_university_id:
+                profile.university_id = desired_university_id
+                profile.full_clean()
+                profile.save(update_fields=["university"])
 
-    elif role_name == Role.SUPERVISOR:
-        desired_university_id = getattr(instance, "_desired_university_id", None)
-        if not desired_university_id:
-            raise ValidationError("Supervisor must be linked to a university.")
+        elif role_name == Role.SUPERVISOR:
+            desired_university_id = getattr(instance, "_desired_university_id", None)
+            if not desired_university_id:
+                logger.warning("Supervisor profile skipped: missing desired_university_id")
+                return
 
-        profile, _ = SupervisorProfile.objects.get_or_create(
-            user=instance,
-            defaults={"university_id": desired_university_id},
-        )
-        if profile.university_id != desired_university_id:
-            profile.university_id = desired_university_id
-            profile.full_clean()
-            profile.save(update_fields=["university"])
+            profile, _ = SupervisorProfile.objects.get_or_create(
+                user=instance,
+                defaults={"university_id": desired_university_id},
+            )
+            if profile.university_id != desired_university_id:
+                profile.university_id = desired_university_id
+                profile.full_clean()
+                profile.save(update_fields=["university"])
 
-    elif role_name == Role.UNIVERSITY_ADMIN:
-        desired_university_id = getattr(instance, "_desired_university_id", None)
-        if not desired_university_id:
-            raise ValidationError("University Admin must be linked to a university.")
+        elif role_name == Role.UNIVERSITY_ADMIN:
+            desired_university_id = getattr(instance, "_desired_university_id", None)
+            if not desired_university_id:
+                logger.warning("University Admin profile skipped: missing desired_university_id")
+                return
 
-        profile, _ = UniversityAdminProfile.objects.get_or_create(
-            user=instance,
-            defaults={"university_id": desired_university_id},
-        )
-        if profile.university_id != desired_university_id:
-            profile.university_id = desired_university_id
-            profile.full_clean()
-            profile.save(update_fields=["university"])
+            profile, _ = UniversityAdminProfile.objects.get_or_create(
+                user=instance,
+                defaults={"university_id": desired_university_id},
+            )
+            if profile.university_id != desired_university_id:
+                profile.university_id = desired_university_id
+                profile.full_clean()
+                profile.save(update_fields=["university"])
 
-    elif role_name == Role.TECH_SUPPORT:
-        TechSupportProfile.objects.get_or_create(user=instance)
+        elif role_name == Role.TECH_SUPPORT:
+            TechSupportProfile.objects.get_or_create(user=instance)
+
+    except ValidationError as exc:
+        # Fail-safe: لا نكسر إنشاء المستخدم بسبب أخطاء بيانات ثانوية
+        logger.error("Profile creation validation error for user %s: %s", instance.id, exc)
+    except Exception:
+        logger.exception("Profile creation failed for user %s", instance.id)
 
 
 # ============================================================
@@ -110,4 +124,9 @@ def ensure_profile_exists(sender, instance: User, **kwargs):
     if not profile_model:
         return
 
-    profile_model.objects.get_or_create(user=instance)
+    try:
+        profile_model.objects.get_or_create(user=instance)
+    except ValidationError as exc:
+        logger.error("Profile ensure failed for user %s: %s", instance.id, exc)
+    except Exception:
+        logger.exception("Profile ensure failed for user %s", instance.id)
