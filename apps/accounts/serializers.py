@@ -228,9 +228,21 @@ class SupervisorCreateSerializer(BaseUserCreateSerializer):
 class UniversityAdminCreateSerializer(BaseUserCreateSerializer):
     role_name = Role.UNIVERSITY_ADMIN
     university_id = serializers.UUIDField(write_only=True)
+    university = serializers.UUIDField(
+        source="universityadminprofile_profile.university_id",
+        read_only=True,
+    )
+    university_name = serializers.CharField(
+        source="universityadminprofile_profile.university.name",
+        read_only=True,
+    )
 
     class Meta(BaseUserCreateSerializer.Meta):
-        fields = BaseUserCreateSerializer.Meta.fields + ("university_id",)
+        fields = BaseUserCreateSerializer.Meta.fields + (
+            "university_id",
+            "university",
+            "university_name",
+        )
 
     @transaction.atomic
     def create(self, validated_data):

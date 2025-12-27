@@ -18,13 +18,15 @@ class UniversityAdmin(admin.ModelAdmin):
     list_display = (
         "name",
         "short_name",
+        "email",
+        "phone",
         "city",
         "country",
         "is_active",
         "created_at",
     )
     list_filter = ("is_active", "country")
-    search_fields = ("name", "short_name", "city", "country")
+    search_fields = ("name", "short_name", "city", "country", "email", "phone")
     ordering = ("name",)
 
     readonly_fields = ("created_at", "updated_at")

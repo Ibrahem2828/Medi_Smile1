@@ -33,6 +33,7 @@ from .permissions import (
     IsAuthenticatedAndActive,
     IsSelfOnly,
     IsUniversityAdmin,
+    IsTechSupport,
     CanCreatePatient,
     CanCreateStudent,
     CanCreateSupervisor,
@@ -140,7 +141,8 @@ class UniversityAdminCreateView(generics.CreateAPIView):
         Fail-safe creation: أي فشل في المسارات الثانوية لا يكسر الاستجابة.
         """
         try:
-            return super().create(request, *args, **kwargs)
+            response = super().create(request, *args, **kwargs)
+            return response
         except Exception as exc:  # pragma: no cover - defensive guard
             # سجل ولا تكسر
             try:
@@ -203,6 +205,25 @@ class UniversitySupervisorsListView(_BaseUniversityScopedListView):
 class UniversityAdminsListView(_BaseUniversityScopedListView):
     profile_model = UniversityAdminProfile
     serializer_class = UniversityAdminProfileSerializer
+
+
+class UniversityAdminsByUniversityView(generics.ListAPIView):
+    """
+    Tech Support: list all university admins for a specific university (by query param).
+    """
+
+    permission_classes = [IsAuthenticatedAndActive, IsTechSupport]
+    serializer_class = UniversityAdminProfileSerializer
+
+    def get_queryset(self):
+        university_id = self.request.query_params.get("university_id")
+        if not university_id:
+            raise PermissionDenied("university_id is required.")
+        return (
+            UniversityAdminProfile.objects.select_related("user", "university")
+            .filter(university_id=university_id)
+            .order_by("user__first_name", "user__last_name")
+        )
 
 
 # ============================================================
