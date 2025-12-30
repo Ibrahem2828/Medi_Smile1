@@ -7,6 +7,7 @@ from .models import (
     Faculty,
     AcademicProgram,
     AcademicYear,
+    Course,
 )
 
 
@@ -152,3 +153,25 @@ class AcademicYearAdmin(admin.ModelAdmin):
         ),
         (_("System"), {"fields": ("created_at",)}),
     )
+
+
+# ============================================================
+# Course Admin
+# ============================================================
+@admin.register(Course)
+class CourseAdmin(admin.ModelAdmin):
+    list_display = (
+        "name",
+        "code",
+        "university",
+        "faculty",
+        "academic_year",
+        "supervisor",
+        "is_active",
+        "created_at",
+    )
+    list_filter = ("is_active", "university", "academic_year")
+    search_fields = ("name", "code", "university__name", "supervisor__email")
+    ordering = ("university__name", "name")
+    readonly_fields = ("created_at",)
+    filter_horizontal = ("students",)

@@ -7,6 +7,9 @@ from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
 
 
+DENTISTRY_FACULTY_NAME = "Dentistry"
+
+
 # ============================================================
 # University
 # ============================================================
@@ -146,6 +149,19 @@ class Faculty(models.Model):
         return f"{self.name} - {self.university.name}"
 
 
+def get_or_create_dentistry_faculty(university: University) -> Faculty:
+    """
+    Ensure a single dentistry faculty exists per university without forcing the client
+    to manage it explicitly (we only have one college: Dentistry).
+    """
+    faculty, _ = Faculty.objects.get_or_create(
+        university=university,
+        name=DENTISTRY_FACULTY_NAME,
+        defaults={"description": "Faculty of Dentistry (default)"},
+    )
+    return faculty
+
+
 # ============================================================
 # Academic Program
 # ============================================================
@@ -229,6 +245,122 @@ class AcademicProgram(models.Model):
             raise ValidationError(_("Program duration must be greater than zero."))
 
     def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.code})"
+
+
+# ============================================================
+# Course
+# ============================================================
+class Course(models.Model):
+    """
+    Course/subject offered under a university (single faculty: Dentistry).
+    University Admin assigns supervisor + enrolls students.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    university = models.ForeignKey(
+        University,
+        on_delete=models.CASCADE,
+        related_name="courses",
+        verbose_name=_("University"),
+    )
+
+    faculty = models.ForeignKey(
+        Faculty,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="courses",
+        verbose_name=_("Faculty"),
+    )
+
+    academic_year = models.ForeignKey(
+        "universities.AcademicYear",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="courses",
+        verbose_name=_("Academic Year"),
+    )
+
+    program = models.ForeignKey(
+        "universities.AcademicProgram",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="courses",
+        verbose_name=_("Academic Program"),
+    )
+
+    supervisor = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="supervised_courses",
+        verbose_name=_("Supervisor"),
+        limit_choices_to={"role__name": "supervisor"},
+    )
+
+    students = models.ManyToManyField(
+        "accounts.User",
+        related_name="enrolled_courses",
+        blank=True,
+        verbose_name=_("Students"),
+        limit_choices_to={"role__name": "student"},
+    )
+
+    name = models.CharField(max_length=255)
+    code = models.CharField(max_length=50)
+    description = models.TextField(blank=True, null=True)
+    credits = models.PositiveSmallIntegerField(default=0)
+
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "courses"
+        verbose_name = _("Course")
+        verbose_name_plural = _("Courses")
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["university", "code"],
+                name="uq_course_university_code",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["university", "is_active"], name="idx_course_univ_active"),
+            models.Index(fields=["code"], name="idx_course_code"),
+        ]
+
+    def clean(self):
+        super().clean()
+
+        if self.name:
+            self.name = self.name.strip()
+        if self.code:
+            self.code = self.code.strip()
+
+        if self.academic_year and self.academic_year.university_id != self.university_id:
+            raise ValidationError(_("Academic year must belong to the same university."))
+        if self.program and self.program.university_id != self.university_id:
+            raise ValidationError(_("Program must belong to the same university."))
+        if self.faculty and self.faculty.university_id != self.university_id:
+            raise ValidationError(_("Faculty must belong to the same university."))
+
+        if self.supervisor and getattr(self.supervisor.role, "name", None) != "supervisor":
+            raise ValidationError(_("Assigned user must have SUPERVISOR role."))
+
+    def save(self, *args, **kwargs):
+        # Auto-assign default dentistry faculty if not provided
+        if not self.faculty_id and self.university_id:
+            self.faculty = get_or_create_dentistry_faculty(self.university)
         self.full_clean()
         return super().save(*args, **kwargs)
 

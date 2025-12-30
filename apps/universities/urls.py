@@ -8,8 +8,13 @@ from .views import (
     UniversityUpdateView,
     UniversityDeleteView,
     FacultyListCreateView,
+    FacultyRetrieveUpdateDeleteView,
     AcademicProgramListCreateView,
+    AcademicProgramRetrieveUpdateDeleteView,
     AcademicYearListCreateView,
+    AcademicYearRetrieveUpdateDeleteView,
+    CourseListCreateView,
+    CourseRetrieveUpdateDeleteView,
 )
 
 urlpatterns = [
@@ -26,6 +31,7 @@ urlpatterns = [
     # Faculties (University Admin)
     # =====================================================
     path("faculties/", FacultyListCreateView.as_view(), name="faculty-list-create"),
+    path("faculties/<uuid:pk>/", FacultyRetrieveUpdateDeleteView.as_view(), name="faculty-detail"),
 
     # =====================================================
     # Academic Programs (University Admin)
@@ -34,6 +40,11 @@ urlpatterns = [
         "programs/",
         AcademicProgramListCreateView.as_view(),
         name="program-list-create",
+    ),
+    path(
+        "programs/<uuid:pk>/",
+        AcademicProgramRetrieveUpdateDeleteView.as_view(),
+        name="program-detail",
     ),
 
     # =====================================================
@@ -44,4 +55,15 @@ urlpatterns = [
         AcademicYearListCreateView.as_view(),
         name="academic-year-list-create",
     ),
+    path(
+        "academic-years/<uuid:pk>/",
+        AcademicYearRetrieveUpdateDeleteView.as_view(),
+        name="academic-year-detail",
+    ),
+
+    # =====================================================
+    # Courses (University Admin)
+    # =====================================================
+    path("courses/", CourseListCreateView.as_view(), name="course-list-create"),
+    path("courses/<uuid:pk>/", CourseRetrieveUpdateDeleteView.as_view(), name="course-detail"),
 ]

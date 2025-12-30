@@ -6,7 +6,7 @@ from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
 
-from .models import University, Faculty, AcademicProgram, AcademicYear
+from .models import University, Faculty, AcademicProgram, AcademicYear, Course, get_or_create_dentistry_faculty
 from .serializers import (
     UniversityListSerializer,
     UniversityDetailSerializer,
@@ -14,6 +14,7 @@ from .serializers import (
     FacultySerializer,
     AcademicProgramSerializer,
     AcademicYearSerializer,
+    CourseSerializer,
 )
 
 from apps.accounts.permissions import IsUniversityAdmin, IsTechSupport
@@ -114,6 +115,18 @@ class FacultyListCreateView(generics.ListCreateAPIView):
         serializer.save(university=university)
 
 
+class FacultyRetrieveUpdateDeleteView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    Retrieve/Update/Delete faculty within the admin's university.
+    """
+    serializer_class = FacultySerializer
+    permission_classes = [IsAuthenticated, IsUniversityAdmin]
+
+    def get_queryset(self):
+        university = get_admin_university(self.request)
+        return Faculty.objects.filter(university=university)
+
+
 # ============================================================
 # Academic Program Views (University Admin Scoped)
 # ============================================================
@@ -137,6 +150,18 @@ class AcademicProgramListCreateView(generics.ListCreateAPIView):
         serializer.save(university=university)
 
 
+class AcademicProgramRetrieveUpdateDeleteView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    Retrieve/Update/Delete academic program within the admin's university.
+    """
+    serializer_class = AcademicProgramSerializer
+    permission_classes = [IsAuthenticated, IsUniversityAdmin]
+
+    def get_queryset(self):
+        university = get_admin_university(self.request)
+        return AcademicProgram.objects.filter(university=university)
+
+
 # ============================================================
 # Academic Year Views (University Admin Scoped)
 # ============================================================
@@ -155,3 +180,63 @@ class AcademicYearListCreateView(generics.ListCreateAPIView):
     def perform_create(self, serializer):
         university = get_admin_university(self.request)
         serializer.save(university=university)
+
+
+class AcademicYearRetrieveUpdateDeleteView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    Retrieve/Update/Delete academic year within the admin's university.
+    """
+    serializer_class = AcademicYearSerializer
+    permission_classes = [IsAuthenticated, IsUniversityAdmin]
+
+    def get_queryset(self):
+        university = get_admin_university(self.request)
+        return AcademicYear.objects.filter(university=university)
+
+
+# ============================================================
+# Courses (University Admin Scoped)
+# ============================================================
+
+class CourseListCreateView(generics.ListCreateAPIView):
+    """
+    List & create courses within the admin's university.
+    """
+    serializer_class = CourseSerializer
+    permission_classes = [IsAuthenticated, IsUniversityAdmin]
+
+    def get_queryset(self):
+        university = get_admin_university(self.request)
+        # Ensure default faculty exists for the university
+        get_or_create_dentistry_faculty(university)
+        return Course.objects.filter(university=university, is_active=True).select_related(
+            "university", "faculty", "academic_year", "program", "supervisor"
+        ).prefetch_related("students")
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx["university"] = get_admin_university(self.request)
+        return ctx
+
+    def perform_create(self, serializer):
+        university = get_admin_university(self.request)
+        serializer.save(university=university)
+
+
+class CourseRetrieveUpdateDeleteView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    Retrieve, update, or delete a course within the admin's university.
+    """
+    serializer_class = CourseSerializer
+    permission_classes = [IsAuthenticated, IsUniversityAdmin]
+
+    def get_queryset(self):
+        university = get_admin_university(self.request)
+        return Course.objects.filter(university=university).select_related(
+            "university", "faculty", "academic_year", "program", "supervisor"
+        ).prefetch_related("students")
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx["university"] = get_admin_university(self.request)
+        return ctx

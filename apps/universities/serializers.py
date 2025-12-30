@@ -7,7 +7,10 @@ from .models import (
     Faculty,
     AcademicProgram,
     AcademicYear,
+    Course,
+    get_or_create_dentistry_faculty,
 )
+from apps.accounts.models import Role, User
 
 
 # ============================================================
@@ -238,6 +241,106 @@ class AcademicProgramSerializer(serializers.ModelSerializer):
                 )
 
         return attrs
+
+
+# ============================================================
+# Course Serializers
+# ============================================================
+
+class CourseSerializer(serializers.ModelSerializer):
+    university_name = serializers.CharField(source="university.name", read_only=True)
+    faculty_name = serializers.CharField(source="faculty.name", read_only=True)
+    supervisor_email = serializers.EmailField(source="supervisor.email", read_only=True)
+    students_emails = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = Course
+        fields = (
+            "id",
+            "university",
+            "university_name",
+            "faculty",
+            "faculty_name",
+            "academic_year",
+            "program",
+            "supervisor",
+            "supervisor_email",
+            "students",
+            "students_emails",
+            "name",
+            "code",
+            "description",
+            "credits",
+            "is_active",
+            "created_at",
+        )
+        read_only_fields = (
+            "id",
+            "created_at",
+            "university",
+            "university_name",
+            "faculty_name",
+            "supervisor_email",
+            "students_emails",
+        )
+
+    def get_students_emails(self, obj):
+        return list(obj.students.values_list("email", flat=True))
+
+    def validate_supervisor(self, user):
+        if not user:
+            return user
+        if getattr(user.role, "name", None) != Role.SUPERVISOR:
+            raise serializers.ValidationError(_("Supervisor must have SUPERVISOR role."))
+        return user
+
+    def validate_students(self, students):
+        for student in students:
+            if getattr(student.role, "name", None) != Role.STUDENT:
+                raise serializers.ValidationError(_("All enrolled users must have STUDENT role."))
+        return students
+
+    def validate(self, attrs):
+        university = self.context.get("university")
+        academic_year = attrs.get("academic_year")
+        program = attrs.get("program")
+        supervisor = attrs.get("supervisor")
+        students = attrs.get("students", [])
+
+        if academic_year and academic_year.university_id != university.id:
+            raise serializers.ValidationError(_("Academic year must belong to this university."))
+        if program and program.university_id != university.id:
+            raise serializers.ValidationError(_("Program must belong to this university."))
+
+        if supervisor:
+            sup_univ = getattr(getattr(supervisor, "supervisorprofile_profile", None), "university_id", None)
+            if sup_univ and sup_univ != university.id:
+                raise serializers.ValidationError(_("Supervisor must belong to this university."))
+
+        for student in students:
+            stu_univ = getattr(getattr(student, "studentprofile_profile", None), "university_id", None)
+            if stu_univ and stu_univ != university.id:
+                raise serializers.ValidationError(_("Student must belong to this university."))
+
+        return attrs
+
+    def create(self, validated_data):
+        university = self.context["university"]
+        students = validated_data.pop("students", [])
+        # Auto-assign default dentistry faculty
+        if not validated_data.get("faculty"):
+            validated_data["faculty"] = get_or_create_dentistry_faculty(university)
+        course = Course.objects.create(university=university, **validated_data)
+        if students:
+            course.students.set(students)
+        return course
+
+    def update(self, instance, validated_data):
+        students = validated_data.pop("students", None)
+        result = super().update(instance, validated_data)
+        if students is not None:
+            result.students.set(students)
+        return result
 
 
 # ============================================================
