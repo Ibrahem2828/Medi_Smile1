@@ -5,6 +5,7 @@ from django.utils import timezone
 from apps.accounts.models import Role
 from apps.audit.services import log_audit_event
 from apps.notifications.audit_bridge import notify_on_audit_event
+from apps.cases.models import Case
 
 from .models import Report
 
@@ -15,12 +16,7 @@ from .models import Report
 
 def generate_report(*, actor, data: dict) -> Report:
     """
-    Generate a new report.
-
-    Allowed:
-    - Supervisor
-    - University Admin
-    - Tech Support
+    Generate a new report (supervisor/admin/tech).
     """
     role_name = actor.role.name
 
@@ -35,11 +31,17 @@ def generate_report(*, actor, data: dict) -> Report:
         student=data["student"],
         university=data["university"],
         report_type=data["report_type"],
+        case_id=data.get("case_id"),
+        session_id=data.get("session_id"),
         title=data.get("title"),
         description=data.get("description"),
-        file_url=data["file_url"],
+        content=data.get("content"),
+        file_url=data.get("file_url"),
+        attachments=data.get("attachments"),
         snapshot_data=data.get("snapshot_data"),
+        score=data.get("score"),
         generated_by=actor,
+        supervisor=actor if role_name == Role.SUPERVISOR else None,
     )
 
     log_audit_event(
@@ -89,15 +91,23 @@ def toggle_report_visibility(*, actor, report: Report, is_active: bool) -> Repor
 # Academic Flow Reports
 # ============================================================
 
-def submit_report(*, student, case, data: dict) -> Report:
+def submit_report(*, student, data: dict) -> Report:
     if student.role.name != Role.STUDENT:
         raise PermissionDenied("Only students can submit reports.")
 
+    case = data["case"]
     report = Report.objects.create(
         student=student,
-        case=case,
-        content=data["content"],
-        submitted_at=timezone.now(),
+        university=case.university,
+        report_type=data["report_type"],
+        case_id=case.id,
+        session_id=data.get("session_id"),
+        title=data.get("title"),
+        description=data.get("description"),
+        content=data.get("content"),
+        attachments=data.get("attachments"),
+        generated_by=student,
+        supervisor=getattr(case, "supervisor", None),
     )
 
     log_audit_event(
@@ -106,7 +116,7 @@ def submit_report(*, student, case, data: dict) -> Report:
         action="reports.report.submitted",
         description="Student submitted case report",
         content_object=report,
-        metadata={"case_id": str(case.id)},
+        metadata={"case_id": str(case.id), "report_type": report.report_type},
     )
 
     # Notify supervisor (if exists)
@@ -123,18 +133,28 @@ def submit_report(*, student, case, data: dict) -> Report:
     return report
 
 
-def review_report(*, supervisor, report: Report, feedback: str) -> Report:
+def review_report(*, supervisor, report: Report, feedback: str, score: int | None = None) -> Report:
     if supervisor.role.name != Role.SUPERVISOR:
         raise PermissionDenied("Only supervisors can review reports.")
 
-    report.reviewed_by = supervisor
+    # Optional: ensure same university
+    sup_univ = getattr(getattr(supervisor, "supervisorprofile_profile", None), "university_id", None)
+    if sup_univ and sup_univ != report.university_id:
+        raise PermissionDenied("You cannot review reports outside your university.")
+
+    report.supervisor = supervisor
     report.feedback = feedback
+    if score is not None:
+        report.score = score
     report.reviewed_at = timezone.now()
-    report.save()
+    update_fields = ["supervisor", "feedback", "reviewed_at", "updated_at"]
+    if score is not None:
+        update_fields.append("score")
+    report.save(update_fields=update_fields)
 
     log_audit_event(
         user=supervisor,
-        university=report.case.university,
+        university=report.university,
         action="reports.report.reviewed",
         description="Supervisor reviewed report",
         content_object=report,

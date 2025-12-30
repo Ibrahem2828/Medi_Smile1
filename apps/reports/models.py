@@ -22,12 +22,14 @@ class Report(models.Model):
     # Report Types
     # ============================================================
     class ReportType(models.TextChoices):
+        CLINICAL_CASE = "clinical_case", _("Clinical Case Report")
+        SESSION_REPORT = "session_report", _("Session Report")
         ACADEMIC = "academic", _("Academic Performance")
-        CLINICAL = "clinical", _("Clinical Performance")
-        ATTENDANCE = "attendance", _("Attendance")
         EVALUATION = "evaluation", _("Evaluation Summary")
-        PROGRESS = "progress", _("Progress Report")
-        STATISTICAL = "statistical", _("Statistical Analysis")
+        SUMMARY = "summary", _("Period Summary")
+        MEDIA = "media_report", _("Media (Before/After)")
+        SUPERVISOR_REVIEW = "supervisor_review", _("Supervisor Review")
+        ADMINISTRATIVE = "administrative", _("Administrative Oversight")
         OTHER = "other", _("Other")
 
     # ============================================================
@@ -47,6 +49,17 @@ class Report(models.Model):
         verbose_name=_("Student"),
         help_text=_("Student this report belongs to"),
         db_index=True,
+    )
+
+    supervisor = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reviewed_reports",
+        limit_choices_to={"role__name": Role.SUPERVISOR},
+        verbose_name=_("Supervisor"),
+        help_text=_("Supervisor linked to this report or reviewer"),
     )
 
     university = models.ForeignKey(
@@ -85,6 +98,22 @@ class Report(models.Model):
         db_index=True,
     )
 
+    case_id = models.UUIDField(
+        null=True,
+        blank=True,
+        verbose_name=_("Case ID"),
+        help_text=_("Optional case identifier"),
+        db_index=True,
+    )
+
+    session_id = models.UUIDField(
+        null=True,
+        blank=True,
+        verbose_name=_("Session ID"),
+        help_text=_("Optional session identifier"),
+        db_index=True,
+    )
+
     title = models.CharField(
         max_length=200,
         blank=True,
@@ -100,12 +129,28 @@ class Report(models.Model):
         help_text=_("Optional notes or explanation for this report"),
     )
 
+    content = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name=_("Content"),
+        help_text=_("Rich text / markdown content for the report"),
+    )
+
     # ============================================================
     # Report Output
     # ============================================================
     file_url = models.TextField(
+        blank=True,
+        null=True,
         verbose_name=_("File URL"),
-        help_text=_("Absolute or relative path to the generated report file"),
+        help_text=_("Absolute or relative path to the generated report file (optional for media/content-based reports)"),
+    )
+
+    attachments = models.JSONField(
+        blank=True,
+        null=True,
+        verbose_name=_("Attachments"),
+        help_text=_("List of attachments with types (before/during/after/file)."),
     )
 
     snapshot_data = models.JSONField(
@@ -113,6 +158,26 @@ class Report(models.Model):
         null=True,
         verbose_name=_("Snapshot Data"),
         help_text=_("Optional frozen snapshot of aggregated data (for statistics/progress)."),
+    )
+
+    score = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        verbose_name=_("Score"),
+        help_text=_("Optional numeric score (0-100)."),
+    )
+
+    feedback = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name=_("Feedback / Review"),
+        help_text=_("Supervisor feedback for the report."),
+    )
+
+    reviewed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name=_("Reviewed At"),
     )
 
     # ============================================================
@@ -140,6 +205,8 @@ class Report(models.Model):
             models.Index(fields=["student", "report_type"]),
             models.Index(fields=["university", "report_type"]),
             models.Index(fields=["generated_at"]),
+            models.Index(fields=["case_id"]),
+            models.Index(fields=["session_id"]),
         ]
 
     # ============================================================
@@ -175,12 +242,20 @@ class Report(models.Model):
             old = Report.objects.filter(pk=self.pk).only(
                 "student_id",
                 "university_id",
+                "supervisor_id",
                 "generated_by_id",
                 "report_type",
+                "case_id",
+                "session_id",
                 "title",
                 "description",
+                "content",
                 "file_url",
+                "attachments",
                 "snapshot_data",
+                "score",
+                "feedback",
+                "reviewed_at",
                 "generated_at",
                 "created_at",
                 # updated_at will change automatically
@@ -192,33 +267,49 @@ class Report(models.Model):
 
             # Allowed changes:
             # - is_active (explicit)
+            # - feedback / score / reviewed_at / supervisor (via review endpoint)
             # updated_at auto changes and is ignored
             changed_forbidden = []
 
             def _diff(field):
                 return getattr(old, field) != getattr(self, field)
 
-            forbidden_fields = [
+            immutable_fields = [
                 "student_id",
                 "university_id",
                 "generated_by_id",
                 "report_type",
+                "case_id",
+                "session_id",
                 "title",
                 "description",
+                "content",
                 "file_url",
+                "attachments",
                 "snapshot_data",
                 "generated_at",
                 "created_at",
             ]
 
-            for f in forbidden_fields:
+            for f in immutable_fields:
                 if _diff(f):
                     changed_forbidden.append(f)
 
-            if changed_forbidden:
+            # Allow these to change
+            allowed_mutable = {
+                "is_active",
+                "feedback",
+                "score",
+                "reviewed_at",
+                "supervisor_id",
+            }
+
+            illegal = [f for f in changed_forbidden if f not in allowed_mutable]
+
+            if illegal:
                 raise RuntimeError(
-                    _("Reports are immutable. Only is_active can be modified. Forbidden changes: %(fields)s")
-                    % {"fields": ", ".join(changed_forbidden)}
+                    _("Reports are immutable. Only is_active/feedback/score/reviewed_at/supervisor can be modified. Forbidden changes: %(fields)s")
+                    % {"fields": ", ".join(illegal)}
                 )
 
         super().save(*args, **kwargs)

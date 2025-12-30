@@ -5,6 +5,7 @@ from django.utils.translation import gettext_lazy as _
 from .models import Report
 from apps.accounts.models import User, Role
 from apps.universities.models import University
+from apps.cases.models import Case
 
 
 # ============================================================
@@ -17,6 +18,7 @@ class ReportSerializer(serializers.ModelSerializer):
     """
 
     student_name = serializers.SerializerMethodField()
+    supervisor_name = serializers.SerializerMethodField()
     university_name = serializers.CharField(source="university.name", read_only=True)
     generated_by_name = serializers.SerializerMethodField()
 
@@ -25,12 +27,21 @@ class ReportSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "report_type",
+            "case_id",
+            "session_id",
             "title",
             "description",
+            "content",
             "file_url",
+            "attachments",
             "snapshot_data",
+            "score",
+            "feedback",
+            "reviewed_at",
             "student",
             "student_name",
+            "supervisor",
+            "supervisor_name",
             "university",
             "university_name",
             "generated_by",
@@ -45,6 +56,11 @@ class ReportSerializer(serializers.ModelSerializer):
     def get_student_name(self, obj):
         return obj.student.get_full_name() or obj.student.username
 
+    def get_supervisor_name(self, obj):
+        if not obj.supervisor:
+            return None
+        return obj.supervisor.get_full_name() or obj.supervisor.username
+
     def get_generated_by_name(self, obj):
         if not obj.generated_by:
             return None
@@ -52,22 +68,47 @@ class ReportSerializer(serializers.ModelSerializer):
 
 
 # ============================================================
-# Create Serializer (Input Only)
+# Create Serializers (Input Only)
 # ============================================================
 
-class ReportCreateSerializer(serializers.Serializer):
-    """
-    Input serializer for generating a report.
-    Actual creation handled by services.py
-    """
-
-    student_id = serializers.UUIDField()
-    university_id = serializers.UUIDField()
-    report_type = serializers.ChoiceField(choices=Report.ReportType.choices)
+# Student submit report (clinical/media/session)
+class ReportSubmitSerializer(serializers.Serializer):
+    report_type = serializers.ChoiceField(choices=[
+        Report.ReportType.CLINICAL_CASE,
+        Report.ReportType.SESSION_REPORT,
+        Report.ReportType.MEDIA,
+    ])
+    case_id = serializers.UUIDField(required=True)
+    session_id = serializers.UUIDField(required=False, allow_null=True)
     title = serializers.CharField(required=False, allow_blank=True)
     description = serializers.CharField(required=False, allow_blank=True)
-    file_url = serializers.CharField()
+    content = serializers.CharField(required=False, allow_blank=True)
+    attachments = serializers.JSONField(required=False)
+
+    def validate(self, attrs):
+        student = self.context["student"]
+        try:
+            case = Case.objects.get(id=attrs["case_id"], patient=student)
+        except Case.DoesNotExist:
+            raise serializers.ValidationError({"case_id": _("Case not found or not owned by student.")})
+
+        attrs["case"] = case
+        return attrs
+
+
+# Generate report (supervisor/admin/tech)
+class ReportGenerateSerializer(serializers.Serializer):
+    student_id = serializers.UUIDField()
+    report_type = serializers.ChoiceField(choices=Report.ReportType.choices)
+    case_id = serializers.UUIDField(required=False, allow_null=True)
+    session_id = serializers.UUIDField(required=False, allow_null=True)
+    title = serializers.CharField(required=False, allow_blank=True)
+    description = serializers.CharField(required=False, allow_blank=True)
+    content = serializers.CharField(required=False, allow_blank=True)
+    file_url = serializers.CharField(required=False, allow_blank=True)
+    attachments = serializers.JSONField(required=False)
     snapshot_data = serializers.JSONField(required=False)
+    score = serializers.IntegerField(required=False, allow_null=True, min_value=0, max_value=100)
 
     def validate(self, attrs):
         # Validate student
@@ -77,21 +118,22 @@ class ReportCreateSerializer(serializers.Serializer):
                 role__name=Role.STUDENT,
             )
         except User.DoesNotExist:
-            raise serializers.ValidationError(
-                {"student_id": _("Student not found or invalid role.")}
-            )
+            raise serializers.ValidationError({"student_id": _("Student not found or invalid role.")})
 
-        # Validate university
-        try:
-            university = University.objects.get(id=attrs["university_id"])
-        except University.DoesNotExist:
-            raise serializers.ValidationError(
-                {"university_id": _("University not found.")}
-            )
+        # Infer university from student profile
+        university = getattr(getattr(student, "studentprofile_profile", None), "university", None)
+        if not university:
+            raise serializers.ValidationError({"student_id": _("Student is not linked to a university.")})
 
         attrs["student"] = student
         attrs["university"] = university
         return attrs
+
+
+class ReportReviewSerializer(serializers.Serializer):
+    feedback = serializers.CharField(required=True, allow_blank=False)
+    score = serializers.IntegerField(required=False, allow_null=True, min_value=0, max_value=100)
+
 
 
 # ============================================================

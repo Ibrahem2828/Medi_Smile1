@@ -4,11 +4,14 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from medismile.utils.auth import resolve_request_user
+from apps.accounts.models import Role
 
 from .models import Report
 from .serializers import (
     ReportSerializer,
-    ReportCreateSerializer,
+    ReportSubmitSerializer,
+    ReportGenerateSerializer,
+    ReportReviewSerializer,
     ReportVisibilityUpdateSerializer,
 )
 from .selectors import (
@@ -16,7 +19,7 @@ from .selectors import (
     reports_for_student,
     reports_for_university,
 )
-from .services import generate_report, toggle_report_visibility
+from .services import generate_report, toggle_report_visibility, submit_report, review_report
 from .permissions import (
     CanViewReport,
     CanGenerateReport,
@@ -28,13 +31,9 @@ from .permissions import (
 # Reports List & Generate
 # ============================================================
 
-class ReportListView(generics.ListCreateAPIView):
+class ReportListView(generics.ListAPIView):
     """
-    GET:
-    - Scoped list of reports (student / supervisor / admin / tech)
-
-    POST:
-    - Generate new report (authorized roles only)
+    GET: Scoped list of reports (student / supervisor / admin / tech)
     """
 
     permission_classes = [IsAuthenticated]
@@ -57,26 +56,6 @@ class ReportListView(generics.ListCreateAPIView):
             qs = qs.filter(report_type=report_type)
 
         return qs
-
-    def get_serializer_class(self):
-        if self.request.method == "POST":
-            return ReportCreateSerializer
-        return ReportSerializer
-
-    def create(self, request, *args, **kwargs):
-        self.check_permissions(request)
-        self.permission_classes = [IsAuthenticated, CanGenerateReport]
-
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        actor = resolve_request_user(request)
-        report = generate_report(actor=actor, data=serializer.validated_data)
-
-        return Response(
-            ReportSerializer(report).data,
-            status=status.HTTP_201_CREATED,
-        )
 
 
 # ============================================================
@@ -113,6 +92,67 @@ class ReportDetailView(generics.RetrieveUpdateAPIView):
             ReportSerializer(report).data,
             status=status.HTTP_200_OK,
         )
+
+
+# ============================================================
+# Generate Report (Supervisor/Admin/Tech)
+# ============================================================
+
+class ReportGenerateView(generics.CreateAPIView):
+    permission_classes = [IsAuthenticated, CanGenerateReport]
+    serializer_class = ReportGenerateSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        actor = resolve_request_user(request)
+        report = generate_report(actor=actor, data=serializer.validated_data)
+        return Response(ReportSerializer(report).data, status=status.HTTP_201_CREATED)
+
+
+# ============================================================
+# Submit Report (Student)
+# ============================================================
+
+class ReportSubmitView(generics.CreateAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = ReportSubmitSerializer
+
+    def create(self, request, *args, **kwargs):
+        actor = resolve_request_user(request)
+        if getattr(getattr(actor, "role", None), "name", None) != Role.STUDENT:
+            return Response(status=status.HTTP_403_FORBIDDEN)
+
+        serializer = self.get_serializer(data=request.data, context={"student": actor})
+        serializer.is_valid(raise_exception=True)
+        report = submit_report(student=actor, data=serializer.validated_data)
+        return Response(ReportSerializer(report).data, status=status.HTTP_201_CREATED)
+
+
+# ============================================================
+# Review Report (Supervisor)
+# ============================================================
+
+class ReportReviewView(generics.CreateAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = ReportReviewSerializer
+
+    def post(self, request, *args, **kwargs):
+        report = generics.get_object_or_404(Report, pk=kwargs["pk"])
+        actor = resolve_request_user(request)
+        if getattr(getattr(actor, "role", None), "name", None) != Role.SUPERVISOR:
+            return Response(status=status.HTTP_403_FORBIDDEN)
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        updated = review_report(
+            supervisor=actor,
+            report=report,
+            feedback=serializer.validated_data["feedback"],
+            score=serializer.validated_data.get("score"),
+        )
+        return Response(ReportSerializer(updated).data, status=status.HTTP_200_OK)
 
 
 # ============================================================

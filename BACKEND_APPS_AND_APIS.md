@@ -183,3 +183,97 @@ Immutable بعد الإنشاء.
 - استخدم access token في كل الطلبات المحمية.
 - عند 401 مع `token_not_valid` قم بتحديث باستخدام refresh.
 - احترم القيود: المريض لا يعدل مواعيد، الطالب لا يرسل/يعدل خارج الحالات المسندة، لا رسائل بعد إغلاق الحالة، لا تغيير role/university من مسارات “me”.
+
+
+
+
+
+إنشاء كلية (POST /universities/faculties/)
+{
+  "name": "Dentistry",
+  "description": "الكلية الافتراضية",
+  "is_active": true
+}
+عرض قائمة (GET /universities/faculties/) — لا يوجد Body.
+عرض/تعديل/حذف (GET/PATCH/DELETE /universities/faculties/<uuid>/)
+PATCH مثال:
+{
+  "name": "Dentistry",
+  "description": "تحديث الوصف",
+  "is_active": true
+}
+البرامج (Academic Programs)
+
+إنشاء برنامج (POST /universities/programs/)
+{
+  "faculty": "<faculty_uuid_or_null>",   // اختياري، يتم التحقق من تبعية الجامعة
+  "name": "Bachelor of Dental Surgery",
+  "code": "BDS-01",
+  "level": "bachelor",                   // bachelor | master | doctorate | diploma | certificate
+  "duration_years": 5,
+  "description": "برنامج بكالوريوس طب الأسنان",
+  "is_active": true
+}
+عرض قائمة (GET /universities/programs/) — لا يوجد Body.
+عرض/تعديل/حذف (GET/PATCH/DELETE /universities/programs/<uuid>/)
+PATCH مثال:
+{
+  "name": "Bachelor of Dental Surgery",
+  "code": "BDS-01",
+  "level": "bachelor",
+  "duration_years": 5,
+  "description": "تحديث الوصف",
+  "is_active": true
+}
+السنوات الأكاديمية (Academic Years)
+
+إنشاء سنة (POST /universities/academic-years/)
+{
+  "name": "2024/2025",
+  "start_date": "2024-09-01",
+  "end_date": "2025-06-30",
+  "is_active": true
+}
+عرض قائمة (GET /universities/academic-years/) — لا يوجد Body.
+عرض/تعديل/حذف (GET/PATCH/DELETE /universities/academic-years/<uuid>/)
+PATCH مثال:
+{
+  "name": "2024/2025",
+  "start_date": "2024-09-01",
+  "end_date": "2025-06-30",
+  "is_active": false
+}
+المقررات (Courses)
+
+إنشاء مقرر (POST /universities/courses/)
+{
+  "name": "تشخيص الأسنان",
+  "code": "DENT-301",
+  "academic_year": "<academic_year_uuid_or_null>",
+  "program": "<program_uuid_or_null>",
+  "supervisor": "<supervisor_user_uuid_or_null>",   // role = supervisor
+  "students": ["<student_uuid_1>", "<student_uuid_2>"], // role = student
+  "description": "مادة سريرية",
+  "credits": 3,
+  "is_active": true
+}
+ملاحظات:
+الكلية تُعيّن تلقائياً إلى “Dentistry”.
+يتم التحقق أن المشرف والطلاب ضمن نفس الجامعة (حسب ملفاتهم التعريفية).
+عرض قائمة (GET /universities/courses/) — لا يوجد Body.
+عرض/تعديل/حذف (GET/PATCH/DELETE /universities/courses/<uuid>/)
+PATCH مثال:
+{
+  "name": "تشخيص الأسنان المتقدم",
+  "code": "DENT-301",
+  "academic_year": "<academic_year_uuid_or_null>",
+  "program": "<program_uuid_or_null>",
+  "supervisor": "<supervisor_user_uuid_or_null>",
+  "students": ["<student_uuid_1>", "<student_uuid_3>"],
+  "description": "تحديث الوصف",
+  "credits": 4,
+  "is_active": true
+}
+تذكير بالقيود:
+
+الكود (code) فريد لكل برنامج أو مقرر د
