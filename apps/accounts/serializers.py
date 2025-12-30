@@ -349,6 +349,7 @@ class PatientProfileSerializer(BaseProfileSerializer):
 
 
 class StudentProfileSerializer(BaseProfileSerializer):
+    id = serializers.UUIDField(source="pk", read_only=True)
     university_name = serializers.CharField(
         source="university.name",
         read_only=True,
@@ -361,6 +362,7 @@ class StudentProfileSerializer(BaseProfileSerializer):
 
 
 class SupervisorProfileSerializer(BaseProfileSerializer):
+    id = serializers.UUIDField(source="pk", read_only=True)
     university_name = serializers.CharField(
         source="university.name",
         read_only=True,

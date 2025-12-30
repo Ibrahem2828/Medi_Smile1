@@ -121,13 +121,14 @@ Strategy:
 - Production / Railway → DATABASE_URL
 """
 
-if os.getenv("DATABASE_URL"):
-    # Production / Cloud
+database_url = os.getenv("DATABASE_URL")
+if database_url:
+    # Production / Cloud (with optional sqlite override for local/test)
     DATABASES = {
         "default": dj_database_url.parse(
-            os.getenv("DATABASE_URL"),
+            database_url,
             conn_max_age=600,
-            ssl_require=True,
+            ssl_require=not database_url.startswith("sqlite"),
         )
     }
 else:
@@ -188,6 +189,12 @@ REST_FRAMEWORK = {
         "rest_framework.parsers.MultiPartParser",
     ],
     "EXCEPTION_HANDLER": "medismile.utils.exceptions.custom_exception_handler",
+    "DEFAULT_THROTTLE_RATES": {
+        "ai-diagnose": "5/minute",
+        "ai-review": "30/hour",
+        "ai-health": "120/hour",
+        "ai-my-analysis": "30/hour",
+    },
 }
 
 
@@ -209,9 +216,12 @@ SIMPLE_JWT = {
 }
 
 
-# AI_ENGINE_URL = "https://medismile-ai-production.up.railway.app/analyze/symptoms"
-AI_ENGINE_BASE_URL = "http://127.0.0.1:8001"  # FastAPI engine
-AI_ENGINE_TIMEOUT = 30
+# AI Engines (external)
+AI_SYMPTOMS_URL = os.getenv("AI_SYMPTOMS_URL", "")
+AI_VISION_URL = os.getenv("AI_VISION_URL", "")
+AI_FUSION_URL = os.getenv("AI_FUSION_URL", "")
+AI_ENGINE_BASE_URL = os.getenv("AI_ENGINE_BASE_URL", "http://127.0.0.1:8001")  # Fallback
+AI_ENGINE_TIMEOUT = int(os.getenv("AI_ENGINE_TIMEOUT", "30"))
 
 
 # ============================================================

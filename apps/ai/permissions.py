@@ -49,3 +49,33 @@ class CanAccessAIDiagnosis(BasePermission):
             return getattr(case, "university_id", None) == getattr(user, "university_id", None)
 
         return False
+
+
+class CanReviewAIDiagnosis(BasePermission):
+    """
+    Supervisor-only review action on diagnoses that belong to their cases.
+    """
+
+    def has_object_permission(self, request, view, obj) -> bool:
+        user = request.user
+        role = getattr(getattr(user, "role", None), "name", None)
+        if role != Role.SUPERVISOR:
+            return False
+
+        case = getattr(obj, "case", None)
+        if not case:
+            return False
+        return getattr(case, "supervisor_id", None) == user.id
+
+
+class CanViewAIHealth(BasePermission):
+    """
+    Tech Support (or superuser) only: read-only health/config endpoints.
+    """
+
+    def has_permission(self, request, view) -> bool:
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return False
+        role = getattr(getattr(user, "role", None), "name", None)
+        return bool(role == Role.TECH_SUPPORT or getattr(user, "is_superuser", False))

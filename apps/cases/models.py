@@ -202,6 +202,16 @@ class Case(models.Model):
     def __str__(self):
         return f"{self.title} ({self.get_status_display()})"
 
+    @property
+    def latest_ai_diagnosis(self):
+        from apps.ai.models import AIDiagnosis  # Local import to avoid circular dependency
+        return getattr(self, "ai_diagnoses", AIDiagnosis.objects.none()).order_by("-created_at").first()
+
+    @property
+    def ai_status(self):
+        latest = self.latest_ai_diagnosis
+        return getattr(latest, "status", None)
+
 
 # ============================================================
 # Case History (Immutable Audit Trail)

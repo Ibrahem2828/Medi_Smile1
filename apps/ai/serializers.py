@@ -56,3 +56,8 @@ class AIDiagnosisRequestSerializer(serializers.Serializer):
         if len(value.split()) < 3:
             raise serializers.ValidationError(_("Symptoms description is too short."))
         return value
+
+
+class AIDiagnosisReviewSerializer(serializers.Serializer):
+    approved = serializers.BooleanField(required=False, default=True)
+    note = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=500)
