@@ -56,7 +56,8 @@ def _build_ai_audit_hook(*, actor, case):
 def request_ai_diagnosis(
     *,
     actor,
-    case_id,
+    case_id=None,
+    patient_id=None,
     symptoms_text: str,
     image_urls: Optional[List[str]] = None,
 ) -> AIDiagnosis:
@@ -68,7 +69,27 @@ def request_ai_diagnosis(
     if role != Role.PATIENT:
         raise PermissionDenied("Only patients can request AI diagnosis.")
 
-    case = Case.objects.select_related("university").get(id=case_id, patient=actor)
+    if patient_id and str(patient_id) != str(getattr(actor, "id", None)):
+        raise PermissionDenied("Patient ID does not match the authenticated user.")
+
+    case = None
+    if case_id:
+        case = Case.objects.select_related("university").get(id=case_id, patient=actor)
+    else:
+        case = (
+            Case.objects.select_related("university")
+            .filter(patient=actor, status__in=Case.ACTIVE_STATUSES)
+            .order_by("-created_at")
+            .first()
+        )
+        if not case:
+            # Auto-create a lightweight case for this AI request
+            title = f"AI Analysis - {symptoms_text[:50]}"
+            case = Case.objects.create(
+                patient=actor,
+                title=title,
+                description=symptoms_text,
+            )
 
     # Create a PENDING record first (auditable even if engine fails)
     diagnosis = AIDiagnosis.objects.create(

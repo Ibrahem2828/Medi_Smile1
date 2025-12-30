@@ -44,8 +44,8 @@ def create_ai_diagnosis(request):
 
     diagnosis = request_ai_diagnosis(
         actor=request.user,
-        case_id=serializer.validated_data["case_id"],
         symptoms_text=serializer.validated_data["symptoms_text"],
+        patient_id=serializer.validated_data.get("patient_id"),
         image_urls=serializer.validated_data.get("image_urls") or [],
     )
 

@@ -61,7 +61,7 @@ class AIDiagnosisAPITestCase(APITestCase):
 
         self.client.force_authenticate(user=self.patient)
         url = reverse("ai:ai-diagnose")
-        payload = {"case_id": str(self.case.id), "symptoms_text": "أشعر بألم شديد في الضرس مع حساسية"}
+        payload = {"symptoms_text": "أشعر بألم شديد في الضرس مع حساسية"}
         res = self.client.post(url, payload, format="json")
 
         self.assertEqual(res.status_code, status.HTTP_201_CREATED)
@@ -71,7 +71,7 @@ class AIDiagnosisAPITestCase(APITestCase):
     def test_non_patient_cannot_request_ai_diagnosis(self):
         self.client.force_authenticate(user=self.student)
         url = reverse("ai:ai-diagnose")
-        payload = {"case_id": str(self.case.id), "symptoms_text": "ألم في الأسنان"}
+        payload = {"symptoms_text": "ألم في الأسنان"}
         res = self.client.post(url, payload, format="json")
         self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
 

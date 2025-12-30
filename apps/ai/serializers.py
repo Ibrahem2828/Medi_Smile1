@@ -43,8 +43,8 @@ class AIDiagnosisSerializer(serializers.ModelSerializer):
 
 
 class AIDiagnosisRequestSerializer(serializers.Serializer):
-    case_id = serializers.UUIDField(required=True)
     symptoms_text = serializers.CharField(required=True, min_length=10)
+    patient_id = serializers.UUIDField(required=False, allow_null=True)
     image_urls = serializers.ListField(
         child=serializers.URLField(),
         required=False,
