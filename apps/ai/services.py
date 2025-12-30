@@ -118,9 +118,12 @@ def request_ai_diagnosis(
             audit_hook=_build_ai_audit_hook(actor=actor, case=case),
         )
     except AIEngineError as exc:
+        raw_error = str(exc)
+        friendly_error = "خدمة الذكاء الاصطناعي غير متاحة حالياً. الرجاء المحاولة لاحقاً."
         diagnosis.status = DiagnosisStatus.FAILED
-        diagnosis.error_message = str(exc)
-        diagnosis.save(update_fields=["status", "error_message", "updated_at"])
+        diagnosis.error_message = friendly_error
+        diagnosis.ai_metadata = {"engine_error": raw_error}
+        diagnosis.save(update_fields=["status", "error_message", "ai_metadata", "updated_at"])
 
         log_audit_event(
             user=actor,
@@ -128,7 +131,7 @@ def request_ai_diagnosis(
             action="ai.diagnosis.failed",
             description="AI diagnosis failed",
             content_object=diagnosis,
-            metadata={"error": str(exc)},
+            metadata={"error": raw_error},
         )
         return diagnosis
 

@@ -2,6 +2,7 @@ from datetime import timedelta
 import os
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 import dj_database_url
 
@@ -203,7 +204,7 @@ REST_FRAMEWORK = {
 # Simple JWT
 # ============================================================
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(hours=12),
+    "ACCESS_TOKEN_LIFETIME": timedelta(days=20),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=30),
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
@@ -220,8 +221,19 @@ SIMPLE_JWT = {
 AI_SYMPTOMS_URL = os.getenv("AI_SYMPTOMS_URL", "")
 AI_VISION_URL = os.getenv("AI_VISION_URL", "")
 AI_FUSION_URL = os.getenv("AI_FUSION_URL", "")
-AI_ENGINE_BASE_URL = os.getenv("AI_ENGINE_BASE_URL", "http://127.0.0.1:8001")  # Fallback
+AI_ENGINE_BASE_URL = os.getenv("AI_ENGINE_BASE_URL", "")  # Only for local/dev if explicitly set
 AI_ENGINE_TIMEOUT = int(os.getenv("AI_ENGINE_TIMEOUT", "30"))
+
+# Enforce explicit endpoints in non-debug environments to avoid localhost fallback.
+if not DEBUG:
+    _required_ai_vars = {
+        "AI_SYMPTOMS_URL": AI_SYMPTOMS_URL,
+        "AI_VISION_URL": AI_VISION_URL,
+        "AI_FUSION_URL": AI_FUSION_URL,
+    }
+    _missing_ai = [name for name, value in _required_ai_vars.items() if not value]
+    if _missing_ai:
+        raise ImproperlyConfigured(f"Missing AI endpoint configuration: {', '.join(_missing_ai)}")
 
 
 # ============================================================
