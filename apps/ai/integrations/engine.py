@@ -48,12 +48,13 @@ class AIEnginesConfig:
 
 def _post_json(*, config: AIEngineConfig, path: Optional[str], payload: Dict[str, Any]) -> Dict[str, Any]:
     try:
-        resp = requests.post(config.build_url(path), json=payload, timeout=config.timeout_seconds)
+        full_url = config.build_url(path)
+        resp = requests.post(full_url, json=payload, timeout=config.timeout_seconds)
     except requests.RequestException as exc:
         raise AIEngineError(f"{config.base_url}: connection failed ({exc})") from exc
 
     if resp.status_code >= 400:
-        raise AIEngineError(f"{config.base_url}: HTTP {resp.status_code} {resp.text}")
+        raise AIEngineError(f"{full_url}: HTTP {resp.status_code} {resp.text}")
 
     try:
         data = resp.json()
