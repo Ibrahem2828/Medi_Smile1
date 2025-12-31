@@ -6,6 +6,7 @@ from .views import (
     SupportTicketDetailView,
     SupportTicketResponseListView,
     SupportTicketStatsView,
+    SupportTicketCloseView,
 )
 
 app_name = "support"
@@ -14,6 +15,7 @@ urlpatterns = [
     # Tickets
     path("tickets/", SupportTicketListView.as_view(), name="ticket-list"),
     path("tickets/<uuid:ticket_id>/", SupportTicketDetailView.as_view(), name="ticket-detail"),
+    path("tickets/<uuid:ticket_id>/close/", SupportTicketCloseView.as_view(), name="ticket-close"),
 
     # Responses
     path("tickets/<uuid:ticket_id>/responses/", SupportTicketResponseListView.as_view(), name="ticket-response-list"),

@@ -101,7 +101,7 @@ class ContentViewSet(viewsets.GenericViewSet):
 
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):
-        content = Content.objects.get(pk=pk)
+        content = self.get_object()
         self.check_object_permissions(request, content)
 
         user = resolve_request_user(request)
@@ -110,7 +110,7 @@ class ContentViewSet(viewsets.GenericViewSet):
 
     @action(detail=True, methods=["post"])
     def reject(self, request, pk=None):
-        content = Content.objects.get(pk=pk)
+        content = self.get_object()
         self.check_object_permissions(request, content)
 
         serializer = self.get_serializer(data=request.data)
@@ -130,7 +130,7 @@ class ContentViewSet(viewsets.GenericViewSet):
 
     @action(detail=True, methods=["post"])
     def like(self, request, pk=None):
-        content = Content.objects.get(pk=pk)
+        content = self.get_object()
         user = resolve_request_user(request)
 
         liked = toggle_like(user=user, content=content)
@@ -138,7 +138,7 @@ class ContentViewSet(viewsets.GenericViewSet):
 
     @action(detail=True, methods=["post"])
     def comment(self, request, pk=None):
-        content = Content.objects.get(pk=pk)
+        content = self.get_object()
         user = resolve_request_user(request)
 
         serializer = self.get_serializer(data=request.data)

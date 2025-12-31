@@ -12,8 +12,10 @@ router.register(r"content", ContentViewSet, basename="content")
 urlpatterns = [
     # Community content APIs
     path("", include(router.urls)),
+    # Alias for pending approvals (moderators)
+    path("approvals/", ContentViewSet.as_view({"get": "pending"}), name="content-approvals"),
 
-    # ⭐ Student public rating
+    # Student public rating
     path(
         "students/<uuid:student_id>/rating/",
         student_public_rating_view,

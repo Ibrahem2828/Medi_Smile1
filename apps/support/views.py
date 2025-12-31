@@ -2,6 +2,7 @@
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from django.utils.translation import gettext_lazy as _
+from django.utils import timezone
 from rest_framework import generics, status
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
@@ -178,6 +179,28 @@ class SupportTicketDetailView(generics.RetrieveUpdateAPIView):
         ticket = serializer.save()
 
         return APIResponse.success(_("Ticket updated successfully."), SupportTicketDetailSerializer(ticket).data)
+
+
+# ------------------------------------------------------------
+# Ticket Close (creator or admin/tech)
+# ------------------------------------------------------------
+
+class SupportTicketCloseView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, ticket_id):
+        user = resolve_request_user(request)
+        role_name = getattr(getattr(user, "role", None), "name", None)
+        ticket = get_object_or_404(_ticket_queryset_for_user(user), id=ticket_id)
+
+        if role_name not in {Role.TECH_SUPPORT, Role.UNIVERSITY_ADMIN} and ticket.created_by_id != user.id:
+            return APIResponse.error(_("You are not allowed to close this ticket."), status_code=status.HTTP_403_FORBIDDEN)
+
+        ticket.status = SupportTicket.Status.CLOSED
+        ticket.closed_at = timezone.now()
+        ticket.save(update_fields=["status", "closed_at", "updated_at"])
+
+        return APIResponse.success(_("Ticket closed successfully."), SupportTicketDetailSerializer(ticket).data)
 
 
 # ------------------------------------------------------------
