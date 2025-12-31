@@ -41,6 +41,7 @@ class NotificationSerializer(serializers.ModelSerializer):
 
     target_type = serializers.SerializerMethodField()
     target_id = serializers.SerializerMethodField()
+    payload = serializers.JSONField(read_only=True)
 
     class Meta:
         model = Notification
@@ -55,6 +56,7 @@ class NotificationSerializer(serializers.ModelSerializer):
             "status",
             "response_message",
             "proposed_changes",
+            "payload",
             "is_read",
             "read_at",
             "created_at",
@@ -91,6 +93,7 @@ class NotificationCreateSerializer(serializers.ModelSerializer):
         help_text=_("Target model name (case, content, report, etc.)"),
     )
     target_id = serializers.UUIDField(write_only=True, required=False)
+    payload = serializers.JSONField(write_only=True, required=False)
 
     recipient_id = serializers.UUIDField(write_only=True)
     sender_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
@@ -108,6 +111,7 @@ class NotificationCreateSerializer(serializers.ModelSerializer):
             "title",
             "message",
             "proposed_changes",
+            "payload",
         ]
 
     def validate(self, attrs):
@@ -163,6 +167,7 @@ class NotificationCreateSerializer(serializers.ModelSerializer):
         appointment_id = validated_data.pop("appointment_id", None)
         target_type = validated_data.pop("target_type", None)
         target_id = validated_data.pop("target_id", None)
+        payload = validated_data.pop("payload", None)
 
         recipient_id = validated_data.pop("recipient_id")
         sender_id = validated_data.pop("sender_id", None)
@@ -189,6 +194,9 @@ class NotificationCreateSerializer(serializers.ModelSerializer):
             content_type = ContentType.objects.get(model=target_type.lower())
             notification.target_content_type = content_type
             notification.target_object_id = target_id
+
+        if payload:
+            notification.payload = payload
 
         notification.save()
         return notification

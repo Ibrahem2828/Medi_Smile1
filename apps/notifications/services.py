@@ -49,11 +49,8 @@ def create_notification(
         message=message,
         priority=priority,
         proposed_changes=proposed_changes,
+        payload=payload or {},
     )
-
-    # Optional generic payload if exists in your model
-    if hasattr(notification, "payload"):
-        notification.payload = payload or {}
 
     if appointment:
         notification.appointment = appointment
@@ -77,7 +74,7 @@ def notify_user(
     recipient: User,
     title: str,
     message: str,
-    notification_type: str = "system",
+    notification_type: str = "system_alert",
     sender: Optional[User] = None,
     target_object=None,
     payload: Optional[dict] = None,

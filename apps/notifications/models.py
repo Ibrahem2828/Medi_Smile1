@@ -28,30 +28,34 @@ class Notification(models.Model):
     # ============================================================
     NOTIFICATION_TYPE_CHOICES = (
         # --- Appointments ---
+        ("appointment_reminder", _("Appointment Reminder")),
         ("appointment_update_request", _("Appointment Update Request")),
         ("appointment_cancel_request", _("Appointment Cancel Request")),
-        ("appointment_confirmed", _("Appointment Confirmed")),
-        ("appointment_cancelled", _("Appointment Cancelled")),
-        ("appointment_completed", _("Appointment Completed")),
+        ("appointment_status_update", _("Appointment Status Update")),
+
+        # --- Reports / Evaluations / AI ---
+        ("report_submitted", _("Report Submitted")),
+        ("report_reviewed", _("Report Reviewed")),
+        ("evaluation_submitted", _("Evaluation Submitted")),
+        ("ai_analysis_ready", _("AI Analysis Ready")),
 
         # --- Community Content ---
-        ("content_approval_request", _("Content Approval Request")),
-        ("content_approved", _("Content Approved")),
-        ("content_rejected", _("Content Rejected")),
+        ("community_content_pending", _("Content Pending Approval")),
+        ("community_content_approved", _("Content Approved")),
+        ("community_content_rejected", _("Content Rejected")),
 
-        # --- Case & Sessions ---
+        # --- Case & Sessions / Messaging ---
         ("case_created", _("Case Created")),
         ("case_assigned", _("Case Assigned")),
         ("case_status_changed", _("Case Status Changed")),
         ("session_created", _("Session Created")),
         ("session_needs_review", _("Session Needs Review")),
         ("session_reviewed", _("Session Reviewed")),
-
-        # --- Messaging ---
         ("new_message", _("New Message")),
 
         # --- System / IT ---
         ("system_alert", _("System Alert")),
+        ("backup_status", _("Backup Status")),
         ("security_event", _("Security Event")),
     )
 
@@ -121,15 +125,6 @@ class Notification(models.Model):
         blank=True,
     )
 
-    content = models.ForeignKey(
-        "community.Content",
-        on_delete=models.CASCADE,
-        related_name="notifications",
-        verbose_name=_("Content"),
-        null=True,
-        blank=True,
-    )
-
     # ============================================================
     # Generic Target
     # ============================================================
@@ -172,6 +167,13 @@ class Notification(models.Model):
         null=True,
         verbose_name=_("Proposed Changes"),
         help_text=_("Used for update requests or approvals."),
+    )
+
+    payload = models.JSONField(
+        blank=True,
+        null=True,
+        verbose_name=_("Payload"),
+        help_text=_("Optional structured payload for frontend."),
     )
 
     # ============================================================
@@ -218,11 +220,10 @@ class Notification(models.Model):
         appointment OR content OR generic target.
         """
         has_appointment = bool(self.appointment_id)
-        has_content = bool(self.content_id)
         has_target = bool(self.target_content_type_id and self.target_object_id)
 
-        if not (has_appointment or has_content or has_target):
-            raise ValidationError(_("Notification must reference an appointment, content, or a target object."))
+        if not (has_appointment or has_target):
+            raise ValidationError(_("Notification must reference an appointment or a target object."))
 
         # Read timestamp sync
         if self.is_read and self.read_at is None:
