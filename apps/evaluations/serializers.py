@@ -110,3 +110,64 @@ class EvaluationUpdateSerializer(serializers.Serializer):
         if not attrs:
             raise serializers.ValidationError(_("No fields to update."))
         return attrs
+
+
+class PatientEvaluationCreateSerializer(serializers.Serializer):
+    """
+    Patient feedback about a student (doctor), scoped to a case/session/appointment.
+    """
+    student_id = serializers.UUIDField()
+    target_type = serializers.ChoiceField(choices=EvaluationTargetType.choices)
+    case_id = serializers.UUIDField(required=False, allow_null=True)
+    session_id = serializers.UUIDField(required=False, allow_null=True)
+    appointment_id = serializers.UUIDField(required=False, allow_null=True)
+    score = serializers.IntegerField(min_value=0, max_value=100)
+    comment = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        try:
+            student = User.objects.get(id=attrs["student_id"], role__name=Role.STUDENT)
+        except User.DoesNotExist:
+            raise serializers.ValidationError({"student_id": _("Student not found.")})
+
+        target_type = attrs["target_type"]
+        case = session = appointment = None
+
+        def _reject(msg):
+            raise serializers.ValidationError(msg)
+
+        if target_type == EvaluationTargetType.CASE:
+            if not attrs.get("case_id"):
+                _reject({"case_id": _("case_id is required for target_type=case.")})
+            case = Case.objects.filter(id=attrs["case_id"]).select_related("university").first()
+            if not case:
+                _reject({"case_id": _("Case not found.")})
+        elif target_type == EvaluationTargetType.SESSION:
+            if not attrs.get("session_id"):
+                _reject({"session_id": _("session_id is required for target_type=session.")})
+            session = CaseSession.objects.select_related("case__university").filter(id=attrs["session_id"]).first()
+            if not session:
+                _reject({"session_id": _("Session not found.")})
+            case = session.case
+        elif target_type == EvaluationTargetType.APPOINTMENT:
+            if not attrs.get("appointment_id"):
+                _reject({"appointment_id": _("appointment_id is required for target_type=appointment.")})
+            appointment = Appointment.objects.select_related("case__university").filter(id=attrs["appointment_id"]).first()
+            if not appointment:
+                _reject({"appointment_id": _("Appointment not found.")})
+            case = getattr(appointment, "case", None)
+        else:
+            _reject({"target_type": _("Invalid target_type.")})
+
+        university = getattr(case, "university", None) if case else None
+        if not university:
+            university = getattr(student, "university", None)
+        if not university:
+            _reject(_("University could not be resolved for this evaluation."))
+
+        attrs["student"] = student
+        attrs["case"] = case if target_type == EvaluationTargetType.CASE else None
+        attrs["session"] = session if target_type == EvaluationTargetType.SESSION else None
+        attrs["appointment"] = appointment if target_type == EvaluationTargetType.APPOINTMENT else None
+        attrs["university"] = university
+        return attrs

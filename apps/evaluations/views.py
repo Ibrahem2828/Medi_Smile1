@@ -12,6 +12,7 @@ from .serializers import (
     EvaluationSerializer,
     EvaluationCreateSerializer,
     EvaluationUpdateSerializer,
+    PatientEvaluationCreateSerializer,
 )
 from .permissions import (
     CanViewEvaluation,
@@ -21,6 +22,7 @@ from .permissions import (
 )
 from .selectors import evaluations_queryset_for_user, student_statistics
 from .services import create_evaluation, update_evaluation, submit_evaluation, finalize_evaluation
+from apps.notifications.services import notify_user
 
 
 class EvaluationViewSet(viewsets.GenericViewSet):
@@ -92,6 +94,35 @@ class EvaluationViewSet(viewsets.GenericViewSet):
         actor = resolve_request_user(request)
         evaluation = finalize_evaluation(actor=actor, evaluation=evaluation)
         return Response(EvaluationSerializer(evaluation).data, status=status.HTTP_200_OK)
+
+
+# ------------------------------------------------------------
+# Patient feedback about student/doctor
+# ------------------------------------------------------------
+class PatientEvaluationCreateView(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated]
+
+    def create(self, request):
+        actor = resolve_request_user(request)
+        if getattr(getattr(actor, "role", None), "name", None) != Role.PATIENT:
+            return Response({"detail": "Only patients can submit this evaluation."}, status=status.HTTP_403_FORBIDDEN)
+
+        ser = PatientEvaluationCreateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        data = ser.validated_data
+        evaluation = create_evaluation(actor=actor, data=data)
+
+        # Notify student (doctor) and optionally supervisor if case/supervisor linked
+        notify_user(
+            recipient=data["student"],
+            notification_type="evaluation_submitted",
+            title="تم تقديم تقييم من المريض",
+            message=f"تقييم جديد بدرجة {data['score']}",
+            target_object=evaluation,
+            payload={"evaluation_id": str(evaluation.id), "score": data["score"]},
+        )
+
+        return Response(EvaluationSerializer(evaluation).data, status=status.HTTP_201_CREATED)
 
 
 @api_view(["GET"])

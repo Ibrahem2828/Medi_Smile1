@@ -11,8 +11,8 @@ from .models import Evaluation, EvaluationStatus, EvaluationTargetType
 
 def create_evaluation(*, actor, data: dict) -> Evaluation:
     role_name = getattr(getattr(actor, "role", None), "name", None)
-    if role_name not in {Role.SUPERVISOR, Role.UNIVERSITY_ADMIN}:
-        raise PermissionDenied("Only supervisors or university admins can create evaluations.")
+    if role_name not in {Role.SUPERVISOR, Role.UNIVERSITY_ADMIN, Role.PATIENT}:
+        raise PermissionDenied("Only supervisors, university admins, or patients can create evaluations.")
 
     student: User = data["student"]
     target_type = data["target_type"]
@@ -47,10 +47,12 @@ def create_evaluation(*, actor, data: dict) -> Evaluation:
         case=case,
         session=session,
         appointment=appointment,
-        status=EvaluationStatus.DRAFT,
+        status=EvaluationStatus.DRAFT if role_name != Role.PATIENT else EvaluationStatus.FINAL,
         score=score,
         rubric=rubric,
         comment=comment,
+        submitted_at=timezone.now() if role_name == Role.PATIENT else None,
+        finalized_at=timezone.now() if role_name == Role.PATIENT else None,
     )
     return evaluation
 

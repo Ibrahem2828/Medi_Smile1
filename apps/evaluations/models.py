@@ -245,12 +245,13 @@ class Evaluation(models.Model):
         if getattr(getattr(self.student, "role", None), "name", None) != Role.STUDENT:
             raise ValidationError({"student": _("Selected user must be a student.")})
 
-        # Evaluator role check
+        # Evaluator role check (allow patient feedback)
         if getattr(getattr(self.evaluator, "role", None), "name", None) not in {
             Role.SUPERVISOR,
             Role.UNIVERSITY_ADMIN,
+            Role.PATIENT,
         }:
-            raise ValidationError({"evaluator": _("Evaluator must be supervisor or university admin.")})
+            raise ValidationError({"evaluator": _("Evaluator must be supervisor, university admin, or patient.")})
 
         # University consistency
         if self.student and self.university and getattr(self.student, "university_id", None) != self.university_id:

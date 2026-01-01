@@ -306,6 +306,8 @@ class CourseSerializer(serializers.ModelSerializer):
         program = attrs.get("program")
         supervisor = attrs.get("supervisor")
         students = attrs.get("students", [])
+        faculty = attrs.get("faculty")
+        code = attrs.get("code")
 
         if academic_year and academic_year.university_id != university.id:
             raise serializers.ValidationError(_("Academic year must belong to this university."))
@@ -321,6 +323,18 @@ class CourseSerializer(serializers.ModelSerializer):
             stu_univ = getattr(getattr(student, "studentprofile_profile", None), "university_id", None)
             if stu_univ and stu_univ != university.id:
                 raise serializers.ValidationError(_("Student must belong to this university."))
+
+        # Ensure code uniqueness per university (update-safe)
+        if university and code:
+            qs = Course.objects.filter(university=university, code__iexact=code)
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError({"code": _("Course code must be unique within the university.")})
+
+        # Auto-assign default faculty if none provided
+        if not faculty:
+            attrs["faculty"] = get_or_create_dentistry_faculty(university)
 
         return attrs
 
