@@ -19,20 +19,21 @@ def get_cases_for_user(user: User) -> QuerySet[Case]:
     """
     Return cases visible to a user based on their role.
     """
+    role_name = getattr(getattr(user, "role", None), "name", None)
 
-    if user.role == "patient":
+    if role_name == Role.PATIENT:
         return Case.objects.filter(patient=user)
 
-    if user.role == "student":
+    if role_name == Role.STUDENT:
         student_university_id = getattr(getattr(user, "studentprofile_profile", None), "university_id", None)
         return Case.objects.filter(
             Q(student=user) | Q(is_public=True, university_id=student_university_id)
         )
 
-    if user.role == "supervisor":
+    if role_name == Role.SUPERVISOR:
         return Case.objects.filter(supervisor=user)
 
-    if user.role in {"university_admin", "tech_support"}:
+    if role_name in {Role.UNIVERSITY_ADMIN, Role.TECH_SUPPORT}:
         return Case.objects.all()
 
     return Case.objects.none()
@@ -43,7 +44,7 @@ def get_active_case_for_patient(patient: User) -> Optional[Case]:
     Return the active case for a patient (if any).
     """
 
-    if patient.role != "patient":
+    if getattr(getattr(patient, "role", None), "name", None) != Role.PATIENT:
         return None
 
     return (
@@ -81,14 +82,15 @@ def get_assignment_requests_for_user(user: User) -> QuerySet[CaseAssignmentReque
     """
     Return assignment requests visible to user.
     """
+    role_name = getattr(getattr(user, "role", None), "name", None)
 
-    if user.role == "student":
+    if role_name == Role.STUDENT:
         return CaseAssignmentRequest.objects.filter(student=user)
 
-    if user.role == "supervisor":
+    if role_name == Role.SUPERVISOR:
         return CaseAssignmentRequest.objects.filter(case__supervisor=user)
 
-    if user.role in {"university_admin", "tech_support"}:
+    if role_name in {Role.UNIVERSITY_ADMIN, Role.TECH_SUPPORT}:
         return CaseAssignmentRequest.objects.all()
 
     return CaseAssignmentRequest.objects.none()
@@ -113,16 +115,18 @@ def get_sessions_for_case(case: Case, *, user: User) -> QuerySet[CaseSession]:
 
     qs = CaseSession.objects.filter(case=case)
 
-    if user.role == "student":
+    role_name = getattr(getattr(user, "role", None), "name", None)
+
+    if role_name == Role.STUDENT:
         return qs.filter(student=user)
 
-    if user.role == "supervisor":
+    if role_name == Role.SUPERVISOR:
         return qs.filter(supervisor=user)
 
-    if user.role == "patient":
+    if role_name == Role.PATIENT:
         return qs.filter(case__patient=user)
 
-    if user.role in {"university_admin", "tech_support"}:
+    if role_name in {Role.UNIVERSITY_ADMIN, Role.TECH_SUPPORT}:
         return qs
 
     return CaseSession.objects.none()

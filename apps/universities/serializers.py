@@ -287,6 +287,23 @@ class CourseSerializer(serializers.ModelSerializer):
     def get_students_emails(self, obj):
         return list(obj.students.values_list("email", flat=True))
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        university = self.context.get("university")
+        if university:
+            # Scope selectable relations to this university for safer admin UX
+            self.fields["faculty"].queryset = Faculty.objects.filter(university=university, is_active=True)
+            self.fields["academic_year"].queryset = AcademicYear.objects.filter(university=university, is_active=True)
+            self.fields["program"].queryset = AcademicProgram.objects.filter(university=university, is_active=True)
+            self.fields["supervisor"].queryset = User.objects.filter(
+                role__name=Role.SUPERVISOR,
+                supervisorprofile_profile__university=university,
+            )
+            self.fields["students"].queryset = User.objects.filter(
+                role__name=Role.STUDENT,
+                studentprofile_profile__university=university,
+            )
+
     def validate_supervisor(self, user):
         if not user:
             return user
@@ -318,11 +335,15 @@ class CourseSerializer(serializers.ModelSerializer):
             sup_univ = getattr(getattr(supervisor, "supervisorprofile_profile", None), "university_id", None)
             if sup_univ and sup_univ != university.id:
                 raise serializers.ValidationError(_("Supervisor must belong to this university."))
+            if sup_univ is None:
+                raise serializers.ValidationError(_("Supervisor must have a university profile."))
 
         for student in students:
             stu_univ = getattr(getattr(student, "studentprofile_profile", None), "university_id", None)
             if stu_univ and stu_univ != university.id:
                 raise serializers.ValidationError(_("Student must belong to this university."))
+            if stu_univ is None:
+                raise serializers.ValidationError(_("Student must have a university profile."))
 
         # Ensure code uniqueness per university (update-safe)
         if university and code:

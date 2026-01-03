@@ -7,12 +7,20 @@ from .models import SupportTicket, SupportTicketResponse
 def get_user_university_ids(user) -> set:
     """
     Collect all university IDs linked to the user.
-    Supports FK or M2M.
+    Supports profile FKs and M2M.
     """
     ids = set()
 
-    if hasattr(user, "university_id") and user.university_id:
-        ids.add(user.university_id)
+    profile_map = (
+        "studentprofile_profile",
+        "supervisorprofile_profile",
+        "universityadminprofile_profile",
+    )
+    for attr in profile_map:
+        profile = getattr(user, attr, None)
+        uni_id = getattr(profile, "university_id", None)
+        if uni_id:
+            ids.add(uni_id)
 
     if hasattr(user, "universities"):
         ids |= set(user.universities.values_list("id", flat=True))
@@ -42,8 +50,10 @@ def ticket_queryset_for_user(user):
         uni_ids = get_user_university_ids(user)
 
         return qs.filter(
-            Q(created_by__university_id__in=uni_ids) |
-            Q(created_by__universities__id__in=uni_ids)
+            Q(created_by__studentprofile_profile__university_id__in=uni_ids)
+            | Q(created_by__supervisorprofile_profile__university_id__in=uni_ids)
+            | Q(created_by__universityadminprofile_profile__university_id__in=uni_ids)
+            | Q(created_by__universities__id__in=uni_ids)
         ).distinct()
 
     # Default: ticket owner only

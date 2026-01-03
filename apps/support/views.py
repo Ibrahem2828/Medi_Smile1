@@ -53,13 +53,27 @@ class SupportPagination(PageNumberPagination):
 # ------------------------------------------------------------
 
 def _get_user_university_ids(user) -> set:
+    """
+    Collect university ids from the user's profile(s).
+    Works for student/supervisor/university admin profiles and M2M fallback.
+    """
     ids = set()
-    if getattr(user, "university_id", None):
-        ids.add(user.university_id)
+
+    profile_map = (
+        "studentprofile_profile",
+        "supervisorprofile_profile",
+        "universityadminprofile_profile",
+    )
+    for attr in profile_map:
+        profile = getattr(user, attr, None)
+        uni_id = getattr(profile, "university_id", None)
+        if uni_id:
+            ids.add(uni_id)
 
     rel = getattr(user, "universities", None)
     if rel is not None and hasattr(rel, "all"):
         ids |= set(rel.values_list("id", flat=True))
+
     return ids
 
 
@@ -76,15 +90,15 @@ def _ticket_queryset_for_user(user):
     if role_name == Role.TECH_SUPPORT:
         return qs
 
-    # University admin: tickets in his university scope (created_by's university)
+    # University admin: tickets in his university scope (created_by's university via profile)
     if role_name == Role.UNIVERSITY_ADMIN:
         uni_ids = _get_user_university_ids(user)
 
-        # Support ticket doesn't have university field -> derive from created_by
-        # supports created_by.university FK OR created_by.universities M2M
         qs = qs.filter(
-            Q(created_by__university_id__in=uni_ids) |
-            Q(created_by__universities__id__in=uni_ids)
+            Q(created_by__studentprofile_profile__university_id__in=uni_ids)
+            | Q(created_by__supervisorprofile_profile__university_id__in=uni_ids)
+            | Q(created_by__universityadminprofile_profile__university_id__in=uni_ids)
+            | Q(created_by__universities__id__in=uni_ids)
         ).distinct()
         return qs
 
