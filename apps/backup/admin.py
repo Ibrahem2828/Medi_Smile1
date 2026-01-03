@@ -1,10 +1,11 @@
 from django.contrib import admin
 from django.utils.translation import gettext_lazy as _
+from medismile.admin_mixins import BaseOptimizedAdmin
 from .models import Backup
 
 
 @admin.register(Backup)
-class BackupAdmin(admin.ModelAdmin):
+class BackupAdmin(BaseOptimizedAdmin):
     """
     لوحة إدارة النسخ الاحتياطية
     توفر عرضًا تفصيليًا لحالة كل نسخة احتياطية

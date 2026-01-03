@@ -347,6 +347,13 @@ class CaseAssignmentRequest(models.Model):
         if not self.case.is_public:
             raise ValidationError(_("This case is not open for assignment."))
 
+        # University scoping: only students from the same university can see/request
+        student_university_id = getattr(getattr(self.student, "studentprofile_profile", None), "university_id", None)
+        if student_university_id and self.case.university_id and student_university_id != self.case.university_id:
+            raise ValidationError(_("You are not eligible to request this case (different university)."))
+        if self.case.university_id and not student_university_id:
+            raise ValidationError(_("Student must be linked to a university to request this case."))
+
         if self.case.status != Case.Status.PENDING_ASSIGNMENT:
             raise ValidationError(_("Case is not accepting assignment requests."))
 

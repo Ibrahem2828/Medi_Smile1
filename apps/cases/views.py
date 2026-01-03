@@ -1,4 +1,5 @@
 # apps/cases/views.py
+from django.db import models
 from rest_framework import generics, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -12,6 +13,8 @@ from .serializers import (
     CaseSerializer,
     CaseCreateSerializer,
     CaseUpdateSerializer,
+    CaseStatusUpdateSerializer,
+    CaseAssignSupervisorSerializer,
     CaseAssignmentRequestSerializer,
     CaseSessionSerializer,
     CaseSessionCreateSerializer,
@@ -21,6 +24,8 @@ from .permissions import (
     CanCreateCase,
     CanViewCase,
     CanUpdateCase,
+    CanManageCaseStatus,
+    CanAssignSupervisor,
     CanRequestAssignment,
     CanCreateSession,
     CanReviewSession,
@@ -43,7 +48,10 @@ class CaseListCreateView(generics.ListCreateAPIView):
             return Case.objects.filter(patient=user)
 
         if user.role.name == Role.STUDENT:
-            return Case.objects.filter(student=user)
+            student_university_id = getattr(getattr(user, "studentprofile_profile", None), "university_id", None)
+            return Case.objects.filter(
+                models.Q(student=user) | models.Q(is_public=True, university_id=student_university_id)
+            )
 
         if user.role.name == Role.SUPERVISOR:
             return Case.objects.filter(supervisor=user)
@@ -74,6 +82,28 @@ class CaseDetailView(generics.RetrieveUpdateAPIView):
         if self.request.method in ("PUT", "PATCH"):
             return CaseUpdateSerializer
         return CaseSerializer
+
+
+class CaseStatusUpdateView(generics.UpdateAPIView):
+    """
+    Dedicated status transition endpoint for NEW/unassigned cases and onward.
+    """
+
+    queryset = Case.objects.all()
+    serializer_class = CaseStatusUpdateSerializer
+    permission_classes = [IsAuthenticatedAndActive, CanManageCaseStatus]
+    http_method_names = ["patch"]
+
+
+class CaseAssignSupervisorView(generics.UpdateAPIView):
+    """
+    Assign a supervisor to a case and scope it to that supervisor's university.
+    """
+
+    queryset = Case.objects.all()
+    serializer_class = CaseAssignSupervisorSerializer
+    permission_classes = [IsAuthenticatedAndActive, CanAssignSupervisor]
+    http_method_names = ["patch"]
 
 
 # ============================================================

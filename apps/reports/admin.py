@@ -2,11 +2,13 @@
 from django.contrib import admin
 from django.utils.translation import gettext_lazy as _
 
+from medismile.admin_mixins import BaseOptimizedAdmin
+
 from .models import Report
 
 
 @admin.register(Report)
-class ReportAdmin(admin.ModelAdmin):
+class ReportAdmin(BaseOptimizedAdmin):
     """
     Admin configuration for Reports.
 

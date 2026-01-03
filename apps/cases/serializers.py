@@ -344,3 +344,136 @@ class CaseUpdateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(_("University is required for public/assignment cases."))
 
         return attrs
+
+
+# ============================================================
+# Case Status Update (Dedicated path for state transitions)
+# ============================================================
+class CaseStatusUpdateSerializer(serializers.ModelSerializer):
+    """
+    Update case status (and optionally attach university before routing).
+
+    - Allows moving NEW -> PENDING_ASSIGNMENT (requires university)
+    - Supervisors can move their assigned cases along allowed transitions
+    - Tech Support / University Admin (same university) can manage unassigned cases
+    """
+
+    class Meta:
+        model = Case
+        fields = ("status", "university")
+        extra_kwargs = {
+            "university": {"required": False, "allow_null": True},
+        }
+
+    def validate(self, attrs):
+        case: Case = self.instance
+        target_status = attrs.get("status", case.status)
+        target_university = attrs.get("university", case.university)
+
+        if case.status == Case.Status.CLOSED:
+            raise serializers.ValidationError(_("Closed cases cannot be modified."))
+
+        if target_status != case.status:
+            allowed = Case.ALLOWED_TRANSITIONS.get(case.status, set())
+            if target_status not in allowed:
+                raise serializers.ValidationError(
+                    {"status": _("Invalid status transition from %(from)s to %(to)s.") % {"from": case.status, "to": target_status}}
+                )
+
+        if target_status == Case.Status.PENDING_ASSIGNMENT and not target_university:
+            raise serializers.ValidationError({"university": _("University is required to move to pending assignment.")})
+
+        return attrs
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        request = self.context.get("request")
+        user = resolve_request_user(request)
+
+        previous_status = instance.status
+        instance.status = validated_data.get("status", instance.status)
+
+        if "university" in validated_data:
+            instance.university = validated_data.get("university")
+
+        instance.save()
+
+        CaseHistory.objects.create(
+            case=instance,
+            action=CaseHistory.Action.STATUS_CHANGED,
+            description=_("Status changed from %(from)s to %(to)s.") % {"from": previous_status, "to": instance.status},
+            performed_by=user,
+        )
+
+        return instance
+
+
+# ============================================================
+# Assign Supervisor (scopes case to supervisor's university)
+# ============================================================
+class CaseAssignSupervisorSerializer(serializers.ModelSerializer):
+    supervisor_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
+
+    class Meta:
+        model = Case
+        fields = ("supervisor_id",)
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        user = resolve_request_user(request)
+        case: Case = self.instance
+
+        if case.status == Case.Status.CLOSED:
+            raise serializers.ValidationError(_("Closed cases cannot be modified."))
+
+        # pick supervisor: requester if supervisor, else provided
+        supervisor = user if getattr(user, "role", None) and user.role.name == Role.SUPERVISOR else None
+        supervisor_id = attrs.get("supervisor_id")
+
+        if not supervisor:
+            if not supervisor_id:
+                raise serializers.ValidationError({"supervisor_id": _("Supervisor is required.")})
+            supervisor = User.objects.filter(id=supervisor_id, role__name=Role.SUPERVISOR).first()
+
+        if not supervisor:
+            raise serializers.ValidationError({"supervisor_id": _("Valid supervisor not found.")})
+
+        # ensure supervisor has university
+        supervisor_university_id = getattr(getattr(supervisor, "supervisorprofile_profile", None), "university_id", None)
+        if not supervisor_university_id:
+            raise serializers.ValidationError(_("Supervisor must be linked to a university."))
+
+        # cannot override another supervisor
+        if case.supervisor_id and case.supervisor_id != supervisor.id:
+            raise serializers.ValidationError(_("Case already assigned to another supervisor."))
+
+        attrs["resolved_supervisor"] = supervisor
+        attrs["resolved_supervisor_university_id"] = supervisor_university_id
+        return attrs
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        request = self.context.get("request")
+        user = resolve_request_user(request)
+
+        supervisor = validated_data["resolved_supervisor"]
+        supervisor_university_id = validated_data["resolved_supervisor_university_id"]
+
+        instance.supervisor = supervisor
+        instance.university_id = supervisor_university_id
+        instance.student = None  # reset student (open for assignment)
+        instance.is_public = True  # open only to students of this university (enforced by selectors/validators)
+        instance.status = Case.Status.PENDING_ASSIGNMENT
+        instance.save()
+
+        CaseHistory.objects.create(
+            case=instance,
+            action=CaseHistory.Action.STATUS_CHANGED,
+            description=_("Supervisor %(sup)s scoped case to university %(univ)s.") % {
+                "sup": supervisor.email,
+                "univ": supervisor_university_id,
+            },
+            performed_by=user,
+        )
+
+        return instance

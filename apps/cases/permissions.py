@@ -111,6 +111,65 @@ class CanUpdateCase(BasePermission):
         return False
 
 
+class CanManageCaseStatus(BasePermission):
+    """
+    State transitions (including NEW/unassigned):
+    - Tech Support: any case
+    - Supervisor: only his assigned case
+    - University Admin: cases in his university
+    """
+
+    def has_object_permission(self, request, view, obj: Case):
+        user = request.user
+        role_name = getattr(getattr(user, "role", None), "name", None)
+
+        if role_name == Role.TECH_SUPPORT:
+            return True
+
+        if role_name == Role.SUPERVISOR and is_case_supervisor(user, obj):
+            return True
+
+        if role_name == Role.UNIVERSITY_ADMIN:
+            if obj.university_id is None:
+                return True
+            if is_same_university(user, obj):
+                return True
+
+        return False
+
+
+class CanAssignSupervisor(BasePermission):
+    """
+    Allow assigning a supervisor to a case and scoping it to that university.
+    - Tech Support: any case
+    - University Admin: cases in his university or without university
+    - Supervisor: can claim if case has no supervisor and (no university or same university)
+    """
+
+    def has_object_permission(self, request, view, obj: Case):
+        user = request.user
+        role_name = getattr(getattr(user, "role", None), "name", None)
+
+        if role_name == Role.TECH_SUPPORT:
+            return True
+
+        if role_name == Role.UNIVERSITY_ADMIN:
+            if obj.university_id is None:
+                return True
+            return is_same_university(user, obj)
+
+        if role_name == Role.SUPERVISOR:
+            # supervisor can claim only if unclaimed and not tied to another university
+            if obj.supervisor_id and obj.supervisor_id != user.id:
+                return False
+            supervisor_univ_id = getattr(getattr(user, "supervisorprofile_profile", None), "university_id", None)
+            if obj.university_id and obj.university_id != supervisor_univ_id:
+                return False
+            return True
+
+        return False
+
+
 class CanRequestAssignment(BasePermission):
     """
     - Student can request assignment

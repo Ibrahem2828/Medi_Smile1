@@ -31,8 +31,12 @@ def assign_case(*, supervisor, case: Case, student):
     if supervisor.role.name != Role.SUPERVISOR:
         raise PermissionDenied
 
+    # lock visibility once assigned to a student
+    case.is_public = False
     case.student = student
     case.supervisor = supervisor
+    if supervisor.supervisorprofile_profile and supervisor.supervisorprofile_profile.university_id:
+        case.university_id = supervisor.supervisorprofile_profile.university_id
     case.status = Case.Status.ASSIGNED
     case.assigned_at = timezone.now()
     case.save()

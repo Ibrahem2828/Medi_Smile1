@@ -4,6 +4,8 @@ from django.urls import path
 from .views import (
     CaseListCreateView,
     CaseDetailView,
+    CaseStatusUpdateView,
+    CaseAssignSupervisorView,
     CaseAssignmentRequestCreateView,
     CaseSessionListView,
     CaseSessionCreateView,
@@ -23,6 +25,16 @@ urlpatterns = [
         "<uuid:pk>/",
         CaseDetailView.as_view(),
         name="case-detail",
+    ),
+    path(
+        "<uuid:pk>/status/",
+        CaseStatusUpdateView.as_view(),
+        name="case-status-update",
+    ),
+    path(
+        "<uuid:pk>/assign-supervisor/",
+        CaseAssignSupervisorView.as_view(),
+        name="case-assign-supervisor",
     ),
 
     # =====================================================

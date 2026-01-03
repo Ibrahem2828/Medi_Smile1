@@ -2,6 +2,8 @@
 from django.contrib import admin
 from django.utils.translation import gettext_lazy as _
 
+from medismile.admin_mixins import BaseOptimizedAdmin
+
 from .models import (
     Case,
     CaseHistory,
@@ -14,7 +16,7 @@ from .models import (
 # Case Admin
 # ============================================================
 @admin.register(Case)
-class CaseAdmin(admin.ModelAdmin):
+class CaseAdmin(BaseOptimizedAdmin):
     list_display = (
         "title",
         "patient",
@@ -82,7 +84,7 @@ class CaseAdmin(admin.ModelAdmin):
 # Case History (Read-Only Audit)
 # ============================================================
 @admin.register(CaseHistory)
-class CaseHistoryAdmin(admin.ModelAdmin):
+class CaseHistoryAdmin(BaseOptimizedAdmin):
     list_display = (
         "case",
         "action",
@@ -116,7 +118,7 @@ class CaseHistoryAdmin(admin.ModelAdmin):
 # Assignment Requests
 # ============================================================
 @admin.register(CaseAssignmentRequest)
-class CaseAssignmentRequestAdmin(admin.ModelAdmin):
+class CaseAssignmentRequestAdmin(BaseOptimizedAdmin):
     list_display = (
         "case",
         "student",
@@ -153,7 +155,7 @@ class CaseAssignmentRequestAdmin(admin.ModelAdmin):
 # Case Sessions
 # ============================================================
 @admin.register(CaseSession)
-class CaseSessionAdmin(admin.ModelAdmin):
+class CaseSessionAdmin(BaseOptimizedAdmin):
     list_display = (
         "case",
         "student",

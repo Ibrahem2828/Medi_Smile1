@@ -24,8 +24,9 @@ def get_cases_for_user(user: User) -> QuerySet[Case]:
         return Case.objects.filter(patient=user)
 
     if user.role == "student":
+        student_university_id = getattr(getattr(user, "studentprofile_profile", None), "university_id", None)
         return Case.objects.filter(
-            Q(student=user) | Q(is_public=True)
+            Q(student=user) | Q(is_public=True, university_id=student_university_id)
         )
 
     if user.role == "supervisor":
@@ -56,15 +57,20 @@ def get_active_case_for_patient(patient: User) -> Optional[Case]:
     )
 
 
-def get_public_cases() -> QuerySet[Case]:
+def get_public_cases(*, university_id: Optional[str] = None) -> QuerySet[Case]:
     """
     Return cases open for student assignment.
     """
 
-    return Case.objects.filter(
+    qs = Case.objects.filter(
         is_public=True,
         status=Case.Status.PENDING_ASSIGNMENT,
     )
+
+    if university_id:
+        qs = qs.filter(university_id=university_id)
+
+    return qs
 
 
 # ============================================================

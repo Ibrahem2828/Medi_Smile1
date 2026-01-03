@@ -1,5 +1,7 @@
 from django.contrib import admin
 
+from medismile.admin_mixins import BaseOptimizedAdmin
+
 from .models import Room, Message
 
 
@@ -8,7 +10,7 @@ from .models import Room, Message
 # ============================================================
 
 @admin.register(Room)
-class RoomAdmin(admin.ModelAdmin):
+class RoomAdmin(BaseOptimizedAdmin):
     list_display = (
         "id",
         "case",
@@ -51,7 +53,7 @@ class RoomAdmin(admin.ModelAdmin):
 # ============================================================
 
 @admin.register(Message)
-class MessageAdmin(admin.ModelAdmin):
+class MessageAdmin(BaseOptimizedAdmin):
     list_display = (
         "id",
         "room",

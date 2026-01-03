@@ -1,11 +1,12 @@
 # apps/ai/admin.py
 from django.contrib import admin
 from django.utils.translation import gettext_lazy as _
+from medismile.admin_mixins import BaseOptimizedAdmin
 from .models import AIDiagnosis
 
 
 @admin.register(AIDiagnosis)
-class AIDiagnosisAdmin(admin.ModelAdmin):
+class AIDiagnosisAdmin(BaseOptimizedAdmin):
     list_display = (
         "created_at",
         "patient",

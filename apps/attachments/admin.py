@@ -2,11 +2,13 @@
 from django.contrib import admin
 from django.utils.translation import gettext_lazy as _
 
+from medismile.admin_mixins import BaseOptimizedAdmin
+
 from .models import Attachment
 
 
 @admin.register(Attachment)
-class AttachmentAdmin(admin.ModelAdmin):
+class AttachmentAdmin(BaseOptimizedAdmin):
     """
     Attachment Admin Configuration.
 

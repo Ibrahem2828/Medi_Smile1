@@ -5,6 +5,8 @@ from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.contrib.auth.forms import UserChangeForm, UserCreationForm
 from django.utils.translation import gettext_lazy as _
 
+from medismile.admin_mixins import BaseOptimizedAdmin
+
 from .models import (
     Role,
     User,
@@ -83,7 +85,7 @@ class UserAdminCreationForm(_BaseUniversityScopedForm, UserCreationForm):
 # ROLE ADMIN
 # ============================================================
 @admin.register(Role)
-class RoleAdmin(admin.ModelAdmin):
+class RoleAdmin(BaseOptimizedAdmin):
     list_display = ("name", "description", "created_at")
     search_fields = ("name",)
     ordering = ("name",)
@@ -123,7 +125,7 @@ class TechSupportProfileInline(BaseProfileInline):
 # USER ADMIN
 # ============================================================
 @admin.register(User)
-class UserAdmin(DjangoUserAdmin):
+class UserAdmin(BaseOptimizedAdmin, DjangoUserAdmin):
     """
     Central User admin.
     Roles and profiles are managed here in a controlled way.

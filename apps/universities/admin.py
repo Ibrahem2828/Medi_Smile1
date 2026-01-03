@@ -2,6 +2,8 @@
 from django.contrib import admin
 from django.utils.translation import gettext_lazy as _
 
+from medismile.admin_mixins import BaseOptimizedAdmin
+
 from .models import (
     University,
     Faculty,
@@ -15,7 +17,7 @@ from .models import (
 # University Admin (System Level)
 # ============================================================
 @admin.register(University)
-class UniversityAdmin(admin.ModelAdmin):
+class UniversityAdmin(BaseOptimizedAdmin):
     list_display = (
         "name",
         "short_name",
@@ -64,7 +66,7 @@ class UniversityAdmin(admin.ModelAdmin):
 # Faculty Admin
 # ============================================================
 @admin.register(Faculty)
-class FacultyAdmin(admin.ModelAdmin):
+class FacultyAdmin(BaseOptimizedAdmin):
     list_display = (
         "name",
         "university",
@@ -88,7 +90,7 @@ class FacultyAdmin(admin.ModelAdmin):
 # Academic Program Admin
 # ============================================================
 @admin.register(AcademicProgram)
-class AcademicProgramAdmin(admin.ModelAdmin):
+class AcademicProgramAdmin(BaseOptimizedAdmin):
     list_display = (
         "name",
         "code",
@@ -125,7 +127,7 @@ class AcademicProgramAdmin(admin.ModelAdmin):
 # Academic Year Admin
 # ============================================================
 @admin.register(AcademicYear)
-class AcademicYearAdmin(admin.ModelAdmin):
+class AcademicYearAdmin(BaseOptimizedAdmin):
     list_display = (
         "name",
         "university",
@@ -159,7 +161,7 @@ class AcademicYearAdmin(admin.ModelAdmin):
 # Course Admin
 # ============================================================
 @admin.register(Course)
-class CourseAdmin(admin.ModelAdmin):
+class CourseAdmin(BaseOptimizedAdmin):
     list_display = (
         "name",
         "code",

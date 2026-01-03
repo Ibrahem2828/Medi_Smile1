@@ -2,11 +2,13 @@
 from django.contrib import admin
 from django.utils.translation import gettext_lazy as _
 
+from medismile.admin_mixins import BaseOptimizedAdmin
+
 from .models import AuditLog
 
 
 @admin.register(AuditLog)
-class AuditLogAdmin(admin.ModelAdmin):
+class AuditLogAdmin(BaseOptimizedAdmin):
     list_display = (
         "created_at",
         "user",

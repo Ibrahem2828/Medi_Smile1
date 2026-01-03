@@ -1,6 +1,8 @@
 from django.contrib import admin
 from django.utils.translation import gettext_lazy as _
 
+from medismile.admin_mixins import BaseOptimizedAdmin
+
 from .models import SupportTicket, SupportTicketResponse
 
 
@@ -34,7 +36,7 @@ class SupportTicketResponseInline(admin.TabularInline):
 # ============================================================
 
 @admin.register(SupportTicket)
-class SupportTicketAdmin(admin.ModelAdmin):
+class SupportTicketAdmin(BaseOptimizedAdmin):
     list_display = (
         "subject",
         "created_by",
@@ -106,7 +108,7 @@ class SupportTicketAdmin(admin.ModelAdmin):
 # ============================================================
 
 @admin.register(SupportTicketResponse)
-class SupportTicketResponseAdmin(admin.ModelAdmin):
+class SupportTicketResponseAdmin(BaseOptimizedAdmin):
     list_display = (
         "id",
         "ticket",
