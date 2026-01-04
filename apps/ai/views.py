@@ -42,7 +42,7 @@ def create_ai_diagnosis(request):
     serializer = AIDiagnosisRequestSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
 
-    diagnosis = request_ai_diagnosis(
+    diagnosis, suggestions = request_ai_diagnosis(
         actor=request.user,
         symptoms_text=serializer.validated_data["symptoms_text"],
         patient_id=serializer.validated_data.get("patient_id"),
@@ -50,7 +50,12 @@ def create_ai_diagnosis(request):
     )
 
     return Response(
-        {"diagnosis": AIDiagnosisSerializer(diagnosis).data},
+        {
+            "diagnosis": AIDiagnosisSerializer(diagnosis).data,
+            "primary_suggestion": suggestions.get("primary_suggestion"),
+            "next_suggestion": suggestions.get("next_suggestion"),
+            "all_suggestions": suggestions.get("all_suggestions"),
+        },
         status=status.HTTP_201_CREATED,
     )
 

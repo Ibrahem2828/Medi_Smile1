@@ -124,6 +124,19 @@ class Case(models.Model):
         help_text=_("If true, students can request assignment."),
     )
 
+    # AI metadata (critical AI-created cases)
+    is_ai_critical = models.BooleanField(
+        default=False,
+        verbose_name=_("AI Critical Case"),
+        help_text=_("Set when created from AI with high severity/urgency."),
+    )
+    ai_metadata = models.JSONField(
+        null=True,
+        blank=True,
+        verbose_name=_("AI Metadata"),
+        help_text=_("Raw AI payload (severity/diagnosis/confidence)."),
+    )
+
     # --------------------------------------------------------
     # Timestamps
     # --------------------------------------------------------
@@ -151,6 +164,10 @@ class Case(models.Model):
     # --------------------------------------------------------
     def clean(self):
         super().clean()
+
+        # AI critical cases must carry AI metadata
+        if self.is_ai_critical and not self.ai_metadata:
+            raise ValidationError(_("AI critical cases must include AI metadata."))
 
         # Role validation (FK-based)
         if self.patient and getattr(self.patient.role, "name", None) != Role.PATIENT:

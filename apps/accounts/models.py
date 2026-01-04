@@ -310,6 +310,10 @@ class UniversityAdminProfile(Profile):
             raise ValidationError(_("UniversityAdminProfile requires UNIVERSITY_ADMIN role."))
         if not self.university:
             raise ValidationError(_("University Admin must be linked to a university."))
+        if self.pk:
+            previous = UniversityAdminProfile.objects.filter(pk=self.pk).values_list("university_id", flat=True).first()
+            if previous and previous != self.university_id:
+                raise ValidationError(_("University Admin cannot switch to a different university."))
 
 
 # ============================================================

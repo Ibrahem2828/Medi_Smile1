@@ -7,6 +7,9 @@ from apps.accounts.models import User, Role
 from medismile.utils.auth import resolve_request_user
 
 from .models import Case, CaseHistory, CaseAssignmentRequest, CaseSession
+from .services import create_case_from_ai, assign_case
+from apps.notifications.models import Notification
+from django.contrib.contenttypes.models import ContentType
 
 
 # ============================================================
@@ -406,6 +409,152 @@ class CaseStatusUpdateSerializer(serializers.ModelSerializer):
         )
 
         return instance
+
+
+# ============================================================
+# AI-driven Case Creation (Patient acceptance)
+# ============================================================
+class CaseCreateFromAISerializer(serializers.Serializer):
+    title = serializers.CharField(required=False, allow_blank=True)
+    description = serializers.CharField(required=False, allow_blank=True)
+    university_id = serializers.UUIDField()
+    ai_report = serializers.JSONField()
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        user = resolve_request_user(request)
+        if not user or getattr(getattr(user, "role", None), "name", None) != Role.PATIENT:
+            raise serializers.ValidationError(_("Only patients can accept AI treatment and create cases."))
+
+        from apps.universities.models import University
+
+        university_id = attrs.get("university_id")
+        university = University.objects.filter(id=university_id, is_active=True).first()
+        if not university:
+            raise serializers.ValidationError({"university_id": _("Valid active university is required.")})
+
+        ai_report = attrs.get("ai_report") or {}
+        severity = ai_report.get("severity_level") or ai_report.get("severity")
+        if severity and str(severity).lower() not in {"high", "urgent"}:
+            # allow but mark non-critical if needed
+            ai_report["severity_level"] = str(severity).lower()
+        attrs["university"] = university
+        attrs["user"] = user
+        attrs["ai_report"] = ai_report
+        return attrs
+
+    def create(self, validated_data):
+        user = validated_data["user"]
+        university = validated_data["university"]
+        ai_report = validated_data["ai_report"]
+        title = validated_data.get("title") or ai_report.get("diagnosis") or "AI Critical Case"
+        description = validated_data.get("description") or ai_report.get("patient_explanation") or ""
+
+        case = create_case_from_ai(
+            patient=user,
+            university=university,
+            ai_payload=ai_report,
+            title=title,
+            description=description,
+        )
+
+        CaseHistory.objects.create(
+            case=case,
+            action=CaseHistory.Action.CREATED,
+            description=_("Case created from AI critical diagnosis."),
+            performed_by=user,
+        )
+
+        return case
+
+
+# ============================================================
+# Assignment Request Decision (Supervisor)
+# ============================================================
+class CaseAssignmentRequestDecisionSerializer(serializers.ModelSerializer):
+    decision = serializers.ChoiceField(choices=["accept", "reject"])
+    supervisor_response = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    class Meta:
+        model = CaseAssignmentRequest
+        fields = ("decision", "supervisor_response")
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        user = resolve_request_user(request)
+        if not user or getattr(getattr(user, "role", None), "name", None) != Role.SUPERVISOR:
+            raise serializers.ValidationError(_("Only supervisors can decide on assignment requests."))
+
+        assignment: CaseAssignmentRequest = self.instance
+        if assignment.status != CaseAssignmentRequest.Status.PENDING:
+            raise serializers.ValidationError(_("This assignment request is already processed."))
+
+        if assignment.case.supervisor_id and assignment.case.supervisor_id != user.id:
+            raise serializers.ValidationError(_("You are not the supervisor of this case."))
+
+        return attrs
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        request = self.context.get("request")
+        user = resolve_request_user(request)
+        decision = validated_data["decision"]
+        response = validated_data.get("supervisor_response")
+
+        if decision == "accept":
+            instance.status = CaseAssignmentRequest.Status.ACCEPTED
+            assign_case(supervisor=user, case=instance.case, student=instance.student)
+            instance.case.save(update_fields=["status", "student", "supervisor", "is_public"])
+
+            CaseHistory.objects.create(
+                case=instance.case,
+                action=CaseHistory.Action.ASSIGNED,
+                description=_("Case assigned to student via supervisor decision."),
+                performed_by=user,
+            )
+
+            self._notify_assignment(instance, user, accepted=True)
+
+        else:
+            instance.status = CaseAssignmentRequest.Status.REJECTED
+            self._notify_assignment(instance, user, accepted=False)
+
+        instance.supervisor_response = response
+        instance.save(update_fields=["status", "supervisor_response", "updated_at"])
+        return instance
+
+    def _notify_assignment(self, assignment: CaseAssignmentRequest, supervisor, accepted: bool):
+        from apps.notifications.models import Notification
+        ct = ContentType.objects.get_for_model(assignment.case)
+        notif_type = "case_assigned" if accepted else "case_status_changed"
+        title = "Case assigned" if accepted else "Case assignment rejected"
+        msg = (
+            f"Your request for case '{assignment.case.title}' was accepted."
+            if accepted
+            else f"Your request for case '{assignment.case.title}' was rejected."
+        )
+        recipients = [assignment.student]
+        if assignment.case.patient_id:
+            from apps.accounts.models import User
+            try:
+                recipients.append(assignment.case.patient)
+            except Exception:
+                pass
+
+        Notification.objects.bulk_create([
+            Notification(
+                sender=supervisor,
+                recipient=recipient,
+                notification_type=notif_type,
+                priority=Notification.Priority.HIGH if accepted else Notification.Priority.NORMAL,
+                title=title,
+                message=msg,
+                target_content_type=ct,
+                target_object_id=assignment.case.id,
+                payload={"assignment_request_id": str(assignment.id), "accepted": accepted},
+            )
+            for recipient in recipients
+        ])
 
 
 # ============================================================

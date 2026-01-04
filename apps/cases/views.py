@@ -15,6 +15,8 @@ from .serializers import (
     CaseUpdateSerializer,
     CaseStatusUpdateSerializer,
     CaseAssignSupervisorSerializer,
+    CaseCreateFromAISerializer,
+    CaseAssignmentRequestDecisionSerializer,
     CaseAssignmentRequestSerializer,
     CaseSessionSerializer,
     CaseSessionCreateSerializer,
@@ -106,6 +108,18 @@ class CaseAssignSupervisorView(generics.UpdateAPIView):
     http_method_names = ["patch"]
 
 
+class CaseCreateFromAIView(generics.CreateAPIView):
+    """
+    Patient accepts AI diagnosis and creates a critical case for university routing.
+    """
+
+    serializer_class = CaseCreateFromAISerializer
+    permission_classes = [IsAuthenticatedAndActive]
+
+    def perform_create(self, serializer):
+        serializer.save(context={"request": self.request})
+
+
 # ============================================================
 # Assignment Requests
 # ============================================================
@@ -115,6 +129,17 @@ class CaseAssignmentRequestCreateView(generics.CreateAPIView):
 
     def perform_create(self, serializer):
         serializer.save(student=self.request.user)
+
+
+class CaseAssignmentRequestDecisionView(generics.UpdateAPIView):
+    """
+    Supervisor accepts/rejects a student's assignment request.
+    """
+
+    queryset = CaseAssignmentRequest.objects.all()
+    serializer_class = CaseAssignmentRequestDecisionSerializer
+    permission_classes = [IsAuthenticatedAndActive]
+    http_method_names = ["patch"]
 
 
 # ============================================================

@@ -3,7 +3,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.utils.translation import gettext_lazy as _
 
 from rest_framework import generics
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, BasePermission
 from rest_framework.exceptions import PermissionDenied
 
 from .models import University, Faculty, AcademicProgram, AcademicYear, Course, get_or_create_dentistry_faculty
@@ -18,6 +18,32 @@ from .serializers import (
 )
 
 from apps.accounts.permissions import IsUniversityAdmin, IsTechSupport
+
+
+# ============================================================
+# Permissions
+# ============================================================
+
+class CanManageUniversity(BasePermission):
+    """
+    Tech Support: manage any university.
+    University Admin: manage only his own university.
+    """
+
+    def has_permission(self, request, view):
+        return bool(getattr(request.user, "is_authenticated", False))
+
+    def has_object_permission(self, request, view, obj):
+        role_name = getattr(getattr(request.user, "role", None), "name", None)
+        if role_name == "tech_support":
+            return True
+        if role_name == "university_admin":
+            try:
+                admin_univ = request.user.universityadminprofile_profile.university_id
+            except Exception:
+                return False
+            return admin_univ == obj.id
+        return False
 
 
 # ============================================================
@@ -240,3 +266,19 @@ class CourseRetrieveUpdateDeleteView(generics.RetrieveUpdateDestroyAPIView):
         ctx = super().get_serializer_context()
         ctx["university"] = get_admin_university(self.request)
         return ctx
+
+
+# ============================================================
+# University Admin Self-Update
+# ============================================================
+
+class UniversityAdminUpdateView(generics.UpdateAPIView):
+    """
+    University Admin can update ONLY his own university (profile-linked).
+    """
+
+    serializer_class = UniversityDetailSerializer
+    permission_classes = [IsAuthenticated, IsUniversityAdmin]
+
+    def get_object(self):
+        return get_admin_university(self.request)

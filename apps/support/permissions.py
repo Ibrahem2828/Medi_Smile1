@@ -3,6 +3,34 @@ from rest_framework.permissions import BasePermission
 from apps.accounts.models import Role
 
 
+def _same_university_scope(user_a, user_b) -> bool:
+    """
+    Compare university scope via profiles or M2M.
+    """
+    profile_attrs = (
+        "studentprofile_profile",
+        "supervisorprofile_profile",
+        "universityadminprofile_profile",
+    )
+
+    uni_a = set()
+    uni_b = set()
+    for attr in profile_attrs:
+        pa = getattr(user_a, attr, None)
+        pb = getattr(user_b, attr, None)
+        if pa and getattr(pa, "university_id", None):
+            uni_a.add(pa.university_id)
+        if pb and getattr(pb, "university_id", None):
+            uni_b.add(pb.university_id)
+
+    if hasattr(user_a, "universities"):
+        uni_a |= set(user_a.universities.values_list("id", flat=True))
+    if hasattr(user_b, "universities"):
+        uni_b |= set(user_b.universities.values_list("id", flat=True))
+
+    return bool(uni_a and uni_b and uni_a.intersection(uni_b))
+
+
 class IsTechSupport(BasePermission):
     """
     Allows access only to technical support users.
@@ -36,20 +64,7 @@ class IsUniversityAdminInScope(BasePermission):
         if not user.role or user.role.name != Role.UNIVERSITY_ADMIN:
             return False
 
-        # SupportTicket has no direct university field
-        ticket_owner = obj.created_by
-
-        # Case 1: FK university
-        if hasattr(ticket_owner, "university_id") and hasattr(user, "university_id"):
-            return ticket_owner.university_id == user.university_id
-
-        # Case 2: M2M universities
-        if hasattr(ticket_owner, "universities") and hasattr(user, "universities"):
-            return ticket_owner.universities.filter(
-                id__in=user.universities.values_list("id", flat=True)
-            ).exists()
-
-        return False
+        return _same_university_scope(user, obj.created_by)
 
 
 class IsOwnerOrUniversityAdminOrTech(BasePermission):
@@ -71,14 +86,6 @@ class IsOwnerOrUniversityAdminOrTech(BasePermission):
             return True
 
         if role_name == Role.UNIVERSITY_ADMIN:
-            ticket_owner = obj.created_by
-
-            if hasattr(ticket_owner, "university_id") and hasattr(user, "university_id"):
-                return ticket_owner.university_id == user.university_id
-
-            if hasattr(ticket_owner, "universities") and hasattr(user, "universities"):
-                return ticket_owner.universities.filter(
-                    id__in=user.universities.values_list("id", flat=True)
-                ).exists()
+            return _same_university_scope(user, obj.created_by)
 
         return False

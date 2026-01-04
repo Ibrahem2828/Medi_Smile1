@@ -6,7 +6,9 @@ from .views import (
     CaseDetailView,
     CaseStatusUpdateView,
     CaseAssignSupervisorView,
+    CaseCreateFromAIView,
     CaseAssignmentRequestCreateView,
+    CaseAssignmentRequestDecisionView,
     CaseSessionListView,
     CaseSessionCreateView,
     CaseSessionReviewView,
@@ -36,6 +38,11 @@ urlpatterns = [
         CaseAssignSupervisorView.as_view(),
         name="case-assign-supervisor",
     ),
+    path(
+        "ai/create/",
+        CaseCreateFromAIView.as_view(),
+        name="case-create-from-ai",
+    ),
 
     # =====================================================
     # Assignment Requests
@@ -44,6 +51,11 @@ urlpatterns = [
         "<uuid:pk>/assignment-requests/",
         CaseAssignmentRequestCreateView.as_view(),
         name="case-assignment-request-create",
+    ),
+    path(
+        "assignment-requests/<uuid:pk>/decision/",
+        CaseAssignmentRequestDecisionView.as_view(),
+        name="case-assignment-request-decision",
     ),
 
     # =====================================================

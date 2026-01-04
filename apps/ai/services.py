@@ -36,6 +36,37 @@ def _get_engine_config() -> AIEnginesConfig:
     return get_ai_engines_config()
 
 
+def _extract_suggestions(engine_payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Extract ordered suggestions from fusion output to drive patient-facing flow.
+    """
+    suggestions = []
+    # prefer explicit fusion outputs
+    if isinstance(engine_payload, dict):
+        if isinstance(engine_payload.get("fusion_results"), list):
+            suggestions = engine_payload.get("fusion_results") or []
+        elif isinstance(engine_payload.get("suspected_conditions"), list):
+            suggestions = engine_payload.get("suspected_conditions") or []
+
+    # ensure list of dicts with severity/urgency keys
+    normalized = []
+    for item in suggestions:
+        if not isinstance(item, dict):
+            continue
+        normalized.append(item)
+
+    # Primary/next logic
+    high_items = [i for i in normalized if str(i.get("severity_level", "")).lower() == "high" or str(i.get("urgency", "")).lower() == "urgent"]
+    primary = high_items[0] if high_items else (normalized[0] if normalized else None)
+    next_item = high_items[1] if len(high_items) > 1 else None
+
+    return {
+        "all_suggestions": normalized,
+        "primary_suggestion": primary,
+        "next_suggestion": next_item,
+    }
+
+
 def _build_ai_audit_hook(*, actor, case):
     def _hook(action: str, metadata: Dict[str, Any]) -> None:
         metadata = dict(metadata or {})
@@ -60,7 +91,7 @@ def request_ai_diagnosis(
     patient_id=None,
     symptoms_text: str,
     image_urls: Optional[List[str]] = None,
-) -> AIDiagnosis:
+) -> tuple[AIDiagnosis, Dict[str, Any]]:
     """
     Patient-only: create AIDiagnosis by calling external AI engine.
     Also logs audit for request/result/failure.
@@ -136,6 +167,8 @@ def request_ai_diagnosis(
         return diagnosis
 
     # Map payload safely
+    suggestions_payload = _extract_suggestions(engine_payload)
+
     diagnosis.diagnosis_label = normalize_diagnosis_label(engine_payload.get("diagnosis_label"))
     diagnosis.primary_diagnosis = engine_payload.get("primary_diagnosis")
     diagnosis.detected_findings = engine_payload.get("detected_findings")
@@ -156,6 +189,8 @@ def request_ai_diagnosis(
     merged_metadata = dict(raw_metadata or {})
     merged_metadata.setdefault("model_versions", engine_payload.get("model_versions"))
     merged_metadata.setdefault("flags", engine_payload.get("flags"))
+    if suggestions_payload.get("all_suggestions"):
+        merged_metadata["suggestions"] = suggestions_payload
     diagnosis.normalized_symptoms = (merged_metadata or {}).get("normalized_text") or diagnosis.normalized_symptoms
     diagnosis.ai_metadata = build_ai_metadata(merged_metadata)
     diagnosis.status = DiagnosisStatus.COMPLETED
@@ -182,7 +217,7 @@ def request_ai_diagnosis(
             metadata={"case_id": str(case.id), **fallback_info},
         )
 
-    return diagnosis
+    return diagnosis, suggestions_payload
 
 
 @transaction.atomic

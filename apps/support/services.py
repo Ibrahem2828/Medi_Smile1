@@ -1,9 +1,11 @@
 # apps/support/services.py
 from django.core.exceptions import PermissionDenied
 from django.utils import timezone
+from django.contrib.contenttypes.models import ContentType
 
-from apps.accounts.models import Role
+from apps.accounts.models import Role, User
 from apps.audit.services import log_audit_event
+from apps.notifications.models import Notification
 from .models import SupportTicket, SupportTicketResponse
 
 
@@ -30,6 +32,10 @@ def create_support_ticket(*, user, data: dict) -> SupportTicket:
             "status": ticket.status,
         },
     )
+
+    # Notify tech support team about new ticket
+    tech_support_users = User.objects.filter(role__name=Role.TECH_SUPPORT)
+    _notify(ticket, sender=user, recipients=tech_support_users, notif_type="system_alert", title="تذكرة دعم جديدة", message=f"تذكرة دعم من {user.email} ذات أولوية {ticket.priority}")
 
     return ticket
 
@@ -124,4 +130,66 @@ def add_ticket_response(
         },
     )
 
+    # Notify counterparty
+    _notify_ticket_response(ticket=ticket, author=user, is_internal=is_internal)
+
     return response
+
+
+# ============================================================
+# Notification helpers
+# ============================================================
+
+def _notify(ticket: SupportTicket, sender, recipients, notif_type, title, message):
+    if not recipients:
+        return
+    ct = ContentType.objects.get_for_model(ticket)
+    Notification.objects.bulk_create(
+        [
+            Notification(
+                sender=sender,
+                recipient=recipient,
+                notification_type=notif_type,
+                priority=Notification.Priority.HIGH if ticket.priority == SupportTicket.Priority.URGENT else Notification.Priority.NORMAL,
+                title=title,
+                message=message,
+                target_content_type=ct,
+                target_object_id=ticket.id,
+                payload={
+                    "ticket_id": str(ticket.id),
+                    "priority": ticket.priority,
+                    "status": ticket.status,
+                },
+            )
+            for recipient in recipients
+        ]
+    )
+
+
+def _notify_ticket_response(*, ticket: SupportTicket, author, is_internal: bool):
+    """
+    Notify the other party:
+    - If tech replies: notify ticket owner.
+    - If owner replies: notify assigned tech support (or all tech support).
+    - Skip internal notes for non-tech.
+    """
+    role_name = getattr(getattr(author, "role", None), "name", None)
+    if is_internal:
+        return
+
+    if role_name == Role.TECH_SUPPORT:
+        recipients = [ticket.created_by]
+        notif_type = "system_alert"
+        title = "رد من الدعم الفني"
+        message = f"تم الرد على تذكرتك: {ticket.subject}"
+    else:
+        # notify assigned tech support or all tech support
+        if ticket.assigned_to_id:
+            recipients = [ticket.assigned_to]
+        else:
+            recipients = User.objects.filter(role__name=Role.TECH_SUPPORT)
+        notif_type = "system_alert"
+        title = "رد جديد على تذكرة دعم"
+        message = f"هناك رد جديد على التذكرة: {ticket.subject}"
+
+    _notify(ticket, sender=author, recipients=recipients, notif_type=notif_type, title=title, message=message)

@@ -15,6 +15,7 @@ from .views import (
     AcademicYearRetrieveUpdateDeleteView,
     CourseListCreateView,
     CourseRetrieveUpdateDeleteView,
+    UniversityAdminUpdateView,
 )
 
 urlpatterns = [
@@ -26,6 +27,7 @@ urlpatterns = [
     path("<uuid:pk>/", UniversityDetailView.as_view(), name="university-detail"),
     path("<uuid:pk>/update/", UniversityUpdateView.as_view(), name="university-update"),
     path("<uuid:pk>/delete/", UniversityDeleteView.as_view(), name="university-delete"),
+    path("me/update/", UniversityAdminUpdateView.as_view(), name="university-admin-update"),
 
     # =====================================================
     # Faculties (University Admin)
