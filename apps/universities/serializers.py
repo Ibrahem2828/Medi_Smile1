@@ -332,18 +332,30 @@ class CourseSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(_("Program must belong to this university."))
 
         if supervisor:
-            sup_univ = getattr(getattr(supervisor, "supervisorprofile_profile", None), "university_id", None)
-            if sup_univ and sup_univ != university.id:
-                raise serializers.ValidationError(_("Supervisor must belong to this university."))
-            if sup_univ is None:
+            try:
+                sup_profile = supervisor.supervisorprofile_profile
+            except Exception:
+                sup_profile = None
+
+            if not sup_profile:
                 raise serializers.ValidationError(_("Supervisor must have a university profile."))
 
+            sup_univ = getattr(sup_profile, "university_id", None)
+            if sup_univ and sup_univ != university.id:
+                raise serializers.ValidationError(_("Supervisor must belong to this university."))
+
         for student in students:
-            stu_univ = getattr(getattr(student, "studentprofile_profile", None), "university_id", None)
+            try:
+                stu_profile = student.studentprofile_profile
+            except Exception:
+                stu_profile = None
+
+            if not stu_profile:
+                raise serializers.ValidationError(_("Student must have a university profile."))
+
+            stu_univ = getattr(stu_profile, "university_id", None)
             if stu_univ and stu_univ != university.id:
                 raise serializers.ValidationError(_("Student must belong to this university."))
-            if stu_univ is None:
-                raise serializers.ValidationError(_("Student must have a university profile."))
 
         # Ensure code uniqueness per university (update-safe)
         if university and code:
