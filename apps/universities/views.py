@@ -57,7 +57,8 @@ def get_admin_university(request):
     """
     try:
         profile = request.user.universityadminprofile_profile
-    except ObjectDoesNotExist:
+    except (AttributeError, ObjectDoesNotExist):
+        # When a university_admin user lacks a linked profile, surface a clear 403 instead of crashing.
         raise PermissionDenied(_("University Admin profile not found."))
 
     if not profile.university:

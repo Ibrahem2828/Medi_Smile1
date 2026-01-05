@@ -318,7 +318,11 @@ class CourseSerializer(serializers.ModelSerializer):
         return students
 
     def validate(self, attrs):
-        university = self.context.get("university")
+        # Course creation/update must always be scoped to a university (provided via context).
+        university = self.context.get("university") or attrs.get("university")
+        if not university:
+            raise serializers.ValidationError(_("University context is required to create or update a course."))
+
         academic_year = attrs.get("academic_year")
         program = attrs.get("program")
         supervisor = attrs.get("supervisor")
