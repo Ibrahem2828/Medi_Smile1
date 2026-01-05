@@ -1,4 +1,5 @@
 # apps/universities/serializers.py
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 from django.utils.translation import gettext_lazy as _
 
@@ -361,6 +362,9 @@ class CourseSerializer(serializers.ModelSerializer):
             if stu_univ and stu_univ != university.id:
                 raise serializers.ValidationError(_("Student must belong to this university."))
 
+        if faculty and faculty.university_id != university.id:
+            raise serializers.ValidationError(_("Faculty must belong to this university."))
+
         # Ensure code uniqueness per university (update-safe)
         if university and code:
             qs = Course.objects.filter(university=university, code__iexact=code)
@@ -381,14 +385,23 @@ class CourseSerializer(serializers.ModelSerializer):
         # Auto-assign default dentistry faculty
         if not validated_data.get("faculty"):
             validated_data["faculty"] = get_or_create_dentistry_faculty(university)
-        course = Course.objects.create(university=university, **validated_data)
+        try:
+            course = Course.objects.create(university=university, **validated_data)
+        except DjangoValidationError as exc:
+            # Surface model-level validation as serializer ValidationError (400 instead of 500)
+            details = getattr(exc, "message_dict", None) or getattr(exc, "messages", None) or str(exc)
+            raise serializers.ValidationError(details)
         if students:
             course.students.set(students)
         return course
 
     def update(self, instance, validated_data):
         students = validated_data.pop("students", None)
-        result = super().update(instance, validated_data)
+        try:
+            result = super().update(instance, validated_data)
+        except DjangoValidationError as exc:
+            details = getattr(exc, "message_dict", None) or getattr(exc, "messages", None) or str(exc)
+            raise serializers.ValidationError(details)
         if students is not None:
             result.students.set(students)
         return result
