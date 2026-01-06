@@ -5,6 +5,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils.translation import gettext_lazy as _
 
 from rest_framework import generics, serializers
+from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, BasePermission
 from rest_framework.exceptions import PermissionDenied
 
@@ -307,6 +308,12 @@ class StudentUniversitySelectionView(generics.GenericAPIView):
     serializer_class = PatientUniversitySelectionSerializer
     permission_classes = [IsAuthenticated]
 
+    def _error_response(self, *, message, errors=None, status_code=status.HTTP_400_BAD_REQUEST):
+        return Response(
+            {"status": "error", "message": message, "errors": errors},
+            status=status_code,
+        )
+
     def _ensure_patient(self, user):
         if getattr(getattr(user, "role", None), "name", None) != Role.PATIENT:
             raise PermissionDenied(_("Only patients can select a university."))
@@ -328,33 +335,29 @@ class StudentUniversitySelectionView(generics.GenericAPIView):
             return Response({"status": "success", "message": _("University retrieved."), "data": data})
         except DatabaseError as exc:
             logger.exception("Patient university GET db error", exc_info=exc)
-            return Response(
-                {
-                    "status": "error",
-                    "message": _("Database schema error. Please run migrations."),
-                    "errors": str(exc),
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self._error_response(
+                message="Database schema error. Please run migrations.",
+                errors=str(exc) or repr(exc),
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
         except PermissionDenied as exc:
-            return Response(
-                {"status": "error", "message": str(exc), "errors": {"detail": str(exc)}},
-                status=status.HTTP_403_FORBIDDEN,
+            return self._error_response(
+                message=str(exc),
+                errors={"detail": str(exc)},
+                status_code=status.HTTP_403_FORBIDDEN,
             )
         except (DjangoValidationError, serializers.ValidationError) as exc:
-            return Response(
-                {"status": "error", "message": "Invalid request.", "errors": getattr(exc, "message_dict", None) or getattr(exc, "detail", str(exc))},
-                status=status.HTTP_400_BAD_REQUEST,
+            return self._error_response(
+                message="Invalid request.",
+                errors=getattr(exc, "message_dict", None) or getattr(exc, "detail", str(exc)),
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
         except Exception as exc:
             logger.exception("Patient university GET failed", exc_info=exc)
-            return Response(
-                {
-                    "status": "error",
-                    "message": "Unexpected error. See errors for details.",
-                    "errors": str(exc),
-                },
-                status=status.HTTP_400_BAD_REQUEST,
+            return self._error_response(
+                message="Unexpected error. See errors for details.",
+                errors=str(exc) or repr(exc),
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
     def post(self, request):
@@ -362,6 +365,13 @@ class StudentUniversitySelectionView(generics.GenericAPIView):
             user = request.user
             self._ensure_patient(user)
             profile, _ = PatientProfile.objects.get_or_create(user=user)
+
+            if "university" not in request.data:
+                return self._error_response(
+                    message="Invalid request.",
+                    errors={"university": "This field is required."},
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
 
             serializer = self.get_serializer(profile, data=request.data)
             serializer.is_valid(raise_exception=True)
@@ -380,31 +390,27 @@ class StudentUniversitySelectionView(generics.GenericAPIView):
             )
         except DatabaseError as exc:
             logger.exception("Patient university POST db error", exc_info=exc)
-            return Response(
-                {
-                    "status": "error",
-                    "message": _("Database schema error. Please run migrations."),
-                    "errors": str(exc),
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self._error_response(
+                message="Database schema error. Please run migrations.",
+                errors=str(exc) or repr(exc),
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
         except PermissionDenied as exc:
-            return Response(
-                {"status": "error", "message": str(exc), "errors": {"detail": str(exc)}},
-                status=status.HTTP_403_FORBIDDEN,
+            return self._error_response(
+                message=str(exc),
+                errors={"detail": str(exc)},
+                status_code=status.HTTP_403_FORBIDDEN,
             )
         except (DjangoValidationError, serializers.ValidationError) as exc:
-            return Response(
-                {"status": "error", "message": "Invalid request.", "errors": getattr(exc, "message_dict", None) or getattr(exc, "detail", str(exc))},
-                status=status.HTTP_400_BAD_REQUEST,
+            return self._error_response(
+                message="Invalid request.",
+                errors=getattr(exc, "message_dict", None) or getattr(exc, "detail", str(exc)),
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
         except Exception as exc:
             logger.exception("Patient university POST failed", exc_info=exc)
-            return Response(
-                {
-                    "status": "error",
-                    "message": "Unexpected error. See errors for details.",
-                    "errors": str(exc),
-                },
-                status=status.HTTP_400_BAD_REQUEST,
+            return self._error_response(
+                message="Unexpected error. See errors for details.",
+                errors=str(exc) or repr(exc),
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
