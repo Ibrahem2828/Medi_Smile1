@@ -46,11 +46,16 @@ class UserBasicSerializer(serializers.ModelSerializer):
 
 class SupportTicketResponseSerializer(serializers.ModelSerializer):
     author = UserBasicSerializer(read_only=True)
+    updated_at = serializers.SerializerMethodField()
 
     class Meta:
         model = SupportTicketResponse
-        fields = ("id", "author", "message", "is_internal", "created_at")
+        fields = ("id", "author", "message", "is_internal", "created_at", "updated_at")
         read_only_fields = fields
+
+    def get_updated_at(self, obj):
+        # Model lacks updated_at; expose created_at for compatibility
+        return getattr(obj, "created_at", None)
 
 
 class SupportTicketResponseCreateSerializer(serializers.ModelSerializer):

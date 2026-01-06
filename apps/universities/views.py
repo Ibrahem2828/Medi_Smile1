@@ -326,6 +326,16 @@ class StudentUniversitySelectionView(generics.GenericAPIView):
                 )
             data = self.get_serializer(profile).data
             return Response({"status": "success", "message": _("University retrieved."), "data": data})
+        except DatabaseError as exc:
+            logger.exception("Patient university GET db error", exc_info=exc)
+            return Response(
+                {
+                    "status": "error",
+                    "message": _("Database schema error. Please run migrations."),
+                    "errors": str(exc),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
         except PermissionDenied as exc:
             return Response(
                 {"status": "error", "message": str(exc), "errors": {"detail": str(exc)}},
@@ -367,6 +377,16 @@ class StudentUniversitySelectionView(generics.GenericAPIView):
                     "data": self.get_serializer(profile).data,
                 },
                 status=status.HTTP_200_OK,
+            )
+        except DatabaseError as exc:
+            logger.exception("Patient university POST db error", exc_info=exc)
+            return Response(
+                {
+                    "status": "error",
+                    "message": _("Database schema error. Please run migrations."),
+                    "errors": str(exc),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
         except PermissionDenied as exc:
             return Response(
