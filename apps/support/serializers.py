@@ -49,7 +49,7 @@ class SupportTicketResponseSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SupportTicketResponse
-        fields = ("id", "author", "message", "is_internal", "created_at", "updated_at")
+        fields = ("id", "author", "message", "is_internal", "created_at")
         read_only_fields = fields
 
 

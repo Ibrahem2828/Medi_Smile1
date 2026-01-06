@@ -364,6 +364,28 @@ class UniversityAdminMeView(_BaseMeView):
         )
 
 
+# ============================================================
+# Tech Support: Manage University Admins (CRUD)
+# ============================================================
+
+class TechSupportUniversityAdminDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    Tech Support can retrieve/update/delete a University Admin.
+    """
+
+    queryset = UniversityAdminProfile.objects.select_related("user", "university")
+    serializer_class = UniversityAdminProfileSerializer
+    permission_classes = [IsAuthenticatedAndActive, IsTechSupport]
+    lookup_field = "user_id"
+
+    def perform_destroy(self, instance):
+        # Soft-delete the user (deactivate) to preserve history
+        user = instance.user
+        user.is_active = False
+        user.save(update_fields=["is_active", "updated_at"])
+        instance.delete()
+
+
 class TechSupportMeView(_BaseMeView):
     serializer_class = TechSupportProfileSerializer
 

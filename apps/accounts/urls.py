@@ -34,6 +34,7 @@ from .views import (
     UniversityAdminMeView,
     TechSupportMeView,
     FCMTokenView,
+    TechSupportUniversityAdminDetailView,
 )
 
 urlpatterns = [
@@ -130,4 +131,13 @@ urlpatterns = [
     ),
     path("me/tech-support/", TechSupportMeView.as_view(), name="me-tech-support"),
     path("me/token/", FCMTokenView.as_view(), name="me-fcm-token"),
+
+    # =====================================================
+    # Tech Support manages University Admins
+    # =====================================================
+    path(
+        "tech-support/university-admins/<uuid:user_id>/",
+        TechSupportUniversityAdminDetailView.as_view(),
+        name="ts-university-admin-detail",
+    ),
 ]
