@@ -11,7 +11,7 @@ from .models import (
     Course,
     get_or_create_dentistry_faculty,
 )
-from apps.accounts.models import Role, User, StudentProfile
+from apps.accounts.models import Role, User, StudentProfile, PatientProfile
 
 
 # ============================================================
@@ -475,6 +475,19 @@ class StudentUniversitySelectionSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = StudentProfile
+        fields = ("university", "university_name")
+
+    def validate_university(self, university):
+        if not university.is_active:
+            raise serializers.ValidationError(_("Selected university is inactive."))
+        return university
+
+
+class PatientUniversitySelectionSerializer(serializers.ModelSerializer):
+    university_name = serializers.CharField(source="university.name", read_only=True)
+
+    class Meta:
+        model = PatientProfile
         fields = ("university", "university_name")
 
     def validate_university(self, university):

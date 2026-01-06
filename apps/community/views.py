@@ -1,5 +1,6 @@
 # apps/community/views.py
-from rest_framework import status, viewsets
+import logging
+from rest_framework import status, viewsets, serializers as drf_serializers
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -37,6 +38,8 @@ from .serializers import (
     StudentPublicRatingSerializer,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class ContentViewSet(viewsets.GenericViewSet):
     permission_classes = [IsAuthenticated]
@@ -73,21 +76,48 @@ class ContentViewSet(viewsets.GenericViewSet):
     # ---------------------------------------------------------
 
     def list(self, request):
-        qs = self.get_queryset()
-        return Response(ContentSerializer(qs, many=True).data)
+        try:
+            qs = self.get_queryset()
+            return Response({"status": "success", "data": ContentSerializer(qs, many=True).data})
+        except Exception as exc:
+            logger.exception("Community list failed", exc_info=exc)
+            return Response(
+                {"status": "error", "message": "حدث خطأ غير متوقع. يرجى المحاولة لاحقًا.", "errors": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     def retrieve(self, request, pk=None):
-        content = self.get_object()
-        self.check_object_permissions(request, content)
-        return Response(ContentSerializer(content).data)
+        try:
+            content = self.get_object()
+            self.check_object_permissions(request, content)
+            return Response({"status": "success", "data": ContentSerializer(content).data})
+        except drf_serializers.ValidationError as exc:
+            return Response({"status": "error", "message": "Invalid request.", "errors": exc.detail}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            logger.exception("Community retrieve failed", exc_info=exc)
+            return Response(
+                {"status": "error", "message": "حدث خطأ غير متوقع. يرجى المحاولة لاحقًا.", "errors": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     def create(self, request):
-        user = resolve_request_user(request)
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        try:
+            user = resolve_request_user(request)
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
 
-        content = create_content(author=user, data=serializer.validated_data)
-        return Response(ContentSerializer(content).data, status=status.HTTP_201_CREATED)
+            content = create_content(author=user, data=serializer.validated_data)
+            return Response({"status": "success", "data": ContentSerializer(content).data}, status=status.HTTP_201_CREATED)
+        except drf_serializers.ValidationError as exc:
+            return Response({"status": "error", "message": "Invalid request.", "errors": exc.detail}, status=status.HTTP_400_BAD_REQUEST)
+        except PermissionError as exc:
+            return Response({"status": "error", "message": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+        except Exception as exc:
+            logger.exception("Community create failed", exc_info=exc)
+            return Response(
+                {"status": "error", "message": "حدث خطأ غير متوقع. يرجى المحاولة لاحقًا.", "errors": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     # ---------------------------------------------------------
     # Moderation
@@ -95,34 +125,59 @@ class ContentViewSet(viewsets.GenericViewSet):
 
     @action(detail=False, methods=["get"])
     def pending(self, request):
-        user = resolve_request_user(request)
-        qs = pending_content_for_moderator(user)
-        return Response(ContentSerializer(qs, many=True).data)
+        try:
+            user = resolve_request_user(request)
+            qs = pending_content_for_moderator(user)
+            return Response({"status": "success", "data": ContentSerializer(qs, many=True).data})
+        except Exception as exc:
+            logger.exception("Community pending failed", exc_info=exc)
+            return Response(
+                {"status": "error", "message": "حدث خطأ غير متوقع. يرجى المحاولة لاحقًا.", "errors": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):
-        content = self.get_object()
-        self.check_object_permissions(request, content)
+        try:
+            content = self.get_object()
+            self.check_object_permissions(request, content)
 
-        user = resolve_request_user(request)
-        content = approve_content(moderator=user, content=content)
-        return Response(ContentSerializer(content).data)
+            user = resolve_request_user(request)
+            content = approve_content(moderator=user, content=content)
+            return Response({"status": "success", "data": ContentSerializer(content).data})
+        except drf_serializers.ValidationError as exc:
+            return Response({"status": "error", "message": "Invalid request.", "errors": exc.detail}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            logger.exception("Community approve failed", exc_info=exc)
+            return Response(
+                {"status": "error", "message": "حدث خطأ غير متوقع. يرجى المحاولة لاحقًا.", "errors": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     @action(detail=True, methods=["post"])
     def reject(self, request, pk=None):
-        content = self.get_object()
-        self.check_object_permissions(request, content)
+        try:
+            content = self.get_object()
+            self.check_object_permissions(request, content)
 
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
 
-        user = resolve_request_user(request)
-        content = reject_content(
-            moderator=user,
-            content=content,
-            reason=serializer.validated_data["reason"],
-        )
-        return Response(ContentSerializer(content).data)
+            user = resolve_request_user(request)
+            content = reject_content(
+                moderator=user,
+                content=content,
+                reason=serializer.validated_data["reason"],
+            )
+            return Response({"status": "success", "data": ContentSerializer(content).data})
+        except drf_serializers.ValidationError as exc:
+            return Response({"status": "error", "message": "Invalid request.", "errors": exc.detail}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            logger.exception("Community reject failed", exc_info=exc)
+            return Response(
+                {"status": "error", "message": "حدث خطأ غير متوقع. يرجى المحاولة لاحقًا.", "errors": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     # ---------------------------------------------------------
     # Interactions
@@ -130,26 +185,44 @@ class ContentViewSet(viewsets.GenericViewSet):
 
     @action(detail=True, methods=["post"])
     def like(self, request, pk=None):
-        content = self.get_object()
-        user = resolve_request_user(request)
+        try:
+            content = self.get_object()
+            user = resolve_request_user(request)
 
-        liked = toggle_like(user=user, content=content)
-        return Response(ToggleLikeResponseSerializer({"liked": liked}).data)
+            liked = toggle_like(user=user, content=content)
+            return Response({"status": "success", "data": ToggleLikeResponseSerializer({"liked": liked}).data})
+        except drf_serializers.ValidationError as exc:
+            return Response({"status": "error", "message": "Invalid request.", "errors": exc.detail}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            logger.exception("Community like failed", exc_info=exc)
+            return Response(
+                {"status": "error", "message": "حدث خطأ غير متوقع. يرجى المحاولة لاحقًا.", "errors": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     @action(detail=True, methods=["post"])
     def comment(self, request, pk=None):
-        content = self.get_object()
-        user = resolve_request_user(request)
+        try:
+            content = self.get_object()
+            user = resolve_request_user(request)
 
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
 
-        comment = add_comment(
-            user=user,
-            content=content,
-            text=serializer.validated_data["text"],
-        )
-        return Response(ContentCommentSerializer(comment).data, status=status.HTTP_201_CREATED)
+            comment = add_comment(
+                user=user,
+                content=content,
+                text=serializer.validated_data["text"],
+            )
+            return Response({"status": "success", "data": ContentCommentSerializer(comment).data}, status=status.HTTP_201_CREATED)
+        except drf_serializers.ValidationError as exc:
+            return Response({"status": "error", "message": "Invalid request.", "errors": exc.detail}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            logger.exception("Community comment failed", exc_info=exc)
+            return Response(
+                {"status": "error", "message": "حدث خطأ غير متوقع. يرجى المحاولة لاحقًا.", "errors": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
 
 # ============================================================
@@ -164,5 +237,12 @@ def student_public_rating_view(request, student_id):
     except User.DoesNotExist:
         return Response({"detail": "Student not found."}, status=status.HTTP_404_NOT_FOUND)
 
-    data = student_public_rating(student)
-    return Response(StudentPublicRatingSerializer(data).data)
+    try:
+        data = student_public_rating(student)
+        return Response({"status": "success", "data": StudentPublicRatingSerializer(data).data})
+    except Exception as exc:
+        logger.exception("Student public rating failed", exc_info=exc)
+        return Response(
+            {"status": "error", "message": "حدث خطأ غير متوقع. يرجى المحاولة لاحقًا.", "errors": str(exc)},
+            status=status.HTTP_400_BAD_REQUEST,
+        )

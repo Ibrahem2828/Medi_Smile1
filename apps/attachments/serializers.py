@@ -1,4 +1,5 @@
 # apps/attachments/serializers.py
+import logging
 from rest_framework import serializers
 from django.utils.translation import gettext_lazy as _
 
@@ -8,6 +9,8 @@ from apps.accounts.models import User, Role
 from apps.appointments.models import Appointment
 from .models import Attachment
 from .storage_backends import get_storage_backend, generate_attachment_path
+
+logger = logging.getLogger(__name__)
 
 
 class AttachmentUserSerializer(serializers.ModelSerializer):
@@ -82,23 +85,34 @@ class AttachmentCreateSerializer(serializers.Serializer):
         file = validated_data["file"]
         storage = get_storage_backend()
 
-        path = generate_attachment_path(original_filename=file.name)
+        try:
+            path = generate_attachment_path(original_filename=file.name)
+            storage.save(path, file)
+        except Exception as exc:
+            logger.exception("Attachment storage save failed", exc_info=exc)
+            raise serializers.ValidationError({"file": _("Failed to save file. Please try again later.")})
 
-        storage.save(path, file)
-
-        return Attachment.objects.create(
-            appointment=validated_data["appointment"],
-            case=validated_data["case"],
-            uploaded_by=validated_data["uploaded_by"],
-            file=path,
-            original_filename=file.name,
-            file_size=file.size,
-            mime_type=file.content_type,
-            attachment_type=validated_data["attachment_type"],
-            file_category=(
-                Attachment.FileCategory.IMAGE
-                if file.content_type.startswith("image/")
-                else Attachment.FileCategory.DOCUMENT
-            ),
-        )
-    
+        try:
+            return Attachment.objects.create(
+                appointment=validated_data["appointment"],
+                case=validated_data["case"],
+                uploaded_by=validated_data["uploaded_by"],
+                file=path,
+                original_filename=file.name,
+                file_size=file.size,
+                mime_type=getattr(file, "content_type", None),
+                attachment_type=validated_data["attachment_type"],
+                file_category=(
+                    Attachment.FileCategory.IMAGE
+                    if getattr(file, "content_type", "") and file.content_type.startswith("image/")
+                    else Attachment.FileCategory.DOCUMENT
+                ),
+            )
+        except Exception as exc:
+            logger.exception("Attachment DB create failed", exc_info=exc)
+            # Attempt cleanup of saved file
+            try:
+                storage.delete(path)
+            except Exception:
+                pass
+            raise serializers.ValidationError({"detail": _("Failed to create attachment record.")})

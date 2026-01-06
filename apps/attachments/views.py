@@ -1,7 +1,9 @@
 # apps/attachments/views.py
+import logging
 from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
+from rest_framework import serializers as drf_serializers
 
 from apps.accounts.models import Role
 
@@ -16,6 +18,8 @@ from .permissions import (
     CanCreateAttachment,
     CanDeleteAttachment,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -80,6 +84,25 @@ class AttachmentListCreateView(generics.ListCreateAPIView):
     def perform_create(self, serializer):
         # DRF passes context (including request) during serializer init; avoid extra kwargs that break create().
         serializer.save()
+
+    def create(self, request, *args, **kwargs):
+        try:
+            return super().create(request, *args, **kwargs)
+        except drf_serializers.ValidationError as exc:
+            return Response(
+                {"status": "error", "message": "Invalid request.", "errors": exc.detail},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as exc:
+            logger.exception("Failed to create attachment", exc_info=exc)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "حدث خطأ غير متوقع. يرجى المحاولة لاحقًا.",
+                    "errors": str(exc),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
 
 # ============================================================

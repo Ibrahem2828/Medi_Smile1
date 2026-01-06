@@ -1,5 +1,6 @@
 # apps/community/services.py
-from django.core.exceptions import PermissionDenied
+import logging
+from django.core.exceptions import PermissionDenied, ValidationError as DjangoValidationError
 from django.utils import timezone
 
 from apps.accounts.models import Role
@@ -7,6 +8,9 @@ from apps.audit.services import log_audit_event
 from apps.notifications.audit_bridge import notify_on_audit_event
 
 from .models import Content, ContentLike, ContentComment
+from .selectors import _resolve_university_id
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -20,11 +24,21 @@ def create_content(*, author, data: dict) -> Content:
     if role_name == Role.PATIENT:
         raise PermissionDenied("Patients cannot create community content.")
 
-    content = Content.objects.create(
-        author=author,
-        university=getattr(author, "university", None),
-        **data,
-    )
+    university_id = _resolve_university_id(author)
+
+    try:
+        content = Content.objects.create(
+            author=author,
+            university_id=university_id,
+            **data,
+        )
+    except DjangoValidationError as exc:
+        detail = getattr(exc, "message_dict", None) or getattr(exc, "messages", None) or str(exc)
+        logger.warning("Community content validation failed: %s", detail)
+        raise PermissionDenied(detail)
+    except Exception as exc:
+        logger.exception("Community content create failed", exc_info=exc)
+        raise PermissionDenied("Failed to create content.")
 
     # Auto-approved content (Supervisor / Admin / Tech)
     if content.status == Content.Status.APPROVED:

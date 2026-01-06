@@ -16,10 +16,11 @@ from .serializers import (
     AcademicYearSerializer,
     CourseSerializer,
     StudentUniversitySelectionSerializer,
+    PatientUniversitySelectionSerializer,
 )
 
 from apps.accounts.permissions import IsUniversityAdmin, IsTechSupport
-from apps.accounts.models import Role, StudentProfile
+from apps.accounts.models import Role, StudentProfile, PatientProfile
 
 
 # ============================================================
@@ -293,21 +294,21 @@ class UniversityAdminUpdateView(generics.UpdateAPIView):
 
 class StudentUniversitySelectionView(generics.GenericAPIView):
     """
-    Student selects the university they belong to (or updates it).
+    Patient selects the university they belong to (or updates it).
     GET: current selection (or null if not set).
     POST: set/update selection.
     """
 
-    serializer_class = StudentUniversitySelectionSerializer
+    serializer_class = PatientUniversitySelectionSerializer
     permission_classes = [IsAuthenticated]
 
-    def _ensure_student(self, user):
-        if getattr(getattr(user, "role", None), "name", None) != Role.STUDENT:
-            raise PermissionDenied(_("Only students can select a university."))
+    def _ensure_patient(self, user):
+        if getattr(getattr(user, "role", None), "name", None) != Role.PATIENT:
+            raise PermissionDenied(_("Only patients can select a university."))
 
     def get_profile(self, user):
-        self._ensure_student(user)
-        return StudentProfile.objects.filter(user=user).select_related("university").first()
+        self._ensure_patient(user)
+        return PatientProfile.objects.filter(user=user).select_related("university").first()
 
     def get(self, request):
         user = request.user
@@ -322,8 +323,8 @@ class StudentUniversitySelectionView(generics.GenericAPIView):
 
     def post(self, request):
         user = request.user
-        self._ensure_student(user)
-        profile = StudentProfile.objects.filter(user=user).first()
+        self._ensure_patient(user)
+        profile = PatientProfile.objects.filter(user=user).first()
 
         serializer = self.get_serializer(profile, data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -333,7 +334,7 @@ class StudentUniversitySelectionView(generics.GenericAPIView):
             profile.university = university
             profile.save(update_fields=["university", "updated_at"])
         else:
-            profile = StudentProfile.objects.create(user=user, university=university)
+            profile = PatientProfile.objects.create(user=user, university=university)
 
         return Response(
             {"status": "success", "message": _("University selected successfully."), "data": self.get_serializer(profile).data},

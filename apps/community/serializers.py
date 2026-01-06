@@ -1,8 +1,11 @@
 # apps/community/serializers.py
+import logging
 from rest_framework import serializers
 from django.utils.translation import gettext_lazy as _
 
 from .models import Content, ContentComment
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -61,6 +64,9 @@ class ContentSerializer(serializers.ModelSerializer):
 # ============================================================
 
 class ContentCreateSerializer(serializers.ModelSerializer):
+    content_type = serializers.CharField()
+    category = serializers.CharField()
+
     class Meta:
         model = Content
         fields = [
@@ -76,7 +82,19 @@ class ContentCreateSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, attrs):
-        ctype = attrs.get("content_type")
+        ctype = (attrs.get("content_type") or "").strip().lower()
+        category = (attrs.get("category") or "").strip().lower()
+
+        # normalize content_type/category to valid choices; fall back to sensible defaults
+        ctype_choices = dict(Content.ContentType.choices)
+        if ctype not in ctype_choices:
+            ctype = Content.ContentType.ARTICLE
+        attrs["content_type"] = ctype
+
+        category_choices = dict(Content.Category.choices)
+        if category not in category_choices:
+            category = Content.Category.GENERAL
+        attrs["category"] = category
 
         if ctype == Content.ContentType.LINK and not attrs.get("url"):
             raise serializers.ValidationError({"url": _("URL is required for link content.")})
