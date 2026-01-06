@@ -1,5 +1,6 @@
 # apps/universities/views.py
 from django.core.exceptions import ObjectDoesNotExist
+from django.db import DatabaseError
 from django.utils.translation import gettext_lazy as _
 
 from rest_framework import generics
@@ -21,6 +22,9 @@ from .serializers import (
 
 from apps.accounts.permissions import IsUniversityAdmin, IsTechSupport
 from apps.accounts.models import Role, StudentProfile, PatientProfile
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -93,7 +97,7 @@ class UniversityCreateView(generics.CreateAPIView):
     permission_classes = [IsAuthenticated, IsTechSupport]
 
 
-class UniversityDetailView(generics.RetrieveAPIView):
+class UniversityDetailView(generics.RetrieveUpdateAPIView):
     queryset = University.objects.all()
     serializer_class = UniversityDetailSerializer
     permission_classes = [IsAuthenticated]
@@ -311,32 +315,55 @@ class StudentUniversitySelectionView(generics.GenericAPIView):
         return PatientProfile.objects.filter(user=user).select_related("university").first()
 
     def get(self, request):
-        user = request.user
-        profile = self.get_profile(user)
-        if not profile:
+        try:
+            user = request.user
+            profile = self.get_profile(user)
+            if not profile:
+                return Response(
+                    {"status": "success", "message": _("No university selected yet."), "data": None},
+                    status=status.HTTP_200_OK,
+                )
+            data = self.get_serializer(profile).data
+            return Response({"status": "success", "message": _("University retrieved."), "data": data})
+        except Exception as exc:
+            logger.exception("Patient university GET failed", exc_info=exc)
             return Response(
-                {"status": "success", "message": _("No university selected yet."), "data": None},
-                status=status.HTTP_200_OK,
+                {
+                    "status": "error",
+                    "message": _("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."),
+                    "errors": str(exc),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
-        data = self.get_serializer(profile).data
-        return Response({"status": "success", "message": _("University retrieved."), "data": data})
 
     def post(self, request):
-        user = request.user
-        self._ensure_patient(user)
-        profile = PatientProfile.objects.filter(user=user).first()
+        try:
+            user = request.user
+            self._ensure_patient(user)
+            profile, _ = PatientProfile.objects.get_or_create(user=user)
 
-        serializer = self.get_serializer(profile, data=request.data)
-        serializer.is_valid(raise_exception=True)
-        university = serializer.validated_data["university"]
+            serializer = self.get_serializer(profile, data=request.data)
+            serializer.is_valid(raise_exception=True)
+            university = serializer.validated_data["university"]
 
-        if profile:
             profile.university = university
             profile.save(update_fields=["university", "updated_at"])
-        else:
-            profile = PatientProfile.objects.create(user=user, university=university)
 
-        return Response(
-            {"status": "success", "message": _("University selected successfully."), "data": self.get_serializer(profile).data},
-            status=status.HTTP_200_OK,
-        )
+            return Response(
+                {
+                    "status": "success",
+                    "message": _("University selected successfully."),
+                    "data": self.get_serializer(profile).data,
+                },
+                status=status.HTTP_200_OK,
+            )
+        except Exception as exc:
+            logger.exception("Patient university POST failed", exc_info=exc)
+            return Response(
+                {
+                    "status": "error",
+                    "message": _("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."),
+                    "errors": str(exc),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )

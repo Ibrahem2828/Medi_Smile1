@@ -57,7 +57,9 @@ class AttachmentCreateSerializer(serializers.Serializer):
     )
 
     def validate(self, attrs):
-        request = self.context["request"]
+        request = self.context.get("request")
+        if not request:
+            raise serializers.ValidationError(_("Request context missing."))
         user = resolve_request_user(request)
 
         if not user or not getattr(getattr(user, "role", None), "name", None):

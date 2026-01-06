@@ -6,7 +6,7 @@ from django.contrib.contenttypes.models import ContentType
 from apps.audit.services import log_audit_event
 from apps.accounts.models import Role, User
 from apps.notifications.models import Notification
-from .models import Case
+from .models import Case, AIProposedCase, AIAnalysisSession
 
 
 def _notify_users_about_case(*, recipients, notification_type, title, message, case, priority=Notification.Priority.NORMAL, sender=None, payload=None):
@@ -139,4 +139,56 @@ def create_case_from_ai(*, patient: User, university, ai_payload: dict, title: s
         payload={"ai": ai_payload},
     )
 
+    return case
+
+
+# ============================================================
+# AI Proposed Case -> Case conversion
+# ============================================================
+
+def _priority_from_urgency(urgency: str):
+    urgency = (urgency or "").lower()
+    if urgency == "high":
+        return Case.Priority.HIGH
+    if urgency == "medium":
+        return Case.Priority.MEDIUM
+    if urgency == "low":
+        return Case.Priority.LOW
+    return Case.Priority.MEDIUM
+
+
+def create_case_from_proposal(*, patient: User, university_id, proposal: AIProposedCase) -> Case:
+    fusion = proposal.fusion_decision or {}
+    medical_report = proposal.medical_report or {}
+    urgency = fusion.get("urgency_level")
+
+    # title/description from fusion + report
+    title = fusion.get("final_diagnosis") or medical_report.get("summary") or "AI Proposed Case"
+    description = medical_report.get("report_text") or medical_report.get("summary") or ""
+
+    case = Case.objects.create(
+        patient=patient,
+        university_id=university_id,
+        title=title,
+        description=description,
+        priority=_priority_from_urgency(urgency),
+        status=Case.Status.NEW,
+        is_public=True,
+        is_ai_critical=True,
+        ai_metadata={
+            "fusion_decision": fusion,
+            "medical_report": medical_report,
+            "metadata": proposal.metadata,
+            "raw_proposal": proposal.raw_proposal,
+        },
+    )
+
+    log_audit_event(
+        user=patient,
+        university=case.university,
+        action="cases.case.created_from_ai_proposal",
+        description="Case created from AI proposal after patient approval",
+        content_object=case,
+        metadata={"proposal_id": proposal.proposal_id},
+    )
     return case

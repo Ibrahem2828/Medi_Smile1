@@ -6,7 +6,7 @@ from django.db import transaction
 from apps.accounts.models import User, Role
 from medismile.utils.auth import resolve_request_user
 
-from .models import Case, CaseHistory, CaseAssignmentRequest, CaseSession
+from .models import Case, CaseHistory, CaseAssignmentRequest, CaseSession, AIAnalysisSession, AIProposedCase
 from .services import create_case_from_ai, assign_case
 from apps.notifications.models import Notification
 from django.contrib.contenttypes.models import ContentType
@@ -626,3 +626,115 @@ class CaseAssignSupervisorSerializer(serializers.ModelSerializer):
         )
 
         return instance
+
+
+# ============================================================
+# AI Proposals (Fusion Output)
+# ============================================================
+
+class AIProposalSourceSerializer(serializers.Serializer):
+    vision = serializers.JSONField(required=False)
+    text = serializers.JSONField(required=False)
+
+
+class AIProposalFusionDecisionSerializer(serializers.Serializer):
+    decision_label = serializers.CharField()
+    final_diagnosis = serializers.CharField()
+    final_category = serializers.CharField()
+    confidence_level = serializers.CharField()
+    match_score = serializers.FloatField()
+    urgency_level = serializers.CharField()
+    requires_supervisor_review = serializers.BooleanField()
+    safety_flags = serializers.ListField(child=serializers.CharField(), required=False)
+    explanations = serializers.ListField(child=serializers.JSONField(), required=False)
+
+
+class AIProposalMedicalReportSerializer(serializers.Serializer):
+    summary = serializers.CharField()
+    image_findings = serializers.CharField()
+    symptom_analysis = serializers.CharField()
+    recommendation = serializers.CharField()
+    disclaimer = serializers.CharField()
+    report_version = serializers.CharField()
+    report_text = serializers.CharField()
+
+
+class AIProposalSerializer(serializers.Serializer):
+    proposal_id = serializers.CharField()
+    tooth_id = serializers.IntegerField(required=False, allow_null=True)
+    source = AIProposalSourceSerializer()
+    fusion_decision = AIProposalFusionDecisionSerializer()
+    medical_report = AIProposalMedicalReportSerializer()
+    metadata = serializers.JSONField(required=False)
+
+
+class AIProposalBatchSerializer(serializers.Serializer):
+    case_id = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    request_id = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    session_summary = serializers.JSONField(required=False)
+    proposed_cases = serializers.ListField(child=AIProposalSerializer())
+    unassigned_lesions = serializers.JSONField(required=False)
+    ui_hints = serializers.JSONField(required=False)
+    university = serializers.UUIDField(required=True)
+
+    def validate(self, attrs):
+        if not attrs.get("proposed_cases"):
+            raise serializers.ValidationError(_("No proposed cases provided."))
+        return attrs
+
+    def create(self, validated_data):
+        request = self.context.get("request")
+        patient = resolve_request_user(request)
+        if not patient or getattr(getattr(patient, "role", None), "name", None) != Role.PATIENT:
+            raise serializers.ValidationError(_("Only patients can submit AI proposals."))
+
+        session = AIAnalysisSession.objects.create(
+            patient=patient,
+            university_id=validated_data["university"],
+            case_id_external=validated_data.get("case_id"),
+            request_id=validated_data.get("request_id"),
+            session_summary=validated_data.get("session_summary"),
+            ui_hints=validated_data.get("ui_hints"),
+        )
+
+        proposals = []
+        for item in validated_data["proposed_cases"]:
+            proposals.append(
+                AIProposedCase(
+                    session=session,
+                    proposal_id=item["proposal_id"],
+                    tooth_id=item.get("tooth_id"),
+                    fusion_decision=item.get("fusion_decision"),
+                    medical_report=item.get("medical_report"),
+                    metadata=item.get("metadata"),
+                    raw_proposal=item,
+                )
+            )
+        AIProposedCase.objects.bulk_create(proposals)
+        return session
+
+
+class AIProposalDecisionSerializer(serializers.Serializer):
+    proposal_id = serializers.CharField()
+    decision = serializers.ChoiceField(choices=["accept", "reject"])
+
+
+class AIProposalNextSerializer(serializers.Serializer):
+    session_id = serializers.UUIDField()
+    proposal_id = serializers.CharField()
+    tooth_id = serializers.IntegerField(required=False, allow_null=True)
+    fusion_decision = AIProposalFusionDecisionSerializer()
+    medical_report = AIProposalMedicalReportSerializer()
+    metadata = serializers.JSONField(required=False)
+    raw_proposal = serializers.JSONField()
+
+
+# Supervisor decision on new cases
+class SupervisorCaseDecisionSerializer(serializers.Serializer):
+    decision = serializers.ChoiceField(choices=["accept", "reject"])
+    note = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+
+# Supervisor decision on assignment
+class AssignmentDecisionSerializer(serializers.Serializer):
+    decision = serializers.ChoiceField(choices=["approve", "reject"])

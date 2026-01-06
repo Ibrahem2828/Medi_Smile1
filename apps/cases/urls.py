@@ -12,6 +12,15 @@ from .views import (
     CaseSessionListView,
     CaseSessionCreateView,
     CaseSessionReviewView,
+    AIProposalIngestView,
+    AIProposalNextView,
+    AIProposalDecisionView,
+    SupervisorNewCasesView,
+    SupervisorCaseDecisionView,
+    StudentAvailableCasesView,
+    StudentRequestAssignmentView,
+    SupervisorAssignmentRequestsView,
+    SupervisorAssignmentDecisionView,
 )
 
 urlpatterns = [
@@ -75,5 +84,66 @@ urlpatterns = [
         "sessions/<uuid:pk>/review/",
         CaseSessionReviewView.as_view(),
         name="case-session-review",
+    ),
+
+    # =====================================================
+    # AI Proposals (patient review)
+    # =====================================================
+    path(
+        "ai/proposals/",
+        AIProposalIngestView.as_view(),
+        name="ai-proposal-ingest",
+    ),
+    path(
+        "ai/proposals/<uuid:session_id>/next/",
+        AIProposalNextView.as_view(),
+        name="ai-proposal-next",
+    ),
+    path(
+        "ai/proposals/<uuid:session_id>/decision/",
+        AIProposalDecisionView.as_view(),
+        name="ai-proposal-decision",
+    ),
+
+    # =====================================================
+    # Supervisor: new cases decision
+    # =====================================================
+    path(
+        "supervisor/new/",
+        SupervisorNewCasesView.as_view(),
+        name="supervisor-new-cases",
+    ),
+    path(
+        "<uuid:case_id>/supervisor-decision/",
+        SupervisorCaseDecisionView.as_view(),
+        name="supervisor-case-decision",
+    ),
+
+    # =====================================================
+    # Student: available cases & assignment
+    # =====================================================
+    path(
+        "student/available/",
+        StudentAvailableCasesView.as_view(),
+        name="student-available-cases",
+    ),
+    path(
+        "<uuid:case_id>/request-assignment/",
+        StudentRequestAssignmentView.as_view(),
+        name="student-request-assignment",
+    ),
+
+    # =====================================================
+    # Supervisor: assignment decisions
+    # =====================================================
+    path(
+        "supervisor/assignment-requests/",
+        SupervisorAssignmentRequestsView.as_view(),
+        name="supervisor-assignment-requests",
+    ),
+    path(
+        "<uuid:case_id>/assignment-decision/",
+        SupervisorAssignmentDecisionView.as_view(),
+        name="supervisor-assignment-decision",
     ),
 ]

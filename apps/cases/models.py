@@ -25,7 +25,10 @@ class Case(models.Model):
     # --------------------------------------------------------
     class Status(models.TextChoices):
         NEW = "new", _("New (Initial Diagnosis)")
-        PENDING_ASSIGNMENT = "pending_assignment", _("Pending Assignment")
+        PENDING_ASSIGNMENT = "pending_assignment", _("Pending Assignment")  # legacy
+        ACCEPTED = "accepted", _("Accepted by Supervisor")
+        REJECTED = "rejected", _("Rejected by Supervisor")
+        NEEDS_ASSIGNMENT_APPROVAL = "needs_assignment_approval", _("Needs Assignment Approval")
         ASSIGNED = "assigned", _("Assigned to Student")
         IN_PROGRESS = "in_progress", _("In Progress")
         COMPLETED = "completed", _("Completed")
@@ -40,12 +43,16 @@ class Case(models.Model):
     ACTIVE_STATUSES = {
         Status.NEW,
         Status.PENDING_ASSIGNMENT,
+        Status.ACCEPTED,
+        Status.NEEDS_ASSIGNMENT_APPROVAL,
         Status.ASSIGNED,
         Status.IN_PROGRESS,
     }
 
     ALLOWED_TRANSITIONS = {
-        Status.NEW: {Status.PENDING_ASSIGNMENT},
+        Status.NEW: {Status.ACCEPTED, Status.REJECTED},
+        Status.ACCEPTED: {Status.NEEDS_ASSIGNMENT_APPROVAL, Status.REJECTED},
+        Status.NEEDS_ASSIGNMENT_APPROVAL: {Status.ACCEPTED, Status.ASSIGNED},
         Status.PENDING_ASSIGNMENT: {Status.ASSIGNED},
         Status.ASSIGNED: {Status.IN_PROGRESS},
         Status.IN_PROGRESS: {Status.COMPLETED},
@@ -192,7 +199,7 @@ class Case(models.Model):
                 raise ValidationError(_("This patient already has an active case."))
 
         # If case is public / pending assignment, university must be set
-        if self.is_public or self.status == self.Status.PENDING_ASSIGNMENT:
+        if self.is_public or self.status in {self.Status.PENDING_ASSIGNMENT, self.Status.ACCEPTED, self.Status.NEEDS_ASSIGNMENT_APPROVAL}:
             if not self.university_id:
                 raise ValidationError(_("University is required for public/assignment cases."))
 
@@ -335,6 +342,16 @@ class CaseAssignmentRequest(models.Model):
         verbose_name=_("Status"),
     )
 
+    # Track the student who requested assignment for quick access on the Case
+    def apply_to_case(self):
+        """
+        Helper to set case state when request created.
+        """
+        if self.case.status == Case.Status.ACCEPTED:
+            self.case.status = Case.Status.NEEDS_ASSIGNMENT_APPROVAL
+            self.case.is_public = False
+            self.case.save(update_fields=["status", "is_public", "updated_at"])
+
     supervisor_response = models.TextField(
         blank=True, null=True, verbose_name=_("Supervisor Response")
     )
@@ -361,9 +378,6 @@ class CaseAssignmentRequest(models.Model):
         if getattr(self.student.role, "name", None) != Role.STUDENT:
             raise ValidationError(_("Only students can request case assignment."))
 
-        if not self.case.is_public:
-            raise ValidationError(_("This case is not open for assignment."))
-
         # University scoping: only students from the same university can see/request
         student_university_id = getattr(getattr(self.student, "studentprofile_profile", None), "university_id", None)
         if student_university_id and self.case.university_id and student_university_id != self.case.university_id:
@@ -371,7 +385,8 @@ class CaseAssignmentRequest(models.Model):
         if self.case.university_id and not student_university_id:
             raise ValidationError(_("Student must be linked to a university to request this case."))
 
-        if self.case.status != Case.Status.PENDING_ASSIGNMENT:
+        # Allowed states for requesting assignment
+        if self.case.status not in {Case.Status.ACCEPTED, Case.Status.NEEDS_ASSIGNMENT_APPROVAL}:
             raise ValidationError(_("Case is not accepting assignment requests."))
 
         if not self.case.university_id:
@@ -488,3 +503,85 @@ class CaseSession(models.Model):
 
     def __str__(self):
         return f"Session {self.id} - {self.case_id}"
+
+
+# ============================================================
+# AI Analysis Session / Proposed Cases (pre-patient approval)
+# ============================================================
+
+
+class AIAnalysisSession(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    patient = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="ai_sessions",
+    )
+    university = models.ForeignKey(
+        University,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="ai_sessions",
+    )
+    case_id_external = models.CharField(max_length=255, blank=True, null=True)
+    request_id = models.CharField(max_length=255, blank=True, null=True)
+    session_summary = models.JSONField(blank=True, null=True)
+    ui_hints = models.JSONField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "ai_analysis_sessions"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"AI Session {self.id}"
+
+
+class AIProposedCase(models.Model):
+    class Status(models.TextChoices):
+        PENDING_PATIENT = "pending_patient", _("Pending Patient Decision")
+        REJECTED_BY_PATIENT = "rejected_by_patient", _("Rejected by Patient")
+        APPROVED_BY_PATIENT = "approved_by_patient", _("Approved by Patient")
+        REJECTED_BY_SUPERVISOR = "rejected_by_supervisor", _("Rejected by Supervisor")
+        APPROVED_BY_SUPERVISOR = "approved_by_supervisor", _("Approved by Supervisor")
+        CONVERTED = "converted", _("Converted to Case")
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(
+        AIAnalysisSession,
+        on_delete=models.CASCADE,
+        related_name="proposals",
+    )
+    proposal_id = models.CharField(max_length=255)
+    tooth_id = models.IntegerField(null=True, blank=True)
+    status = models.CharField(
+        max_length=50,
+        choices=Status.choices,
+        default=Status.PENDING_PATIENT,
+    )
+    fusion_decision = models.JSONField(blank=True, null=True)
+    medical_report = models.JSONField(blank=True, null=True)
+    metadata = models.JSONField(blank=True, null=True)
+    raw_proposal = models.JSONField(blank=True, null=True)
+    converted_case = models.ForeignKey(
+        Case,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="source_proposals",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "ai_proposed_cases"
+        ordering = ["created_at"]
+        indexes = [
+            models.Index(fields=["status"], name="idx_ai_proposal_status"),
+            models.Index(fields=["proposal_id"], name="idx_ai_proposal_pid"),
+        ]
+
+    def __str__(self):
+        return f"Proposal {self.proposal_id}"

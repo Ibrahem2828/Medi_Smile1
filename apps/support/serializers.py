@@ -59,6 +59,11 @@ class SupportTicketResponseCreateSerializer(serializers.ModelSerializer):
         fields = ("message", "is_internal")
         extra_kwargs = {"is_internal": {"required": False, "default": False}}
 
+    def validate_message(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError(_("Message is required."))
+        return value.strip()
+
     def validate(self, attrs):
         request = self.context.get("request")
         user = getattr(request, "user", None)

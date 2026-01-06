@@ -83,7 +83,7 @@ class AttachmentListCreateView(generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         # DRF passes context (including request) during serializer init; avoid extra kwargs that break create().
-        serializer.save()
+        serializer.save(context=self.get_serializer_context())
 
     def create(self, request, *args, **kwargs):
         try:
