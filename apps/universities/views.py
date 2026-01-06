@@ -364,7 +364,7 @@ class StudentUniversitySelectionView(generics.GenericAPIView):
         try:
             user = request.user
             self._ensure_patient(user)
-            profile, _ = PatientProfile.objects.get_or_create(user=user)
+            profile, _created = PatientProfile.objects.get_or_create(user=user)
 
             if "university" not in request.data:
                 return self._error_response(

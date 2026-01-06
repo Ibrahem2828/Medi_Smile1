@@ -1,5 +1,6 @@
 # apps/community/views.py
 import logging
+from django.http import Http404
 from rest_framework import status, viewsets, serializers as drf_serializers
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -91,6 +92,11 @@ class ContentViewSet(viewsets.GenericViewSet):
             content = self.get_object()
             self.check_object_permissions(request, content)
             return Response({"status": "success", "data": ContentSerializer(content).data})
+        except Http404:
+            return Response(
+                {"status": "error", "message": "Content not found.", "errors": {"detail": "Not found."}},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         except drf_serializers.ValidationError as exc:
             return Response({"status": "error", "message": "Invalid request.", "errors": exc.detail}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:

@@ -30,6 +30,8 @@ urlpatterns = [
     path("<uuid:pk>/delete/", UniversityDeleteView.as_view(), name="university-delete"),
     path("me/update/", UniversityAdminUpdateView.as_view(), name="university-admin-update"),
     path("me/university-selection/", StudentUniversitySelectionView.as_view(), name="student-university-selection"),
+    # Accept without trailing slash to avoid APPEND_SLASH POST errors
+    path("me/university-selection", StudentUniversitySelectionView.as_view(), name="student-university-selection-noslash"),
 
     # =====================================================
     # Faculties (University Admin)
