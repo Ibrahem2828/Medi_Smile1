@@ -2,6 +2,7 @@
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
 from apps.accounts.models import Role
@@ -137,7 +138,11 @@ class SupportTicketCreateSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         user = self.context["request"].user
-        return SupportTicket.objects.create(created_by=user, **validated_data)
+        try:
+            return SupportTicket.objects.create(created_by=user, **validated_data)
+        except DjangoValidationError as exc:
+            detail = getattr(exc, "message_dict", None) or getattr(exc, "messages", None) or str(exc)
+            raise serializers.ValidationError(detail)
 
 
 class SupportTicketListSerializer(serializers.ModelSerializer):
