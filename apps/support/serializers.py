@@ -93,6 +93,44 @@ class SupportTicketCreateSerializer(serializers.ModelSerializer):
         model = SupportTicket
         fields = ("category", "subject", "description", "priority", "related_app")
 
+    def validate(self, attrs):
+        # Normalize and alias priority/category to reduce client-side errors.
+        category = attrs.get("category")
+        priority = attrs.get("priority")
+
+        if category:
+            category = category.strip().lower()
+            attrs["category"] = category
+
+        if priority:
+            priority = priority.strip().lower()
+            # Allow common aliases
+            priority_aliases = {
+                "high": SupportTicket.Priority.URGENT,
+                "normal": SupportTicket.Priority.MEDIUM,
+                "medium": SupportTicket.Priority.MEDIUM,
+                "urgent": SupportTicket.Priority.URGENT,
+                "low": SupportTicket.Priority.LOW,
+            }
+            if priority in priority_aliases:
+                attrs["priority"] = priority_aliases[priority]
+            else:
+                raise serializers.ValidationError(
+                    {
+                        "priority": _(
+                            f"Invalid priority. Allowed: urgent/high, medium/normal, low."
+                        )
+                    }
+                )
+
+        # Enforce valid choices after normalization
+        if "category" in attrs and attrs["category"] not in dict(SupportTicket.Category.choices):
+            raise serializers.ValidationError(
+                {"category": _("Invalid category. Allowed: technical, account, feature, bug, other.")}
+            )
+
+        return attrs
+
     def create(self, validated_data):
         user = self.context["request"].user
         return SupportTicket.objects.create(created_by=user, **validated_data)
