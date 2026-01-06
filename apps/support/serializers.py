@@ -89,6 +89,10 @@ class SupportTicketResponseCreateSerializer(serializers.ModelSerializer):
 # ------------------------------------------------------------
 
 class SupportTicketCreateSerializer(serializers.ModelSerializer):
+    # Override to allow alias values before we normalize/validate.
+    category = serializers.CharField()
+    priority = serializers.CharField()
+
     class Meta:
         model = SupportTicket
         fields = ("category", "subject", "description", "priority", "related_app")
