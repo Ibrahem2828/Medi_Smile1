@@ -65,7 +65,10 @@ def _get_user_university_ids(user) -> set:
         "universityadminprofile_profile",
     )
     for attr in profile_map:
-        profile = getattr(user, attr, None)
+        try:
+            profile = getattr(user, attr, None)
+        except Exception:
+            profile = None
         uni_id = getattr(profile, "university_id", None)
         if uni_id:
             ids.add(uni_id)

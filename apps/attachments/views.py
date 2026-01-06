@@ -37,7 +37,9 @@ class AttachmentListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        role = user.role.name
+        role = getattr(getattr(user, "role", None), "name", None)
+        if role is None:
+            raise PermissionDenied("User role is missing; contact admin.")
 
         base_qs = Attachment.objects.select_related(
             "case",
@@ -62,7 +64,10 @@ class AttachmentListCreateView(generics.ListCreateAPIView):
             )
 
         if role == Role.UNIVERSITY_ADMIN:
-            university = user.universityadminprofile_profile.university
+            try:
+                university = user.universityadminprofile_profile.university
+            except Exception:
+                raise PermissionDenied("University Admin profile not found.")
             return base_qs.filter(case__university=university)
 
         return Attachment.objects.none()
@@ -73,7 +78,8 @@ class AttachmentListCreateView(generics.ListCreateAPIView):
         return AttachmentSerializer
 
     def perform_create(self, serializer):
-        serializer.save(context={"request": self.request})
+        # DRF passes context (including request) during serializer init; avoid extra kwargs that break create().
+        serializer.save()
 
 
 # ============================================================

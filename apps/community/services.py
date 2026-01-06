@@ -14,7 +14,10 @@ from .models import Content, ContentLike, ContentComment
 # ============================================================
 
 def create_content(*, author, data: dict) -> Content:
-    if author.role.name == Role.PATIENT:
+    role_name = getattr(getattr(author, "role", None), "name", None)
+    if not role_name:
+        raise PermissionDenied("User role is missing; contact admin.")
+    if role_name == Role.PATIENT:
         raise PermissionDenied("Patients cannot create community content.")
 
     content = Content.objects.create(
@@ -37,7 +40,8 @@ def create_content(*, author, data: dict) -> Content:
 
 
 def approve_content(*, moderator, content: Content) -> Content:
-    if moderator.role.name not in {
+    role_name = getattr(getattr(moderator, "role", None), "name", None)
+    if role_name not in {
         Role.SUPERVISOR,
         Role.UNIVERSITY_ADMIN,
         Role.TECH_SUPPORT,
@@ -73,7 +77,8 @@ def approve_content(*, moderator, content: Content) -> Content:
 
 
 def reject_content(*, moderator, content: Content, reason: str) -> Content:
-    if moderator.role.name not in {
+    role_name = getattr(getattr(moderator, "role", None), "name", None)
+    if role_name not in {
         Role.SUPERVISOR,
         Role.UNIVERSITY_ADMIN,
         Role.TECH_SUPPORT,
@@ -136,7 +141,10 @@ def toggle_like(*, user, content: Content) -> bool:
 
 
 def add_comment(*, user, content: Content, text: str) -> ContentComment:
-    if user.role.name == Role.PATIENT:
+    role_name = getattr(getattr(user, "role", None), "name", None)
+    if not role_name:
+        raise PermissionDenied("User role is missing; contact admin.")
+    if role_name == Role.PATIENT:
         raise PermissionDenied("Patients cannot comment on content.")
 
     comment = ContentComment.objects.create(

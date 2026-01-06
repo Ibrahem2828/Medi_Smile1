@@ -39,6 +39,9 @@ class AttachmentSerializer(serializers.ModelSerializer):
         )
 
     def get_file_url(self, obj):
+        # Guard empty file to avoid storage errors
+        if not obj.file:
+            return None
         storage = get_storage_backend()
         return storage.url(obj.file.name)
 
@@ -53,6 +56,9 @@ class AttachmentCreateSerializer(serializers.Serializer):
     def validate(self, attrs):
         request = self.context["request"]
         user = resolve_request_user(request)
+
+        if not user or not getattr(getattr(user, "role", None), "name", None):
+            raise serializers.ValidationError(_("User role is missing; contact admin."))
 
         if user.role.name != Role.STUDENT:
             raise serializers.ValidationError(_("Only students can upload attachments."))
