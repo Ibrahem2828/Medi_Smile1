@@ -351,7 +351,7 @@ class StudentUniversitySelectionView(generics.GenericAPIView):
             return Response(
                 {
                     "status": "error",
-                    "message": _("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."),
+                    "message": "Unexpected error. See errors for details.",
                     "errors": str(exc),
                 },
                 status=status.HTTP_400_BAD_REQUEST,
@@ -403,7 +403,7 @@ class StudentUniversitySelectionView(generics.GenericAPIView):
             return Response(
                 {
                     "status": "error",
-                    "message": _("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."),
+                    "message": "Unexpected error. See errors for details.",
                     "errors": str(exc),
                 },
                 status=status.HTTP_400_BAD_REQUEST,
