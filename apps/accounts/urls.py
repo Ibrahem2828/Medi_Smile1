@@ -141,3 +141,5 @@ urlpatterns = [
         name="ts-university-admin-detail",
     ),
 ]
+
+
