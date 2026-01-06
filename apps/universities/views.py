@@ -4,7 +4,7 @@ from django.db import DatabaseError
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils.translation import gettext_lazy as _
 
-from rest_framework import generics, serializers
+from rest_framework import generics, serializers, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, BasePermission
 from rest_framework.exceptions import PermissionDenied
