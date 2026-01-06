@@ -207,6 +207,14 @@ class Profile(models.Model):
 # Patient Profile
 # ============================================================
 class PatientProfile(Profile):
+    university = models.ForeignKey(
+        "universities.University",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="patients",
+        verbose_name=_("University"),
+    )
     medical_history = models.TextField(blank=True, null=True)
     allergies = models.TextField(blank=True, null=True)
     medications = models.TextField(blank=True, null=True)
@@ -224,6 +232,8 @@ class PatientProfile(Profile):
         # Guard: ensure correct role
         if self.user and self.user.role and self.user.role.name != Role.PATIENT:
             raise ValidationError(_("PatientProfile requires PATIENT role."))
+        if self.university and not self.university.is_active:
+            raise ValidationError(_("University must be active."))
 
 
 # ============================================================

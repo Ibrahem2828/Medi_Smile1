@@ -8,6 +8,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+import logging
 
 from apps.accounts.models import Role
 from apps.accounts.permissions import IsTechSupport  # موجود عندك مسبقاً
@@ -22,6 +23,8 @@ from .serializers import (
     SupportTicketResponseCreateSerializer,
     SupportTicketResponseSerializer,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ------------------------------------------------------------
@@ -142,20 +145,30 @@ class SupportTicketListView(generics.ListCreateAPIView):
         return qs.order_by("-created_at")
 
     def list(self, request, *args, **kwargs):
-        page = self.paginate_queryset(self.get_queryset())
-        serializer = self.get_serializer(page, many=True)
-        return self.get_paginated_response({"status": "success", "message": _("Tickets retrieved."), "data": serializer.data})
+        try:
+            page = self.paginate_queryset(self.get_queryset())
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(
+                {"status": "success", "message": _("Tickets retrieved."), "data": serializer.data}
+            )
+        except Exception as exc:
+            logger.exception("Failed to list support tickets", exc_info=exc)
+            return APIResponse.error(_("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."))
 
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data, context={"request": request})
-        serializer.is_valid(raise_exception=True)
-        ticket = serializer.save()
+        try:
+            serializer = self.get_serializer(data=request.data, context={"request": request})
+            serializer.is_valid(raise_exception=True)
+            ticket = serializer.save()
 
-        return APIResponse.success(
-            _("Support ticket created successfully."),
-            SupportTicketDetailSerializer(ticket).data,
-            status.HTTP_201_CREATED,
-        )
+            return APIResponse.success(
+                _("Support ticket created successfully."),
+                SupportTicketDetailSerializer(ticket).data,
+                status.HTTP_201_CREATED,
+            )
+        except Exception as exc:
+            logger.exception("Failed to create support ticket", exc_info=exc)
+            return APIResponse.error(_("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."))
 
 
 # ------------------------------------------------------------
@@ -180,22 +193,30 @@ class SupportTicketDetailView(generics.RetrieveUpdateAPIView):
         return SupportTicketDetailSerializer
 
     def retrieve(self, request, *args, **kwargs):
-        ticket = self.get_object()
-        return APIResponse.success(_("Ticket retrieved."), self.get_serializer(ticket).data)
+        try:
+            ticket = self.get_object()
+            return APIResponse.success(_("Ticket retrieved."), self.get_serializer(ticket).data)
+        except Exception as exc:
+            logger.exception("Failed to retrieve support ticket", exc_info=exc)
+            return APIResponse.error(_("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."))
 
     def update(self, request, *args, **kwargs):
-        user = resolve_request_user(request)
-        role_name = getattr(getattr(user, "role", None), "name", None)
+        try:
+            user = resolve_request_user(request)
+            role_name = getattr(getattr(user, "role", None), "name", None)
 
-        if role_name not in {Role.TECH_SUPPORT, Role.UNIVERSITY_ADMIN}:
-            return APIResponse.error(_("You are not allowed to update this ticket."), status_code=status.HTTP_403_FORBIDDEN)
+            if role_name not in {Role.TECH_SUPPORT, Role.UNIVERSITY_ADMIN}:
+                return APIResponse.error(_("You are not allowed to update this ticket."), status_code=status.HTTP_403_FORBIDDEN)
 
-        ticket = self.get_object()
-        serializer = self.get_serializer(ticket, data=request.data, partial=True, context={"request": request})
-        serializer.is_valid(raise_exception=True)
-        ticket = serializer.save()
+            ticket = self.get_object()
+            serializer = self.get_serializer(ticket, data=request.data, partial=True, context={"request": request})
+            serializer.is_valid(raise_exception=True)
+            ticket = serializer.save()
 
-        return APIResponse.success(_("Ticket updated successfully."), SupportTicketDetailSerializer(ticket).data)
+            return APIResponse.success(_("Ticket updated successfully."), SupportTicketDetailSerializer(ticket).data)
+        except Exception as exc:
+            logger.exception("Failed to update support ticket", exc_info=exc)
+            return APIResponse.error(_("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."))
 
 
 # ------------------------------------------------------------
@@ -206,18 +227,22 @@ class SupportTicketCloseView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, ticket_id):
-        user = resolve_request_user(request)
-        role_name = getattr(getattr(user, "role", None), "name", None)
-        ticket = get_object_or_404(_ticket_queryset_for_user(user), id=ticket_id)
+        try:
+            user = resolve_request_user(request)
+            role_name = getattr(getattr(user, "role", None), "name", None)
+            ticket = get_object_or_404(_ticket_queryset_for_user(user), id=ticket_id)
 
-        if role_name not in {Role.TECH_SUPPORT, Role.UNIVERSITY_ADMIN} and ticket.created_by_id != user.id:
-            return APIResponse.error(_("You are not allowed to close this ticket."), status_code=status.HTTP_403_FORBIDDEN)
+            if role_name not in {Role.TECH_SUPPORT, Role.UNIVERSITY_ADMIN} and ticket.created_by_id != user.id:
+                return APIResponse.error(_("You are not allowed to close this ticket."), status_code=status.HTTP_403_FORBIDDEN)
 
-        ticket.status = SupportTicket.Status.CLOSED
-        ticket.closed_at = timezone.now()
-        ticket.save(update_fields=["status", "closed_at", "updated_at"])
+            ticket.status = SupportTicket.Status.CLOSED
+            ticket.closed_at = timezone.now()
+            ticket.save(update_fields=["status", "closed_at", "updated_at"])
 
-        return APIResponse.success(_("Ticket closed successfully."), SupportTicketDetailSerializer(ticket).data)
+            return APIResponse.success(_("Ticket closed successfully."), SupportTicketDetailSerializer(ticket).data)
+        except Exception as exc:
+            logger.exception("Failed to close support ticket", exc_info=exc)
+            return APIResponse.error(_("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."))
 
 
 # ------------------------------------------------------------
@@ -255,25 +280,33 @@ class SupportTicketResponseListView(generics.ListCreateAPIView):
         return ctx
 
     def list(self, request, *args, **kwargs):
-        page = self.paginate_queryset(self.get_queryset())
-        serializer = self.get_serializer(page, many=True)
-        return self.get_paginated_response({"status": "success", "message": _("Responses retrieved."), "data": serializer.data})
+        try:
+            page = self.paginate_queryset(self.get_queryset())
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response({"status": "success", "message": _("Responses retrieved."), "data": serializer.data})
+        except Exception as exc:
+            logger.exception("Failed to list support ticket responses", exc_info=exc)
+            return APIResponse.error(_("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."))
 
     def create(self, request, *args, **kwargs):
-        ticket = self.get_ticket()
-        user = resolve_request_user(request)
-        role_name = getattr(getattr(user, "role", None), "name", None)
+        try:
+            ticket = self.get_ticket()
+            user = resolve_request_user(request)
+            role_name = getattr(getattr(user, "role", None), "name", None)
 
-        # Only: ticket owner OR university admin (same scope) OR tech support
-        if role_name not in {Role.TECH_SUPPORT, Role.UNIVERSITY_ADMIN} and ticket.created_by_id != user.id:
-            return APIResponse.error(_("You are not allowed to respond to this ticket."), status_code=status.HTTP_403_FORBIDDEN)
+            # Only: ticket owner OR university admin (same scope) OR tech support
+            if role_name not in {Role.TECH_SUPPORT, Role.UNIVERSITY_ADMIN} and ticket.created_by_id != user.id:
+                return APIResponse.error(_("You are not allowed to respond to this ticket."), status_code=status.HTTP_403_FORBIDDEN)
 
-        serializer = self.get_serializer(data=request.data, context={"request": request, "ticket": ticket})
-        serializer.is_valid(raise_exception=True)
-        response_obj = serializer.save()
+            serializer = self.get_serializer(data=request.data, context={"request": request, "ticket": ticket})
+            serializer.is_valid(raise_exception=True)
+            response_obj = serializer.save()
 
-        # Ensure non-tech cannot create internal notes (already validated)
-        return APIResponse.success(_("Response sent successfully."), SupportTicketResponseSerializer(response_obj).data, status.HTTP_201_CREATED)
+            # Ensure non-tech cannot create internal notes (already validated)
+            return APIResponse.success(_("Response sent successfully."), SupportTicketResponseSerializer(response_obj).data, status.HTTP_201_CREATED)
+        except Exception as exc:
+            logger.exception("Failed to create support ticket response", exc_info=exc)
+            return APIResponse.error(_("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."))
 
 
 # ------------------------------------------------------------
@@ -284,15 +317,19 @@ class SupportTicketStatsView(APIView):
     permission_classes = [IsAuthenticated, IsTechSupport]
 
     def get(self, request):
-        stats = {
-            "total": SupportTicket.objects.count(),
-            "open": SupportTicket.objects.filter(status=SupportTicket.Status.OPEN).count(),
-            "in_progress": SupportTicket.objects.filter(status=SupportTicket.Status.IN_PROGRESS).count(),
-            "resolved": SupportTicket.objects.filter(status=SupportTicket.Status.RESOLVED).count(),
-            "closed": SupportTicket.objects.filter(status=SupportTicket.Status.CLOSED).count(),
-            "urgent_open": SupportTicket.objects.filter(
-                priority=SupportTicket.Priority.URGENT,
-                status__in=[SupportTicket.Status.OPEN, SupportTicket.Status.IN_PROGRESS],
-            ).count(),
-        }
-        return APIResponse.success(_("Support ticket statistics retrieved successfully."), stats)
+        try:
+            stats = {
+                "total": SupportTicket.objects.count(),
+                "open": SupportTicket.objects.filter(status=SupportTicket.Status.OPEN).count(),
+                "in_progress": SupportTicket.objects.filter(status=SupportTicket.Status.IN_PROGRESS).count(),
+                "resolved": SupportTicket.objects.filter(status=SupportTicket.Status.RESOLVED).count(),
+                "closed": SupportTicket.objects.filter(status=SupportTicket.Status.CLOSED).count(),
+                "urgent_open": SupportTicket.objects.filter(
+                    priority=SupportTicket.Priority.URGENT,
+                    status__in=[SupportTicket.Status.OPEN, SupportTicket.Status.IN_PROGRESS],
+                ).count(),
+            }
+            return APIResponse.success(_("Support ticket statistics retrieved successfully."), stats)
+        except Exception as exc:
+            logger.exception("Failed to fetch support ticket statistics", exc_info=exc)
+            return APIResponse.error(_("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."))

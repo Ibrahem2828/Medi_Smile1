@@ -334,7 +334,7 @@ class PatientMeView(_BaseMeView):
     serializer_class = PatientProfileSerializer
 
     def get_object(self):
-        return PatientProfile.objects.select_related("user").get(user=self.request.user)
+        return PatientProfile.objects.select_related("user", "university").get(user=self.request.user)
 
 
 class StudentMeView(_BaseMeView):

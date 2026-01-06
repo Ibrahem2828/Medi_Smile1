@@ -15,9 +15,11 @@ from .serializers import (
     AcademicProgramSerializer,
     AcademicYearSerializer,
     CourseSerializer,
+    StudentUniversitySelectionSerializer,
 )
 
 from apps.accounts.permissions import IsUniversityAdmin, IsTechSupport
+from apps.accounts.models import Role, StudentProfile
 
 
 # ============================================================
@@ -283,3 +285,57 @@ class UniversityAdminUpdateView(generics.UpdateAPIView):
 
     def get_object(self):
         return get_admin_university(self.request)
+
+
+# ============================================================
+# Student: Choose University
+# ============================================================
+
+class StudentUniversitySelectionView(generics.GenericAPIView):
+    """
+    Student selects the university they belong to (or updates it).
+    GET: current selection (or null if not set).
+    POST: set/update selection.
+    """
+
+    serializer_class = StudentUniversitySelectionSerializer
+    permission_classes = [IsAuthenticated]
+
+    def _ensure_student(self, user):
+        if getattr(getattr(user, "role", None), "name", None) != Role.STUDENT:
+            raise PermissionDenied(_("Only students can select a university."))
+
+    def get_profile(self, user):
+        self._ensure_student(user)
+        return StudentProfile.objects.filter(user=user).select_related("university").first()
+
+    def get(self, request):
+        user = request.user
+        profile = self.get_profile(user)
+        if not profile:
+            return Response(
+                {"status": "success", "message": _("No university selected yet."), "data": None},
+                status=status.HTTP_200_OK,
+            )
+        data = self.get_serializer(profile).data
+        return Response({"status": "success", "message": _("University retrieved."), "data": data})
+
+    def post(self, request):
+        user = request.user
+        self._ensure_student(user)
+        profile = StudentProfile.objects.filter(user=user).first()
+
+        serializer = self.get_serializer(profile, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        university = serializer.validated_data["university"]
+
+        if profile:
+            profile.university = university
+            profile.save(update_fields=["university", "updated_at"])
+        else:
+            profile = StudentProfile.objects.create(user=user, university=university)
+
+        return Response(
+            {"status": "success", "message": _("University selected successfully."), "data": self.get_serializer(profile).data},
+            status=status.HTTP_200_OK,
+        )

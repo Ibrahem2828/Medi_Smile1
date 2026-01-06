@@ -343,6 +343,13 @@ class BaseProfileSerializer(serializers.ModelSerializer):
 
 
 class PatientProfileSerializer(BaseProfileSerializer):
+    university_name = serializers.CharField(source="university.name", read_only=True)
+
+    def validate_university(self, university):
+        if university and not getattr(university, "is_active", False):
+            raise serializers.ValidationError(_("Selected university is inactive."))
+        return university
+
     class Meta:
         model = PatientProfile
         exclude = ("user",)

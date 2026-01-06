@@ -16,6 +16,7 @@ from .views import (
     CourseListCreateView,
     CourseRetrieveUpdateDeleteView,
     UniversityAdminUpdateView,
+    StudentUniversitySelectionView,
 )
 
 urlpatterns = [
@@ -28,6 +29,7 @@ urlpatterns = [
     path("<uuid:pk>/update/", UniversityUpdateView.as_view(), name="university-update"),
     path("<uuid:pk>/delete/", UniversityDeleteView.as_view(), name="university-delete"),
     path("me/update/", UniversityAdminUpdateView.as_view(), name="university-admin-update"),
+    path("me/university-selection/", StudentUniversitySelectionView.as_view(), name="student-university-selection"),
 
     # =====================================================
     # Faculties (University Admin)
