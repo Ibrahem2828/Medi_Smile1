@@ -4,6 +4,7 @@ from django.shortcuts import get_object_or_404
 from django.utils.translation import gettext_lazy as _
 from django.utils import timezone
 from rest_framework import generics, status
+from rest_framework import serializers as drf_serializers
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -151,6 +152,8 @@ class SupportTicketListView(generics.ListCreateAPIView):
             return self.get_paginated_response(
                 {"status": "success", "message": _("Tickets retrieved."), "data": serializer.data}
             )
+        except drf_serializers.ValidationError as exc:
+            return APIResponse.error(_("Invalid request."), errors=exc.detail, status_code=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
             logger.exception("Failed to list support tickets", exc_info=exc)
             return APIResponse.error(_("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."))
@@ -166,6 +169,8 @@ class SupportTicketListView(generics.ListCreateAPIView):
                 SupportTicketDetailSerializer(ticket).data,
                 status.HTTP_201_CREATED,
             )
+        except drf_serializers.ValidationError as exc:
+            return APIResponse.error(_("Invalid request."), errors=exc.detail, status_code=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
             logger.exception("Failed to create support ticket", exc_info=exc)
             return APIResponse.error(_("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."))
@@ -196,6 +201,8 @@ class SupportTicketDetailView(generics.RetrieveUpdateAPIView):
         try:
             ticket = self.get_object()
             return APIResponse.success(_("Ticket retrieved."), self.get_serializer(ticket).data)
+        except drf_serializers.ValidationError as exc:
+            return APIResponse.error(_("Invalid request."), errors=exc.detail, status_code=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
             logger.exception("Failed to retrieve support ticket", exc_info=exc)
             return APIResponse.error(_("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."))
@@ -214,6 +221,8 @@ class SupportTicketDetailView(generics.RetrieveUpdateAPIView):
             ticket = serializer.save()
 
             return APIResponse.success(_("Ticket updated successfully."), SupportTicketDetailSerializer(ticket).data)
+        except drf_serializers.ValidationError as exc:
+            return APIResponse.error(_("Invalid request."), errors=exc.detail, status_code=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
             logger.exception("Failed to update support ticket", exc_info=exc)
             return APIResponse.error(_("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."))
@@ -240,6 +249,8 @@ class SupportTicketCloseView(APIView):
             ticket.save(update_fields=["status", "closed_at", "updated_at"])
 
             return APIResponse.success(_("Ticket closed successfully."), SupportTicketDetailSerializer(ticket).data)
+        except drf_serializers.ValidationError as exc:
+            return APIResponse.error(_("Invalid request."), errors=exc.detail, status_code=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
             logger.exception("Failed to close support ticket", exc_info=exc)
             return APIResponse.error(_("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."))
@@ -284,6 +295,8 @@ class SupportTicketResponseListView(generics.ListCreateAPIView):
             page = self.paginate_queryset(self.get_queryset())
             serializer = self.get_serializer(page, many=True)
             return self.get_paginated_response({"status": "success", "message": _("Responses retrieved."), "data": serializer.data})
+        except drf_serializers.ValidationError as exc:
+            return APIResponse.error(_("Invalid request."), errors=exc.detail, status_code=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
             logger.exception("Failed to list support ticket responses", exc_info=exc)
             return APIResponse.error(_("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."))
@@ -304,6 +317,8 @@ class SupportTicketResponseListView(generics.ListCreateAPIView):
 
             # Ensure non-tech cannot create internal notes (already validated)
             return APIResponse.success(_("Response sent successfully."), SupportTicketResponseSerializer(response_obj).data, status.HTTP_201_CREATED)
+        except drf_serializers.ValidationError as exc:
+            return APIResponse.error(_("Invalid request."), errors=exc.detail, status_code=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
             logger.exception("Failed to create support ticket response", exc_info=exc)
             return APIResponse.error(_("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."))
@@ -330,6 +345,8 @@ class SupportTicketStatsView(APIView):
                 ).count(),
             }
             return APIResponse.success(_("Support ticket statistics retrieved successfully."), stats)
+        except drf_serializers.ValidationError as exc:
+            return APIResponse.error(_("Invalid request."), errors=exc.detail, status_code=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
             logger.exception("Failed to fetch support ticket statistics", exc_info=exc)
             return APIResponse.error(_("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."))
