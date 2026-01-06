@@ -319,13 +319,16 @@ class SupportTicketResponseListView(generics.ListCreateAPIView):
             serializer.is_valid(raise_exception=True)
             response_obj = serializer.save()
 
-            # Ensure non-tech cannot create internal notes (already validated)
             return APIResponse.success(_("Response sent successfully."), SupportTicketResponseSerializer(response_obj).data, status.HTTP_201_CREATED)
         except drf_serializers.ValidationError as exc:
             return APIResponse.error(_("Invalid request."), errors=exc.detail, status_code=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
             logger.exception("Failed to create support ticket response", exc_info=exc)
-            return APIResponse.error(_("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."))
+            return APIResponse.error(
+                _("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."),
+                errors=str(exc),
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
 
 
 # ------------------------------------------------------------

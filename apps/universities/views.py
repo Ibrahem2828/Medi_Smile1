@@ -1,9 +1,10 @@
 # apps/universities/views.py
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import DatabaseError
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils.translation import gettext_lazy as _
 
-from rest_framework import generics
+from rest_framework import generics, serializers
 from rest_framework.permissions import IsAuthenticated, BasePermission
 from rest_framework.exceptions import PermissionDenied
 
@@ -325,6 +326,16 @@ class StudentUniversitySelectionView(generics.GenericAPIView):
                 )
             data = self.get_serializer(profile).data
             return Response({"status": "success", "message": _("University retrieved."), "data": data})
+        except PermissionDenied as exc:
+            return Response(
+                {"status": "error", "message": str(exc), "errors": {"detail": str(exc)}},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        except (DjangoValidationError, serializers.ValidationError) as exc:
+            return Response(
+                {"status": "error", "message": "Invalid request.", "errors": getattr(exc, "message_dict", None) or getattr(exc, "detail", str(exc))},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         except Exception as exc:
             logger.exception("Patient university GET failed", exc_info=exc)
             return Response(
@@ -356,6 +367,16 @@ class StudentUniversitySelectionView(generics.GenericAPIView):
                     "data": self.get_serializer(profile).data,
                 },
                 status=status.HTTP_200_OK,
+            )
+        except PermissionDenied as exc:
+            return Response(
+                {"status": "error", "message": str(exc), "errors": {"detail": str(exc)}},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        except (DjangoValidationError, serializers.ValidationError) as exc:
+            return Response(
+                {"status": "error", "message": "Invalid request.", "errors": getattr(exc, "message_dict", None) or getattr(exc, "detail", str(exc))},
+                status=status.HTTP_400_BAD_REQUEST,
             )
         except Exception as exc:
             logger.exception("Patient university POST failed", exc_info=exc)
