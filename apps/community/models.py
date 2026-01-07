@@ -238,10 +238,11 @@ class Content(models.Model):
                 self.approved_by = self.author
 
         elif role_name == Role.STUDENT:
-            if self.status == self.Status.APPROVED:
-                raise ValidationError(_("Student content must be approved by a supervisor."))
-
-            self.status = self.Status.PENDING
+            if self.status in {self.Status.APPROVED, self.Status.REJECTED}:
+                if not self.approved_by_id:
+                    raise ValidationError(_("Student content must be approved by a supervisor."))
+            else:
+                self.status = self.Status.PENDING
 
         super().save(*args, **kwargs)
 

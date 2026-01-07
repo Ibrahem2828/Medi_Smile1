@@ -57,11 +57,13 @@ class ContentViewSet(viewsets.GenericViewSet):
 
     def get_queryset(self):
         user = resolve_request_user(self.request)
-        if self.action in {"pending", "approve", "reject"}:
+        if self.action == "pending":
             return pending_content_for_moderator(user)
         if self.action in {"partial_update", "update"}:
             return Content.objects.filter(author=user, is_deleted=False)
         if self.action == "destroy":
+            return Content.objects.filter(is_deleted=False)
+        if self.action in {"approve", "reject"}:
             return Content.objects.filter(is_deleted=False)
         return content_queryset_for_user(user)
 
@@ -103,12 +105,24 @@ class ContentViewSet(viewsets.GenericViewSet):
 
     def list(self, request):
         try:
-            qs = self.get_queryset()
+            user = resolve_request_user(request)
+            role = getattr(getattr(user, "role", None), "name", None)
+
             status_filter = request.query_params.get("status")
             author_id = request.query_params.get("author_id")
             content_type = request.query_params.get("content_type")
 
-            if status_filter:
+            if status_filter == Content.Status.PENDING:
+                if role == Role.SUPERVISOR:
+                    qs = pending_content_for_moderator(user)
+                elif role == Role.STUDENT:
+                    qs = Content.objects.filter(author=user, status=Content.Status.PENDING, is_deleted=False)
+                else:
+                    qs = Content.objects.none()
+            else:
+                qs = self.get_queryset()
+
+            if status_filter and status_filter != Content.Status.PENDING:
                 qs = qs.filter(status=status_filter)
             if author_id:
                 qs = qs.filter(author_id=author_id)
@@ -300,6 +314,12 @@ class ContentViewSet(viewsets.GenericViewSet):
                 errors=exc.detail,
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
+        except DjangoValidationError as exc:
+            return self._error_response(
+                message="Invalid request.",
+                errors=getattr(exc, "message_dict", None) or getattr(exc, "messages", None) or str(exc),
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
         except (DjangoPermissionDenied, DRFPermissionDenied) as exc:
             return self._error_response(
                 message=str(exc),
@@ -340,6 +360,12 @@ class ContentViewSet(viewsets.GenericViewSet):
             return self._error_response(
                 message="Invalid request.",
                 errors=exc.detail,
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        except DjangoValidationError as exc:
+            return self._error_response(
+                message="Invalid request.",
+                errors=getattr(exc, "message_dict", None) or getattr(exc, "messages", None) or str(exc),
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
         except (DjangoPermissionDenied, DRFPermissionDenied) as exc:

@@ -15,6 +15,8 @@ urlpatterns = [
     path("", include(router.urls)),
     # Alias for pending approvals (moderators)
     path("approvals/", ContentViewSet.as_view({"get": "pending"}), name="content-approvals"),
+    path("posts/pending/", ContentViewSet.as_view({"get": "pending"}), name="posts-pending"),
+    path("content/pending/", ContentViewSet.as_view({"get": "pending"}), name="content-pending"),
     path("approval-logs/", ApprovalLogListView.as_view(), name="approval-log-list"),
 
     # Student public rating
