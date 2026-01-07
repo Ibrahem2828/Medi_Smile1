@@ -1,0 +1,292 @@
+﻿{
+  "service": {
+    "name": "MediSmile Messaging",
+    "version": "1.0.0",
+    "base_url": "/api/messaging",
+    "timezone": "UTC",
+    "language": "ar"
+  },
+  "overview": {
+    "summary": "نظام تواصل سياقي ومحدد الصلاحيات مرتبط بسياق رسمي (Case أو Material).",
+    "goals": [
+      "تسهيل التواصل الضروري فقط",
+      "ربط كل محادثة بسياق رسمي",
+      "منع أي تواصل عشوائي أو خارج الصلاحيات",
+      "توثيق كامل للمراجعة والتدقيق"
+    ],
+    "non_goals": [
+      "لا يوجد دردشة عامة",
+      "لا توجد مراسلة مباشرة خارج السياق",
+      "لا توجد محادثة بدون سبب رسمي"
+    ]
+  },
+  "principles": {
+    "context_driven": "كل محادثة مرتبطة بحالة علاجية أو مادة دراسية.",
+    "relation_based_access": "لا إرسال إلا إذا كان المستخدم طرفًا شرعيًا في السياق.",
+    "no_global_chat": "لا رسائل عامة أو مباشرة خارج السياق.",
+    "audit_ready": "كل رسالة محفوظة وغير قابلة للحذف وتخضع للتدقيق."
+  },
+  "thread_types": {
+    "case": {
+      "name": "Student-Patient Case Thread",
+      "created_when": "بعد إسناد الحالة رسميًا وبموافقة المشرف",
+      "context": "Case واحدة محددة",
+      "usage": ["تنسيق المواعيد", "الاستفسارات العامة", "توضيح للمريض"],
+      "constraints": [
+        "لا تواصل قبل الإسناد",
+        "لا إضافة أطراف أخرى",
+        "Read-only بعد إغلاق الحالة"
+      ]
+    },
+    "material": {
+      "name": "Student-Supervisor Material Thread",
+      "created_when": "تلقائيًا عبر المادة الدراسية",
+      "context": "Material واحدة محددة",
+      "usage": ["أسئلة تعليمية", "توجيه أثناء الجلسات", "تنبيهات سريعة"],
+      "constraints": [
+        "يتحقق من Enrollment",
+        "يتحقق من MaterialAssignment",
+        "يتحقق من نطاق الجامعة"
+      ]
+    }
+  },
+  "models": {
+    "Thread": {
+      "description": "غرفة محادثة مرتبطة بسياق رسمي واحد فقط.",
+      "fields": {
+        "id": "uuid",
+        "thread_type": "enum(case, material)",
+        "case_id": "uuid|null",
+        "material_id": "uuid|null",
+        "participants": "array<uuid>",
+        "is_closed": "boolean",
+        "created_at": "datetime"
+      },
+      "rules": [
+        "Thread واحد فقط لكل Case (student-patient)",
+        "Thread واحد فقط لكل Material (student-supervisor)",
+        "لا تعديل على المشاركين",
+        "لا حذف"
+      ]
+    },
+    "Message": {
+      "description": "رسالة داخل Thread، غير قابلة للحذف.",
+      "fields": {
+        "id": "uuid",
+        "thread_id": "uuid",
+        "sender_id": "uuid",
+        "content": "string",
+        "message_type": "enum(text, system)",
+        "created_at": "datetime",
+        "is_read": "boolean"
+      },
+      "rules": [
+        "Immutable",
+        "مرتبة زمنيًا",
+        "يسمح فقط بتحديث حالة القراءة"
+      ]
+    }
+  },
+  "authorization": {
+    "roles": ["student", "patient", "supervisor", "university_admin", "it_support"],
+    "thread": {
+      "list": {
+        "student": "allowed (related)",
+        "patient": "allowed (case only)",
+        "supervisor": "allowed (material only)",
+        "university_admin": "denied",
+        "it_support": "denied"
+      },
+      "retrieve": {
+        "student": "allowed",
+        "patient": "allowed (case only)",
+        "supervisor": "allowed (material only)",
+        "university_admin": "denied",
+        "it_support": "denied"
+      },
+      "create": {
+        "student": "allowed (service-bound)",
+        "patient": "denied",
+        "supervisor": "denied",
+        "university_admin": "denied",
+        "it_support": "denied"
+      }
+    },
+    "message": {
+      "send": {
+        "student": "allowed",
+        "patient": "allowed (case thread only)",
+        "supervisor": "allowed (material thread only)",
+        "university_admin": "denied",
+        "it_support": "denied"
+      },
+      "read": {
+        "student": "allowed",
+        "patient": "allowed (case thread only)",
+        "supervisor": "allowed (material thread only)",
+        "university_admin": "denied",
+        "it_support": "denied"
+      }
+    }
+  },
+  "lifecycle": {
+    "case_thread": {
+      "states": ["CREATED", "ACTIVE", "CLOSED"],
+      "transition_rules": [
+        "CLOSED عند إغلاق الحالة",
+        "بعد الإغلاق يصبح read-only"
+      ]
+    },
+    "material_thread": {
+      "states": ["ACTIVE", "CLOSED"],
+      "transition_rules": [
+        "CLOSED عند انتهاء المادة",
+        "CLOSED عند إزالة الطالب من المادة"
+      ]
+    }
+  },
+  "api": {
+    "pagination": {
+      "style": "cursor",
+      "params": {
+        "limit": "integer (default 20, max 100)",
+        "cursor": "string|null"
+      }
+    },
+    "endpoints": [
+      {
+        "method": "GET",
+        "path": "/threads/",
+        "description": "قائمة المحادثات الخاصة بالمستخدم.",
+        "permissions": "participant only",
+        "query": {
+          "thread_type": "case|material|null",
+          "is_closed": "boolean|null",
+          "case_id": "uuid|null",
+          "material_id": "uuid|null",
+          "limit": "integer",
+          "cursor": "string|null"
+        },
+        "response": {
+          "status": 200,
+          "schema": {
+            "count": "integer",
+            "next_cursor": "string|null",
+            "results": "array<Thread>"
+          }
+        },
+        "errors": [
+          { "status": 401, "code": "unauthorized" },
+          { "status": 403, "code": "forbidden" }
+        ]
+      },
+      {
+        "method": "GET",
+        "path": "/threads/{id}/",
+        "description": "تفاصيل محادثة مع الرسائل (مقسمة صفحات).",
+        "permissions": "participant only",
+        "response": {
+          "status": 200,
+          "schema": {
+            "thread": "Thread",
+            "messages": {
+              "count": "integer",
+              "next_cursor": "string|null",
+              "results": "array<Message>"
+            }
+          }
+        },
+        "errors": [
+          { "status": 401, "code": "unauthorized" },
+          { "status": 403, "code": "forbidden" },
+          { "status": 404, "code": "not_found" }
+        ]
+      },
+      {
+        "method": "POST",
+        "path": "/threads/{id}/messages/",
+        "description": "إرسال رسالة ضمن محادثة.",
+        "permissions": "participant only",
+        "request": {
+          "schema": {
+            "content": "string (min 1, max 2000)",
+            "message_type": "text|system (default text)"
+          }
+        },
+        "validation": [
+          "المستخدم مشارك في المحادثة",
+          "Thread غير مغلق",
+          "content غير فارغ"
+        ],
+        "response": {
+          "status": 201,
+          "schema": "Message"
+        },
+        "errors": [
+          { "status": 400, "code": "validation_error" },
+          { "status": 401, "code": "unauthorized" },
+          { "status": 403, "code": "forbidden" },
+          { "status": 409, "code": "thread_closed" }
+        ]
+      },
+      {
+        "method": "POST",
+        "path": "/messages/{id}/read/",
+        "description": "تعليم الرسالة كمقروءة.",
+        "permissions": "owner only",
+        "request": {
+          "schema": {
+            "is_read": "boolean (must be true)"
+          }
+        },
+        "response": {
+          "status": 200,
+          "schema": {
+            "id": "uuid",
+            "is_read": "boolean",
+            "read_at": "datetime"
+          }
+        },
+        "errors": [
+          { "status": 401, "code": "unauthorized" },
+          { "status": 403, "code": "forbidden" },
+          { "status": 404, "code": "not_found" }
+        ]
+      }
+    ],
+    "no_delete_endpoints": true
+  },
+  "notifications": {
+    "events": [
+      "message.created -> notification",
+      "system.message -> elevated priority"
+    ]
+  },
+  "audit": {
+    "records": [
+      "thread.created",
+      "message.sent",
+      "unauthorized.send_attempt",
+      "unauthorized.thread_access"
+    ],
+    "content_in_audit": false,
+    "metadata_only": true
+  },
+  "indexes": {
+    "messages": ["thread_id", "created_at"],
+    "threads": ["thread_type", "case_id", "material_id"]
+  },
+  "tests": [
+    "participant access tests",
+    "thread uniqueness tests",
+    "case closure lock test",
+    "material scope test",
+    "unauthorized access test"
+  ],
+  "engineering_notes": [
+    "Thread creation في service layer",
+    "Queryset scoped بشدة على المشاركين",
+    "Pagination إلزامية",
+    "لا حذف للرسائل أو المحادثات"
+  ]
+}
