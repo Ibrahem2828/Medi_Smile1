@@ -4,107 +4,186 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from apps.accounts.models import User, Role
-from apps.universities.models import University
+from apps.accounts.models import (
+    PatientProfile,
+    Role,
+    StudentProfile,
+    SupervisorProfile,
+    UniversityAdminProfile,
+    User,
+)
+from apps.appointments.models import Appointment
 from apps.cases.models import Case
-from apps.evaluations.models import Evaluation, EvaluationStatus
+from apps.universities.models import University
+from apps.evaluations.models import Evaluation, EvaluationStatus, EvaluationTargetType
 
 
 class EvaluationAPITestCase(APITestCase):
     def setUp(self):
         self.university = University.objects.create(name="Test University")
 
-        self.supervisor = User.objects.create_user(
-            username="supervisor",
-            email="supervisor@test.com",
-            password="password123",
-            role=Role.objects.get(name=Role.SUPERVISOR),
-            university=self.university,
-        )
+        self.student_role, _ = Role.objects.get_or_create(name=Role.STUDENT)
+        self.supervisor_role, _ = Role.objects.get_or_create(name=Role.SUPERVISOR)
+        self.admin_role, _ = Role.objects.get_or_create(name=Role.UNIVERSITY_ADMIN)
+        self.patient_role, _ = Role.objects.get_or_create(name=Role.PATIENT)
 
         self.student = User.objects.create_user(
             username="student",
-            email="student@test.com",
-            password="password123",
-            role=Role.objects.get(name=Role.STUDENT),
-            university=self.university,
+            password="pass",
+            role=self.student_role,
         )
+        StudentProfile.objects.create(user=self.student, university=self.university)
 
-        # IMPORTANT: adapt to your Case model fields
+        self.supervisor = User.objects.create_user(
+            username="supervisor",
+            password="pass",
+            role=self.supervisor_role,
+        )
+        SupervisorProfile.objects.create(user=self.supervisor, university=self.university)
+
+        self.admin = User.objects.create_user(
+            username="admin",
+            password="pass",
+            role=self.admin_role,
+        )
+        UniversityAdminProfile.objects.create(user=self.admin, university=self.university)
+
+        self.patient = User.objects.create_user(
+            username="patient",
+            password="pass",
+            role=self.patient_role,
+        )
+        PatientProfile.objects.create(user=self.patient, university=self.university)
+
         self.case = Case.objects.create(
+            title="Case",
+            description="Desc",
+            patient=self.patient,
+            student=self.student,
+            supervisor=self.supervisor,
             university=self.university,
-            patient=self.student if hasattr(Case, "patient") else None,
-            student=self.student if hasattr(Case, "student") else None,
-            status=getattr(Case.Status, "IN_PROGRESS", "in_progress") if hasattr(Case, "Status") else "in_progress",
         )
 
-        self.client.force_authenticate(user=self.supervisor)
+        self.appointment = Appointment.objects.create(
+            case=self.case,
+            patient=self.patient,
+            student=self.student,
+            supervisor=self.supervisor,
+            created_by=self.student,
+            appointment_date=timezone.now(),
+        )
 
-    def test_supervisor_can_create_case_evaluation(self):
-        url = reverse("evaluations-list")
-
+    def test_patient_can_create_appointment_evaluation(self):
+        self.client.force_authenticate(self.patient)
+        url = reverse("evaluations:evaluations-list")
         payload = {
-            "student_id": str(self.student.id),
-            "target_type": "case",
-            "case_id": str(self.case.id),
-            "score": 85,
-            "comment": "Good clinical performance",
+            "target_type": "appointment",
+            "target_id": str(self.appointment.id),
+            "original_score": 85,
+            "comment": "Great experience",
         }
 
         response = self.client.post(url, payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(Evaluation.objects.count(), 1)
 
-    def test_student_cannot_create_evaluation(self):
-        self.client.force_authenticate(user=self.student)
-        url = reverse("evaluations-list")
-
+    def test_student_can_create_case_evaluation(self):
+        self.client.force_authenticate(self.student)
+        url = reverse("evaluations:evaluations-list")
         payload = {
-            "student_id": str(self.student.id),
             "target_type": "case",
-            "case_id": str(self.case.id),
-            "score": 90,
+            "target_id": str(self.case.id),
+            "original_score": 70,
+            "comment": "Self review",
         }
 
         response = self.client.post(url, payload, format="json")
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(Evaluation.objects.count(), 1)
 
-    def test_submit_and_finalize_evaluation(self):
+    def test_supervisor_can_adjust_evaluation(self):
         evaluation = Evaluation.objects.create(
             university=self.university,
-            evaluator=self.supervisor,
+            evaluator=self.patient,
+            evaluator_role=Role.PATIENT,
             student=self.student,
-            target_type="case",
-            case=self.case,
-            score=88,
+            target_type=EvaluationTargetType.APPOINTMENT,
+            target_id=self.appointment.id,
+            appointment=self.appointment,
+            score=80,
+            final_score=80,
+            status=EvaluationStatus.CREATED,
         )
 
-        submit_url = reverse("evaluations-submit", args=[evaluation.id])
-        finalize_url = reverse("evaluations-finalize", args=[evaluation.id])
+        self.client.force_authenticate(self.supervisor)
+        url = reverse("evaluations:evaluations-adjust", args=[evaluation.id])
+        payload = {"new_score": 90, "reason": "Adjusted after review"}
 
-        response_submit = self.client.post(submit_url)
-        self.assertEqual(response_submit.status_code, status.HTTP_200_OK)
-        evaluation.refresh_from_db()
-        self.assertEqual(evaluation.status, EvaluationStatus.SUBMITTED)
-
-        response_finalize = self.client.post(finalize_url)
-        self.assertEqual(response_finalize.status_code, status.HTTP_200_OK)
-        evaluation.refresh_from_db()
-        self.assertEqual(evaluation.status, EvaluationStatus.FINAL)
-
-    def test_final_evaluation_cannot_be_modified(self):
-        evaluation = Evaluation.objects.create(
-            university=self.university,
-            evaluator=self.supervisor,
-            student=self.student,
-            target_type="case",
-            case=self.case,
-            score=92,
-            status=EvaluationStatus.FINAL,
-            finalized_at=timezone.now(),
-        )
-
-        url = reverse("evaluations-detail", args=[evaluation.id])
-        payload = {"score": 60}
         response = self.client.patch(url, payload, format="json")
-        self.assertIn(response.status_code, {status.HTTP_403_FORBIDDEN, status.HTTP_400_BAD_REQUEST})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        evaluation.refresh_from_db()
+        self.assertEqual(evaluation.status, EvaluationStatus.ADJUSTED)
+        self.assertEqual(evaluation.final_score, 90)
+
+    def test_admin_can_finalize_evaluation(self):
+        evaluation = Evaluation.objects.create(
+            university=self.university,
+            evaluator=self.supervisor,
+            evaluator_role=Role.SUPERVISOR,
+            student=self.student,
+            target_type=EvaluationTargetType.STUDENT,
+            target_id=self.student.id,
+            score=88,
+            final_score=88,
+            status=EvaluationStatus.UNDER_REVIEW,
+        )
+
+        self.client.force_authenticate(self.admin)
+        url = reverse("evaluations:evaluations-finalize", args=[evaluation.id])
+
+        response = self.client.post(url, {}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        evaluation.refresh_from_db()
+        self.assertEqual(evaluation.status, EvaluationStatus.FINALIZED)
+
+    def test_student_rating_endpoint(self):
+        Evaluation.objects.create(
+            university=self.university,
+            evaluator=self.patient,
+            evaluator_role=Role.PATIENT,
+            student=self.student,
+            target_type=EvaluationTargetType.STUDENT,
+            target_id=self.student.id,
+            score=80,
+            final_score=80,
+            status=EvaluationStatus.FINALIZED,
+        )
+        Evaluation.objects.create(
+            university=self.university,
+            evaluator=self.supervisor,
+            evaluator_role=Role.SUPERVISOR,
+            student=self.student,
+            target_type=EvaluationTargetType.STUDENT,
+            target_id=self.student.id,
+            score=90,
+            final_score=90,
+            status=EvaluationStatus.FINALIZED,
+        )
+        Evaluation.objects.create(
+            university=self.university,
+            evaluator=self.admin,
+            evaluator_role=Role.UNIVERSITY_ADMIN,
+            student=self.student,
+            target_type=EvaluationTargetType.STUDENT,
+            target_id=self.student.id,
+            score=70,
+            final_score=70,
+            status=EvaluationStatus.FINALIZED,
+        )
+
+        self.client.force_authenticate(self.supervisor)
+        url = reverse("evaluations:student-evaluation-rating", args=[self.student.id])
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["data"]["final_rating"], 82.5)

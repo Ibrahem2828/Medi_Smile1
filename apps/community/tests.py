@@ -49,10 +49,13 @@ class CommunityAPITests(APITestCase):
         Evaluation.objects.create(
             university=self.university,
             evaluator=self.supervisor,
+            evaluator_role=Role.SUPERVISOR,
             student=self.student,
-            target_type="case",
+            target_type="student",
+            target_id=self.student.id,
             score=90,
-            status=EvaluationStatus.FINAL,
+            final_score=90,
+            status=EvaluationStatus.FINALIZED,
         )
 
         self.client.force_authenticate(self.patient)

@@ -1,10 +1,10 @@
 # apps/evaluations/models.py
 import uuid
-from django.db import models
 from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.db import models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
-from django.core.exceptions import ValidationError
 
 from apps.accounts.models import Role
 
@@ -14,19 +14,22 @@ from apps.accounts.models import Role
 # ============================================================
 
 class EvaluationStatus(models.TextChoices):
-    DRAFT = "draft", _("Draft")
-    SUBMITTED = "submitted", _("Submitted")
-    FINAL = "final", _("Final")
+    CREATED = "created", _("Created")
+    UNDER_REVIEW = "under_review", _("Under Review")
+    ADJUSTED = "adjusted", _("Adjusted")
+    FINALIZED = "finalized", _("Finalized")
 
 
 class EvaluationTargetType(models.TextChoices):
     CASE = "case", _("Case")
     SESSION = "session", _("Session")
     APPOINTMENT = "appointment", _("Appointment")
+    STUDENT = "student", _("Student")
+    SUPERVISOR = "supervisor", _("Supervisor")
 
 
 # ============================================================
-# Model
+# Models
 # ============================================================
 
 class Evaluation(models.Model):
@@ -34,10 +37,9 @@ class Evaluation(models.Model):
     Academic & clinical evaluation.
 
     Core rules:
-    - Evaluator: Supervisor or University Admin
-    - Student: must belong to same university
-    - Exactly ONE target (case OR session OR appointment)
-    - FINAL evaluations are immutable
+    - Evaluator role is stored explicitly (hierarchical evaluation).
+    - Target is one of: case / session / appointment / student / supervisor.
+    - FINALIZED evaluations are immutable.
     """
 
     id = models.UUIDField(
@@ -64,12 +66,21 @@ class Evaluation(models.Model):
         related_name="given_evaluations",
         limit_choices_to={
             "role__name__in": [
+                Role.PATIENT,
+                Role.STUDENT,
                 Role.SUPERVISOR,
                 Role.UNIVERSITY_ADMIN,
             ]
         },
         verbose_name=_("Evaluator"),
-        help_text=_("Supervisor or university admin who performed the evaluation"),
+        help_text=_("User who performed the evaluation"),
+    )
+
+    evaluator_role = models.CharField(
+        max_length=30,
+        choices=Role.ROLE_CHOICES,
+        verbose_name=_("Evaluator Role"),
+        help_text=_("Role snapshot at the time of evaluation"),
     )
 
     student = models.ForeignKey(
@@ -78,6 +89,8 @@ class Evaluation(models.Model):
         related_name="received_evaluations",
         limit_choices_to={"role__name": Role.STUDENT},
         verbose_name=_("Student"),
+        null=True,
+        blank=True,
     )
 
     # ============================================================
@@ -88,6 +101,13 @@ class Evaluation(models.Model):
         max_length=20,
         choices=EvaluationTargetType.choices,
         verbose_name=_("Evaluation Target Type"),
+    )
+
+    target_id = models.UUIDField(
+        null=True,
+        blank=True,
+        verbose_name=_("Target ID"),
+        help_text=_("UUID of the evaluated target (case/appointment/student/etc.)"),
     )
 
     case = models.ForeignKey(
@@ -124,13 +144,20 @@ class Evaluation(models.Model):
     status = models.CharField(
         max_length=20,
         choices=EvaluationStatus.choices,
-        default=EvaluationStatus.DRAFT,
+        default=EvaluationStatus.CREATED,
         verbose_name=_("Status"),
     )
 
     score = models.PositiveSmallIntegerField(
-        verbose_name=_("Score"),
+        verbose_name=_("Original Score"),
         help_text=_("Score from 0 to 100"),
+    )
+
+    final_score = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        verbose_name=_("Final Score"),
+        help_text=_("Final score after adjustments (0-100)"),
     )
 
     rubric = models.JSONField(
@@ -183,13 +210,14 @@ class Evaluation(models.Model):
         ordering = ["-created_at"]
 
         constraints = [
-            # Score range safety
             models.CheckConstraint(
                 check=models.Q(score__gte=0) & models.Q(score__lte=100),
                 name="evaluation_score_between_0_and_100",
             ),
-
-            # Exactly one target must be set
+            models.CheckConstraint(
+                check=models.Q(final_score__isnull=True) | (models.Q(final_score__gte=0) & models.Q(final_score__lte=100)),
+                name="evaluation_final_score_between_0_and_100",
+            ),
             models.CheckConstraint(
                 check=(
                     (
@@ -209,26 +237,26 @@ class Evaluation(models.Model):
                         models.Q(case__isnull=True) &
                         models.Q(session__isnull=True) &
                         models.Q(appointment__isnull=False)
+                    ) |
+                    (
+                        models.Q(target_type=EvaluationTargetType.STUDENT) &
+                        models.Q(case__isnull=True) &
+                        models.Q(session__isnull=True) &
+                        models.Q(appointment__isnull=True)
+                    ) |
+                    (
+                        models.Q(target_type=EvaluationTargetType.SUPERVISOR) &
+                        models.Q(case__isnull=True) &
+                        models.Q(session__isnull=True) &
+                        models.Q(appointment__isnull=True)
                     )
                 ),
-                name="evaluation_exactly_one_target",
-            ),
-
-            # Prevent duplicate evaluations by same evaluator on same target
-            models.UniqueConstraint(
-                fields=["evaluator", "student", "case"],
-                condition=models.Q(case__isnull=False),
-                name="unique_case_evaluation_per_evaluator",
+                name="evaluation_target_consistency",
             ),
             models.UniqueConstraint(
-                fields=["evaluator", "student", "session"],
-                condition=models.Q(session__isnull=False),
-                name="unique_session_evaluation_per_evaluator",
-            ),
-            models.UniqueConstraint(
-                fields=["evaluator", "student", "appointment"],
-                condition=models.Q(appointment__isnull=False),
-                name="unique_appointment_evaluation_per_evaluator",
+                fields=["evaluator", "target_type", "target_id"],
+                condition=models.Q(target_id__isnull=False),
+                name="unique_evaluation_per_target",
             ),
         ]
 
@@ -242,26 +270,29 @@ class Evaluation(models.Model):
         """
 
         # Student must be student
-        if getattr(getattr(self.student, "role", None), "name", None) != Role.STUDENT:
+        if self.student_id and getattr(getattr(self.student, "role", None), "name", None) != Role.STUDENT:
             raise ValidationError({"student": _("Selected user must be a student.")})
 
-        # Evaluator role check (allow patient feedback)
-        if getattr(getattr(self.evaluator, "role", None), "name", None) not in {
+        evaluator_role = getattr(getattr(self.evaluator, "role", None), "name", None)
+        if evaluator_role not in {
+            Role.PATIENT,
+            Role.STUDENT,
             Role.SUPERVISOR,
             Role.UNIVERSITY_ADMIN,
-            Role.PATIENT,
         }:
-            raise ValidationError({"evaluator": _("Evaluator must be supervisor, university admin, or patient.")})
+            raise ValidationError({"evaluator": _("Evaluator role is not allowed.")})
 
-        # University consistency
-        if self.student and self.university and getattr(self.student, "university_id", None) != self.university_id:
-            raise ValidationError(_("Student must belong to the same university as the evaluation."))
+        if self.student and self.university:
+            student_university_id = getattr(getattr(self.student, "studentprofile_profile", None), "university_id", None)
+            if student_university_id and student_university_id != self.university_id:
+                raise ValidationError(_("Student must belong to the same university as the evaluation."))
 
-        # Target consistency (defensive – DB already enforces)
+        # Target consistency (defensive)
         targets = {
             EvaluationTargetType.CASE: self.case,
             EvaluationTargetType.SESSION: self.session,
             EvaluationTargetType.APPOINTMENT: self.appointment,
+            EvaluationTargetType.STUDENT: self.student,
         }
 
         for t_type, value in targets.items():
@@ -273,6 +304,21 @@ class Evaluation(models.Model):
                     % {"type": t_type}
                 )
 
+        if self.target_type == EvaluationTargetType.CASE and self.case_id and self.target_id and self.target_id != self.case_id:
+            raise ValidationError({"target_id": _("Target id must match the case id.")})
+        if self.target_type == EvaluationTargetType.SESSION and self.session_id and self.target_id and self.target_id != self.session_id:
+            raise ValidationError({"target_id": _("Target id must match the session id.")})
+        if self.target_type == EvaluationTargetType.APPOINTMENT and self.appointment_id and self.target_id and self.target_id != self.appointment_id:
+            raise ValidationError({"target_id": _("Target id must match the appointment id.")})
+        if self.target_type == EvaluationTargetType.STUDENT and self.student_id and self.target_id and self.target_id != self.student_id:
+            raise ValidationError({"target_id": _("Target id must match the student id.")})
+
+        if self.target_type == EvaluationTargetType.SUPERVISOR and not self.target_id:
+            raise ValidationError({"target_id": _("Supervisor target_id is required.")})
+
+        if not self.target_id:
+            raise ValidationError({"target_id": _("Target id is required.")})
+
     # ============================================================
     # Properties
     # ============================================================
@@ -280,7 +326,51 @@ class Evaluation(models.Model):
     @property
     def is_locked(self) -> bool:
         """Final evaluations cannot be modified."""
-        return self.status == EvaluationStatus.FINAL
+        return self.status == EvaluationStatus.FINALIZED
 
     def __str__(self):
-        return f"Evaluation ({self.get_target_type_display()}) - {self.student}"
+        return f"Evaluation ({self.get_target_type_display()}) - {self.evaluator}"
+
+
+class EvaluationAdjustment(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    evaluation = models.ForeignKey(
+        Evaluation,
+        on_delete=models.CASCADE,
+        related_name="adjustments",
+        verbose_name=_("Evaluation"),
+    )
+
+    adjusted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="evaluation_adjustments",
+        verbose_name=_("Adjusted By"),
+    )
+
+    adjusted_role = models.CharField(
+        max_length=30,
+        choices=Role.ROLE_CHOICES,
+        verbose_name=_("Adjusted Role"),
+    )
+
+    old_score = models.PositiveSmallIntegerField(verbose_name=_("Old Score"))
+    new_score = models.PositiveSmallIntegerField(verbose_name=_("New Score"))
+
+    reason = models.TextField(verbose_name=_("Adjustment Reason"))
+
+    adjusted_at = models.DateTimeField(auto_now_add=True, verbose_name=_("Adjusted At"))
+
+    class Meta:
+        db_table = "evaluation_adjustments"
+        verbose_name = _("Evaluation Adjustment")
+        verbose_name_plural = _("Evaluation Adjustments")
+        ordering = ["-adjusted_at"]
+        indexes = [
+            models.Index(fields=["evaluation", "adjusted_at"], name="idx_eval_adj_eval_time"),
+            models.Index(fields=["adjusted_by"], name="idx_eval_adj_by"),
+        ]
+
+    def __str__(self) -> str:
+        return f"Adjustment {self.id} for Evaluation {self.evaluation_id}"

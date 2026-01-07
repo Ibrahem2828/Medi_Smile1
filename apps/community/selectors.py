@@ -2,7 +2,7 @@
 from django.db.models import Count, Avg
 
 from apps.accounts.models import Role
-from apps.evaluations.models import Evaluation, EvaluationStatus
+from apps.evaluations.models import Evaluation, EvaluationStatus, EvaluationTargetType
 from .models import Content, ContentLike, ContentComment, CommunityApprovalLog
 
 
@@ -133,7 +133,8 @@ def approval_logs_for_user(user):
 def student_public_rating(student):
     qs = Evaluation.objects.filter(
         student=student,
-        status=EvaluationStatus.FINAL,
+        target_type=EvaluationTargetType.STUDENT,
+        status=EvaluationStatus.FINALIZED,
     )
 
     if not qs.exists():
@@ -144,7 +145,7 @@ def student_public_rating(student):
             "total_evaluations": 0,
         }
 
-    avg_score = qs.aggregate(avg=Avg("score"))["avg"] or 0
+    avg_score = qs.aggregate(avg=Avg("final_score"))["avg"] or 0
 
     if avg_score <= 20:
         stars = 1

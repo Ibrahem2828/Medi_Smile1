@@ -1,0 +1,116 @@
+{
+  "base_url": "/api/reports",
+  "responses": {
+    "success": {
+      "status": "success",
+      "data": "<object-or-array>"
+    },
+    "error": {
+      "status": "error",
+      "message": "<string>",
+      "errors": "<object-or-string>"
+    }
+  },
+  "endpoints": [
+    {
+      "name": "Create Report (Draft)",
+      "method": "POST",
+      "path": "/api/reports/",
+      "roles": ["student", "supervisor", "university_admin"],
+      "request": {
+        "report_type": "clinical_case",
+        "target_type": "case",
+        "target_id": "<case_uuid>",
+        "title": "Case Report",
+        "description": "Short summary",
+        "content": {"diagnosis": "...", "sessions": []},
+        "attachments": [{"type": "before", "url": "..."}]
+      },
+      "responses": {
+        "201": {
+          "status": "success",
+          "data": {
+            "id": "<uuid>",
+            "status": "draft",
+            "report_type": "clinical_case",
+            "target_type": "case",
+            "target_id": "<case_uuid>"
+          }
+        }
+      }
+    },
+    {
+      "name": "List Reports",
+      "method": "GET",
+      "path": "/api/reports/",
+      "roles": ["student", "supervisor", "university_admin", "patient"],
+      "query_params": ["status", "report_type", "target_type", "target_id"],
+      "responses": {
+        "200": {
+          "status": "success",
+          "data": [{"id": "<uuid>", "status": "approved"}]
+        }
+      }
+    },
+    {
+      "name": "Get Report",
+      "method": "GET",
+      "path": "/api/reports/{id}/",
+      "roles": ["student", "supervisor", "university_admin", "patient"],
+      "responses": {
+        "200": {"status": "success", "data": {"id": "<uuid>", "status": "approved"}},
+        "404": {"status": "error", "message": "Not found", "errors": {"detail": "Not found."}}
+      }
+    },
+    {
+      "name": "Update Report (Draft/Rejected)",
+      "method": "PATCH",
+      "path": "/api/reports/{id}/",
+      "roles": ["student", "supervisor", "university_admin"],
+      "request": {"title": "Updated", "content": {"summary": "..."}},
+      "responses": {
+        "200": {"status": "success", "data": {"id": "<uuid>", "status": "draft"}},
+        "403": {"status": "error", "message": "Only draft/rejected reports can be updated.", "errors": {"detail": "..."}}
+      }
+    },
+    {
+      "name": "Submit Report",
+      "method": "POST",
+      "path": "/api/reports/{id}/submit/",
+      "roles": ["student", "supervisor", "university_admin"],
+      "responses": {
+        "200": {"status": "success", "data": {"id": "<uuid>", "status": "submitted"}}
+      }
+    },
+    {
+      "name": "Approve Report",
+      "method": "POST",
+      "path": "/api/reports/{id}/approve/",
+      "roles": ["supervisor"],
+      "request": {"review_notes": "Looks good", "score": 90},
+      "responses": {
+        "200": {"status": "success", "data": {"id": "<uuid>", "status": "locked"}}
+      }
+    },
+    {
+      "name": "Reject Report",
+      "method": "POST",
+      "path": "/api/reports/{id}/reject/",
+      "roles": ["supervisor"],
+      "request": {"review_notes": "Missing images"},
+      "responses": {
+        "200": {"status": "success", "data": {"id": "<uuid>", "status": "rejected"}}
+      }
+    },
+    {
+      "name": "Export Report",
+      "method": "POST",
+      "path": "/api/reports/{id}/export/",
+      "roles": ["university_admin"],
+      "request": {"format": "pdf"},
+      "responses": {
+        "200": {"status": "success", "data": {"file_url": "/media/exports/report_<uuid>.pdf"}}
+      }
+    }
+  ]
+}

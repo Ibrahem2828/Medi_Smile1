@@ -22,37 +22,38 @@ class ReportAdmin(BaseOptimizedAdmin):
     # ============================================================
     list_display = (
         "id",
-        "student",
+        "author",
         "report_type",
+        "target_type",
+        "status",
         "university",
-        "generated_by",
-        "generated_at",
+        "approved_by",
+        "approved_at",
         "is_active",
     )
 
     list_filter = (
         "report_type",
+        "status",
         "is_active",
         "university",
-        "generated_at",
+        "created_at",
     )
 
     search_fields = (
-        "student__username",
-        "student__email",
-        "student__first_name",
-        "student__last_name",
+        "author__username",
+        "author__email",
         "title",
         "description",
     )
 
-    ordering = ("-generated_at",)
-    date_hierarchy = "generated_at"
+    ordering = ("-created_at",)
+    date_hierarchy = "created_at"
 
     list_select_related = (
-        "student",
+        "author",
         "university",
-        "generated_by",
+        "approved_by",
     )
 
     # ============================================================
@@ -76,9 +77,14 @@ class ReportAdmin(BaseOptimizedAdmin):
             {
                 "fields": (
                     "id",
+                    "author",
+                    "author_role",
                     "student",
                     "university",
                     "report_type",
+                    "target_type",
+                    "target_id",
+                    "status",
                     "title",
                     "description",
                 )
@@ -99,11 +105,15 @@ class ReportAdmin(BaseOptimizedAdmin):
             },
         ),
         (
-            _("Generation Metadata"),
+            _("Review"),
             {
                 "fields": (
-                    "generated_by",
-                    "generated_at",
+                    "review_notes",
+                    "approved_by",
+                    "approved_at",
+                    "submitted_at",
+                    "rejected_at",
+                    "locked_at",
                 )
             },
         ),

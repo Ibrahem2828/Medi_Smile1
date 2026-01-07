@@ -39,6 +39,12 @@
             "category": "educational",
             "author": "<uuid>",
             "university": "<uuid>",
+            "image_urls": {
+              "original": null,
+              "large": null,
+              "medium": null,
+              "thumb": null
+            },
             "status": "pending",
             "created_at": "2026-01-07T00:00:00Z"
           }
@@ -62,6 +68,12 @@
               "title": "...",
               "content": "...",
               "content_type": "text",
+              "image_urls": {
+                "original": "https://.../media/community/content/...",
+                "large": "https://.../media/community/content/large/...",
+                "medium": "https://.../media/community/content/medium/...",
+                "thumb": "https://.../media/community/content/thumb/..."
+              },
               "status": "approved"
             }
           ]
@@ -74,7 +86,7 @@
       "path": "/api/community/posts/{id}/",
       "roles": ["patient", "student", "supervisor", "university_admin"],
       "responses": {
-        "200": {"status": "success", "data": {"id": "<uuid>", "status": "approved"}},
+        "200": {"status": "success", "data": {"id": "<uuid>", "status": "approved", "image_urls": {"original": "...", "large": "...", "medium": "...", "thumb": "..."}}},
         "404": {"status": "error", "message": "Content not found.", "errors": {"detail": "Not found."}}
       }
     },

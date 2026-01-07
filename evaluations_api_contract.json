@@ -1,0 +1,113 @@
+{
+  "base_url": "/api/evaluations",
+  "responses": {
+    "success": {
+      "status": "success",
+      "data": "<object-or-array>"
+    },
+    "error": {
+      "status": "error",
+      "message": "<string>",
+      "errors": "<object-or-string>"
+    }
+  },
+  "endpoints": [
+    {
+      "name": "Create Evaluation",
+      "method": "POST",
+      "path": "/api/evaluations/",
+      "roles": ["patient", "student", "supervisor", "university_admin"],
+      "request": {
+        "target_type": "appointment|case|student|supervisor",
+        "target_id": "<uuid>",
+        "original_score": 85,
+        "score": 85,
+        "comment": "Optional comment",
+        "rubric": {"skill": 4, "communication": 5}
+      },
+      "responses": {
+        "201": {
+          "status": "success",
+          "data": {
+            "id": "<uuid>",
+            "status": "created",
+            "target_type": "appointment",
+            "target_id": "<uuid>",
+            "original_score": 85,
+            "final_score": 85
+          }
+        },
+        "403": {
+          "status": "error",
+          "message": "You are not allowed to create evaluations.",
+          "errors": {"detail": "..."}
+        }
+      }
+    },
+    {
+      "name": "List Evaluations",
+      "method": "GET",
+      "path": "/api/evaluations/",
+      "roles": ["patient", "student", "supervisor", "university_admin"],
+      "query_params": ["status", "target_type", "evaluator_role", "student_id", "target_id"],
+      "responses": {
+        "200": {
+          "status": "success",
+          "data": [{"id": "<uuid>", "status": "created"}]
+        }
+      }
+    },
+    {
+      "name": "Get Evaluation",
+      "method": "GET",
+      "path": "/api/evaluations/{id}/",
+      "roles": ["patient", "student", "supervisor", "university_admin"],
+      "responses": {
+        "200": {"status": "success", "data": {"id": "<uuid>", "status": "created"}},
+        "404": {"status": "error", "message": "Not found.", "errors": {"detail": "Not found."}}
+      }
+    },
+    {
+      "name": "Adjust Evaluation",
+      "method": "PATCH",
+      "path": "/api/evaluations/{id}/adjust/",
+      "roles": ["supervisor", "university_admin"],
+      "request": {"new_score": 90, "reason": "Adjusted after review"},
+      "responses": {
+        "200": {"status": "success", "data": {"id": "<uuid>", "status": "adjusted"}},
+        "403": {"status": "error", "message": "Only supervisors or university admins can adjust evaluations.", "errors": {"detail": "..."}}
+      }
+    },
+    {
+      "name": "Finalize Evaluation",
+      "method": "POST",
+      "path": "/api/evaluations/{id}/finalize/",
+      "roles": ["university_admin"],
+      "responses": {
+        "200": {"status": "success", "data": {"id": "<uuid>", "status": "finalized"}},
+        "403": {"status": "error", "message": "Only university admins can finalize evaluations.", "errors": {"detail": "..."}}
+      }
+    },
+    {
+      "name": "Student Rating",
+      "method": "GET",
+      "path": "/api/evaluations/students/{id}/rating/",
+      "roles": ["patient", "student", "supervisor", "university_admin"],
+      "responses": {
+        "200": {
+          "status": "success",
+          "data": {
+            "student_id": "<uuid>",
+            "final_rating": 82.5,
+            "total_evaluations": 12,
+            "components": {
+              "patient": {"average": 80.2, "count": 5, "weight": 0.35},
+              "supervisor": {"average": 88.5, "count": 5, "weight": 0.45},
+              "university_admin": {"average": 75.0, "count": 2, "weight": 0.2}
+            }
+          }
+        }
+      }
+    }
+  ]
+}

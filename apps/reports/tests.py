@@ -3,12 +3,10 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from apps.accounts.models import User, Role
+from apps.accounts.models import User, Role, StudentProfile, SupervisorProfile, UniversityAdminProfile, PatientProfile
 from apps.universities.models import University
-from apps.reports.models import Report
-from apps.notifications.models import Notification
-from apps.audit.models import AuditLog
 from apps.cases.models import Case
+from apps.reports.models import Report
 
 
 class ReportsAPITest(APITestCase):
@@ -16,119 +14,108 @@ class ReportsAPITest(APITestCase):
     def setUp(self):
         self.university = University.objects.create(name="Test Uni")
 
+        self.student_role, _ = Role.objects.get_or_create(name=Role.STUDENT)
+        self.supervisor_role, _ = Role.objects.get_or_create(name=Role.SUPERVISOR)
+        self.admin_role, _ = Role.objects.get_or_create(name=Role.UNIVERSITY_ADMIN)
+        self.patient_role, _ = Role.objects.get_or_create(name=Role.PATIENT)
+
         self.student = User.objects.create_user(
             username="student",
             password="pass",
-            role=Role.objects.get(name=Role.STUDENT),
-            university=self.university,
+            role=self.student_role,
         )
+        StudentProfile.objects.create(user=self.student, university=self.university)
 
         self.supervisor = User.objects.create_user(
             username="supervisor",
             password="pass",
-            role=Role.objects.get(name=Role.SUPERVISOR),
-            university=self.university,
+            role=self.supervisor_role,
         )
+        SupervisorProfile.objects.create(user=self.supervisor, university=self.university)
 
         self.admin = User.objects.create_user(
             username="admin",
             password="pass",
-            role=Role.objects.get(name=Role.UNIVERSITY_ADMIN),
-            university=self.university,
+            role=self.admin_role,
         )
+        UniversityAdminProfile.objects.create(user=self.admin, university=self.university)
 
-        self.tech = User.objects.create_user(
-            username="tech",
+        self.patient = User.objects.create_user(
+            username="patient",
             password="pass",
-            role=Role.objects.get(name=Role.TECH_SUPPORT),
+            role=self.patient_role,
         )
+        PatientProfile.objects.create(user=self.patient, university=self.university)
 
         self.case = Case.objects.create(
-            patient=self.student,  # simplified for test
+            title="Case",
+            description="Desc",
+            patient=self.patient,
             university=self.university,
             supervisor=self.supervisor,
             student=self.student,
         )
 
-    # ---------------------------------------------------------
-    # Permissions
-    # ---------------------------------------------------------
+    def test_student_create_submit_and_supervisor_approve(self):
+        self.client.force_authenticate(self.student)
+        create_url = reverse("reports:report-list")
+        payload = {
+            "report_type": "clinical_case",
+            "target_type": "case",
+            "target_id": str(self.case.id),
+            "content": {"summary": "Case summary"},
+        }
 
-    def test_student_can_view_own_reports_only(self):
+        res = self.client.post(create_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        report_id = res.data["id"]
+
+        submit_url = reverse("reports:report-submit", args=[report_id])
+        res = self.client.post(submit_url, {}, format="json")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["status"], Report.Status.SUBMITTED)
+
+        self.client.force_authenticate(self.supervisor)
+        approve_url = reverse("reports:report-approve", args=[report_id])
+        res = self.client.post(approve_url, {"review_notes": "Good"}, format="json")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["status"], Report.Status.LOCKED)
+
+    def test_student_cannot_update_after_approval(self):
         report = Report.objects.create(
+            author=self.student,
+            author_role=Role.STUDENT,
             student=self.student,
             university=self.university,
-            report_type="academic",
-            file_url="/r.pdf",
+            report_type=Report.ReportType.CLINICAL_CASE,
+            target_type=Report.TargetType.CASE,
+            target_id=self.case.id,
+            content={"summary": "x"},
+            status=Report.Status.LOCKED,
+            approved_by=self.supervisor,
+            approved_at=None,
         )
 
         self.client.force_authenticate(self.student)
         url = reverse("reports:report-detail", args=[report.id])
-        res = self.client.get(url)
-
-        self.assertEqual(res.status_code, status.HTTP_200_OK)
-
-    def test_student_cannot_generate_report(self):
-        self.client.force_authenticate(self.student)
-        url = reverse("reports:report-list")
-        res = self.client.post(url, {})
+        res = self.client.patch(url, {"title": "Updated"}, format="json")
         self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
 
-    def test_supervisor_can_generate_report(self):
-        self.client.force_authenticate(self.supervisor)
-        url = reverse("reports:report-list")
-
-        payload = {
-            "student_id": str(self.student.id),
-            "university_id": str(self.university.id),
-            "report_type": "academic",
-            "file_url": "/test.pdf",
-        }
-
-        res = self.client.post(url, payload, format="json")
-        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
-
-    # ---------------------------------------------------------
-    # Business Rules
-    # ---------------------------------------------------------
-
-    def test_report_is_immutable(self):
+    def test_patient_can_view_case_report(self):
         report = Report.objects.create(
+            author=self.student,
+            author_role=Role.STUDENT,
             student=self.student,
             university=self.university,
-            report_type="academic",
-            file_url="/r.pdf",
+            report_type=Report.ReportType.CLINICAL_CASE,
+            target_type=Report.TargetType.CASE,
+            target_id=self.case.id,
+            content={"summary": "x"},
+            status=Report.Status.LOCKED,
+            approved_by=self.supervisor,
         )
 
-        report.title = "Hacked"
-        with self.assertRaises(RuntimeError):
-            report.save()
-
-    # ---------------------------------------------------------
-    # Audit + Notification
-    # ---------------------------------------------------------
-
-    def test_submit_report_creates_audit_and_notification(self):
-        self.client.force_authenticate(self.student)
-
-        url = reverse("reports:submit-report", args=[self.case.id])
-        payload = {"content": "Case report content"}
-
-        res = self.client.post(url, payload, format="json")
-        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
-
-        # Audit log created
-        self.assertTrue(
-            AuditLog.objects.filter(
-                action="reports.report.submitted",
-                user=self.student,
-            ).exists()
-        )
-
-        # Notification sent to supervisor
-        self.assertTrue(
-            Notification.objects.filter(
-                recipient=self.supervisor,
-                notification_type="report_submitted",
-            ).exists()
-        )
+        self.client.force_authenticate(self.patient)
+        url = reverse("reports:report-detail", args=[report.id])
+        res = self.client.get(url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)

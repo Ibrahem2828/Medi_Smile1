@@ -17,6 +17,7 @@ class ContentSerializer(serializers.ModelSerializer):
     author_name = serializers.SerializerMethodField()
     university_name = serializers.CharField(source="university.name", read_only=True)
     approved_by_name = serializers.SerializerMethodField()
+    image_urls = serializers.SerializerMethodField()
 
     likes_count = serializers.IntegerField(read_only=True)
     comments_count = serializers.IntegerField(read_only=True)
@@ -31,6 +32,7 @@ class ContentSerializer(serializers.ModelSerializer):
             "content_type",
             "category",
             "file",
+            "image_urls",
             "url",
             "tags",
             "author",
@@ -62,6 +64,24 @@ class ContentSerializer(serializers.ModelSerializer):
         if not obj.approved_by:
             return None
         return obj.approved_by.get_full_name() or obj.approved_by.username
+
+    def get_image_urls(self, obj):
+        request = self.context.get("request")
+
+        def _build_url(file_field):
+            if not file_field:
+                return None
+            url = getattr(file_field, "url", None)
+            if not url:
+                return None
+            return request.build_absolute_uri(url) if request else url
+
+        return {
+            "original": _build_url(obj.file),
+            "large": _build_url(obj.image_large),
+            "medium": _build_url(obj.image_medium),
+            "thumb": _build_url(obj.image_thumb),
+        }
 
 
 # ============================================================

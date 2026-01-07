@@ -1,7 +1,12 @@
 # apps/community/services.py
 import logging
+from io import BytesIO
+
 from django.core.exceptions import PermissionDenied, ValidationError as DjangoValidationError
+from django.core.files.base import ContentFile
 from django.utils import timezone
+
+from PIL import Image, ImageOps
 
 from apps.accounts.models import Role
 from apps.audit.services import log_audit_event
@@ -11,6 +16,59 @@ from .models import Content, ContentLike, ContentComment, CommunityApprovalLog
 from .selectors import _resolve_university_id
 
 logger = logging.getLogger(__name__)
+
+IMAGE_VARIANTS = {
+    "large": 1600,
+    "medium": 900,
+    "thumb": 360,
+}
+
+
+def _build_image_variant(image: Image.Image, *, max_size: int) -> ContentFile:
+    image = ImageOps.exif_transpose(image)
+    if image.mode not in ("RGB", "L"):
+        image = image.convert("RGB")
+
+    image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG", quality=85, optimize=True)
+    return ContentFile(buffer.getvalue())
+
+
+def generate_image_variants(content: Content) -> None:
+    try:
+        source = Image.open(content.file)
+    except Exception as exc:
+        logger.warning("Community image processing failed: %s", exc)
+        return
+
+    base_name = f"{content.id}"
+    content.image_large.save(
+        f"{base_name}_large.jpg",
+        _build_image_variant(source.copy(), max_size=IMAGE_VARIANTS["large"]),
+        save=False,
+    )
+    content.image_medium.save(
+        f"{base_name}_medium.jpg",
+        _build_image_variant(source.copy(), max_size=IMAGE_VARIANTS["medium"]),
+        save=False,
+    )
+    content.image_thumb.save(
+        f"{base_name}_thumb.jpg",
+        _build_image_variant(source.copy(), max_size=IMAGE_VARIANTS["thumb"]),
+        save=False,
+    )
+    content.save(update_fields=["image_large", "image_medium", "image_thumb", "updated_at"])
+
+
+def clear_image_variants(content: Content) -> None:
+    content.image_large.delete(save=False)
+    content.image_medium.delete(save=False)
+    content.image_thumb.delete(save=False)
+    content.image_large = None
+    content.image_medium = None
+    content.image_thumb = None
+    content.save(update_fields=["image_large", "image_medium", "image_thumb", "updated_at"])
 
 
 # ============================================================
@@ -36,6 +94,9 @@ def create_content(*, author, data: dict) -> Content:
         )
         content.full_clean()
         content.save()
+
+        if content.content_type == Content.ContentType.IMAGE and content.file:
+            generate_image_variants(content)
     except DjangoValidationError as exc:
         detail = getattr(exc, "message_dict", None) or getattr(exc, "messages", None) or str(exc)
         logger.warning("Community content validation failed: %s", detail)
@@ -236,10 +297,22 @@ def update_content(*, user, content: Content, data: dict) -> Content:
     if content.author_id != user.id:
         raise PermissionDenied("You can only update your own content.")
 
+    regenerate_images = False
+    if "file" in data or "content_type" in data:
+        regenerate_images = True
+
     for field, value in data.items():
         setattr(content, field, value)
+
     content.full_clean()
     content.save()
+
+    if regenerate_images:
+        if content.content_type == Content.ContentType.IMAGE and content.file:
+            generate_image_variants(content)
+        else:
+            clear_image_variants(content)
+
     return content
 
 

@@ -72,6 +72,27 @@ class Content(models.Model):
         verbose_name=_("Attached File"),
     )
 
+    image_large = models.ImageField(
+        upload_to="community/content/large/",
+        blank=True,
+        null=True,
+        verbose_name=_("Large Image"),
+    )
+
+    image_medium = models.ImageField(
+        upload_to="community/content/medium/",
+        blank=True,
+        null=True,
+        verbose_name=_("Medium Image"),
+    )
+
+    image_thumb = models.ImageField(
+        upload_to="community/content/thumb/",
+        blank=True,
+        null=True,
+        verbose_name=_("Thumbnail Image"),
+    )
+
     url = models.URLField(
         blank=True,
         null=True,

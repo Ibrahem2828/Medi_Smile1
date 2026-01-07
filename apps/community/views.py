@@ -93,6 +93,11 @@ class ContentViewSet(viewsets.GenericViewSet):
             return ContentCommentCreateSerializer
         return ContentSerializer
 
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx["request"] = self.request
+        return ctx
+
     def _error_response(self, *, message, errors=None, status_code=status.HTTP_400_BAD_REQUEST):
         return Response(
             {"status": "error", "message": message, "errors": errors},
@@ -129,7 +134,7 @@ class ContentViewSet(viewsets.GenericViewSet):
             if content_type:
                 qs = qs.filter(content_type=content_type)
 
-            return Response({"status": "success", "data": ContentSerializer(qs, many=True).data})
+            return Response({"status": "success", "data": ContentSerializer(qs, many=True, context=self.get_serializer_context()).data})
         except Exception as exc:
             logger.exception("Community list failed", exc_info=exc)
             return self._error_response(
@@ -143,7 +148,7 @@ class ContentViewSet(viewsets.GenericViewSet):
         try:
             content = self.get_object()
             self.check_object_permissions(request, content)
-            return Response({"status": "success", "data": ContentSerializer(content).data})
+            return Response({"status": "success", "data": ContentSerializer(content, context=self.get_serializer_context()).data})
         except Http404:
             try:
                 content = Content.objects.filter(author=user, is_deleted=False).get(pk=pk)
@@ -161,7 +166,7 @@ class ContentViewSet(viewsets.GenericViewSet):
                     status_code=status.HTTP_403_FORBIDDEN,
                 )
 
-            return Response({"status": "success", "data": ContentSerializer(content).data})
+            return Response({"status": "success", "data": ContentSerializer(content, context=self.get_serializer_context()).data})
         except drf_serializers.ValidationError as exc:
             return self._error_response(
                 message="Invalid request.",
@@ -183,7 +188,7 @@ class ContentViewSet(viewsets.GenericViewSet):
             serializer.is_valid(raise_exception=True)
 
             content = create_content(author=user, data=serializer.validated_data)
-            return Response({"status": "success", "data": ContentSerializer(content).data}, status=status.HTTP_201_CREATED)
+            return Response({"status": "success", "data": ContentSerializer(content, context=self.get_serializer_context()).data}, status=status.HTTP_201_CREATED)
         except drf_serializers.ValidationError as exc:
             return self._error_response(
                 message="Invalid request.",
@@ -217,7 +222,7 @@ class ContentViewSet(viewsets.GenericViewSet):
             serializer.is_valid(raise_exception=True)
 
             updated = update_content(user=request.user, content=content, data=serializer.validated_data)
-            return Response({"status": "success", "data": ContentSerializer(updated).data})
+            return Response({"status": "success", "data": ContentSerializer(updated, context=self.get_serializer_context()).data})
         except Http404:
             return self._error_response(
                 message="Content not found.",
@@ -254,7 +259,7 @@ class ContentViewSet(viewsets.GenericViewSet):
         try:
             content = self.get_object()
             deleted = delete_content(user=request.user, content=content)
-            return Response({"status": "success", "data": ContentSerializer(deleted).data})
+            return Response({"status": "success", "data": ContentSerializer(deleted, context=self.get_serializer_context()).data})
         except Http404:
             return self._error_response(
                 message="Content not found.",
@@ -284,7 +289,7 @@ class ContentViewSet(viewsets.GenericViewSet):
         try:
             user = resolve_request_user(request)
             qs = pending_content_for_moderator(user)
-            return Response({"status": "success", "data": ContentSerializer(qs, many=True).data})
+            return Response({"status": "success", "data": ContentSerializer(qs, many=True, context=self.get_serializer_context()).data})
         except Exception as exc:
             logger.exception("Community pending failed", exc_info=exc)
             return self._error_response(
@@ -301,7 +306,7 @@ class ContentViewSet(viewsets.GenericViewSet):
 
             user = resolve_request_user(request)
             content = approve_content(moderator=user, content=content)
-            return Response({"status": "success", "data": ContentSerializer(content).data})
+            return Response({"status": "success", "data": ContentSerializer(content, context=self.get_serializer_context()).data})
         except Http404:
             return self._error_response(
                 message="Content not found.",
@@ -349,7 +354,7 @@ class ContentViewSet(viewsets.GenericViewSet):
                 content=content,
                 reason=serializer.validated_data["reason"],
             )
-            return Response({"status": "success", "data": ContentSerializer(content).data})
+            return Response({"status": "success", "data": ContentSerializer(content, context=self.get_serializer_context()).data})
         except Http404:
             return self._error_response(
                 message="Content not found.",
