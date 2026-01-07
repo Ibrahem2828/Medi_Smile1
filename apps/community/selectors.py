@@ -3,7 +3,7 @@ from django.db.models import Count, Avg
 
 from apps.accounts.models import Role
 from apps.evaluations.models import Evaluation, EvaluationStatus
-from .models import Content, ContentLike, ContentComment
+from .models import Content, ContentLike, ContentComment, CommunityApprovalLog
 
 
 # ============================================================
@@ -17,7 +17,7 @@ def _resolve_university_id(user):
     if not user:
         return None
 
-    for attr in ("studentprofile_profile", "supervisorprofile_profile", "universityadminprofile_profile"):
+    for attr in ("studentprofile_profile", "supervisorprofile_profile", "universityadminprofile_profile", "patientprofile_profile"):
         try:
             profile = getattr(user, attr, None)
         except Exception:
@@ -38,7 +38,9 @@ def content_queryset_for_user(user):
 
     qs = (
         Content.objects
+        .filter(is_deleted=False)
         .select_related("author", "university", "approved_by")
+        .prefetch_related("likes", "comments")
         .annotate(
             likes_count=Count("likes", distinct=True),
             comments_count=Count("comments", distinct=True),
@@ -48,30 +50,24 @@ def content_queryset_for_user(user):
 
     role = getattr(getattr(user, "role", None), "name", None)
 
-    # Tech Support: all approved
+    # Tech Support: logs only (no content access)
     if role == Role.TECH_SUPPORT:
-        return qs.filter(status=Content.Status.APPROVED)
+        return qs.none()
 
-    # Patient: public only
+    # Patient: approved only (scoped by university)
     if role == Role.PATIENT:
-        return qs.filter(
-            status=Content.Status.APPROVED,
-            is_public=True,
-        )
+        uni_id = _resolve_university_id(user)
+        if not uni_id:
+            return qs.none()
+        return qs.filter(status=Content.Status.APPROVED, university_id=uni_id)
 
     # Students / Supervisors / University Admins
     uni_id = _resolve_university_id(user)
-    public_qs = qs.filter(status=Content.Status.APPROVED, is_public=True)
+    approved_qs = qs.filter(status=Content.Status.APPROVED)
     if not uni_id:
-        return public_qs
+        return approved_qs.none()
 
-    return (
-        public_qs
-        | qs.filter(
-            status=Content.Status.APPROVED,
-            university_id=uni_id,
-        )
-    )
+    return approved_qs.filter(university_id=uni_id)
 
 
 # ============================================================
@@ -84,16 +80,14 @@ def pending_content_for_moderator(user):
 
     role = getattr(getattr(user, "role", None), "name", None)
 
-    if role == Role.TECH_SUPPORT:
-        return Content.objects.filter(status=Content.Status.PENDING)
-
-    if role in {Role.SUPERVISOR, Role.UNIVERSITY_ADMIN}:
+    if role == Role.SUPERVISOR:
         uni_id = _resolve_university_id(user)
         if not uni_id:
             return Content.objects.none()
         return Content.objects.filter(
             status=Content.Status.PENDING,
             university_id=uni_id,
+            is_deleted=False,
         )
 
     return Content.objects.none()
@@ -107,6 +101,29 @@ def has_liked(content, user) -> bool:
     if not user or not getattr(user, "is_authenticated", False):
         return False
     return ContentLike.objects.filter(content=content, user=user).exists()
+
+
+def approval_logs_for_user(user):
+    if not user or not getattr(user, "is_authenticated", False):
+        return CommunityApprovalLog.objects.none()
+
+    role = getattr(getattr(user, "role", None), "name", None)
+
+    if role == Role.TECH_SUPPORT:
+        return CommunityApprovalLog.objects.all().select_related("post", "author", "approving_supervisor", "university")
+
+    if role == Role.UNIVERSITY_ADMIN:
+        uni_id = _resolve_university_id(user)
+        if not uni_id:
+            return CommunityApprovalLog.objects.none()
+        return CommunityApprovalLog.objects.filter(university_id=uni_id).select_related(
+            "post",
+            "author",
+            "approving_supervisor",
+            "university",
+        )
+
+    return CommunityApprovalLog.objects.none()
 
 
 # ============================================================

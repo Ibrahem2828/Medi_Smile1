@@ -4,7 +4,7 @@ from django.utils.translation import gettext_lazy as _
 
 from medismile.admin_mixins import BaseOptimizedAdmin
 
-from .models import Content
+from .models import Content, CommunityApprovalLog
 
 
 @admin.register(Content)
@@ -17,14 +17,15 @@ class ContentAdmin(BaseOptimizedAdmin):
         "university",
         "is_public",
         "is_featured",
+        "is_deleted",
         "created_at",
     )
 
-    list_filter = ("status", "is_public", "is_featured", "university", "created_at")
+    list_filter = ("status", "is_public", "is_featured", "is_deleted", "university", "created_at")
     search_fields = ("title", "description", "author__username", "author__email")
     ordering = ("-created_at",)
 
-    readonly_fields = ("id", "created_at", "updated_at", "approved_at")
+    readonly_fields = ("id", "created_at", "updated_at", "approved_at", "deleted_at")
     list_select_related = ("author", "university", "approved_by")
 
     fieldsets = (
@@ -33,9 +34,27 @@ class ContentAdmin(BaseOptimizedAdmin):
         (_("Ownership"), {"fields": ("author", "university")}),
         (_("Moderation"), {"fields": ("status", "approved_by", "approved_at", "rejection_reason")}),
         (_("Visibility"), {"fields": ("is_public", "is_featured", "view_count")}),
+        (_("Deletion"), {"fields": ("is_deleted", "deleted_at", "deleted_by")}),
         (_("Timestamps"), {"fields": ("created_at", "updated_at")}),
     )
 
     def has_delete_permission(self, request, obj=None):
         # protect academic content history
         return False
+
+
+@admin.register(CommunityApprovalLog)
+class CommunityApprovalLogAdmin(BaseOptimizedAdmin):
+    list_display = (
+        "id",
+        "post",
+        "author",
+        "approving_supervisor",
+        "decision",
+        "university",
+        "created_at",
+    )
+    list_filter = ("decision", "university", "created_at")
+    search_fields = ("post__title", "author__email", "approving_supervisor__email")
+    ordering = ("-created_at",)
+    readonly_fields = ("id", "created_at")

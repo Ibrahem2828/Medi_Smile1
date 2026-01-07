@@ -1,0 +1,200 @@
+{
+  "base_url": "/api/community",
+  "responses": {
+    "success": {
+      "status": "success",
+      "data": "<object-or-array>"
+    },
+    "error": {
+      "status": "error",
+      "message": "<string>",
+      "errors": "<object-or-string>"
+    }
+  },
+  "endpoints": [
+    {
+      "name": "Create Post",
+      "method": "POST",
+      "path": "/api/community/posts/",
+      "roles": ["student", "supervisor"],
+      "request": {
+        "title": "Case discussion",
+        "content": "Short educational summary...",
+        "content_type": "text",
+        "category": "educational",
+        "file": null,
+        "url": null,
+        "tags": "endodontics, caries",
+        "is_public": true,
+        "is_featured": false
+      },
+      "responses": {
+        "201": {
+          "status": "success",
+          "data": {
+            "id": "<uuid>",
+            "title": "Case discussion",
+            "content": "Short educational summary...",
+            "content_type": "text",
+            "category": "educational",
+            "author": "<uuid>",
+            "university": "<uuid>",
+            "status": "pending",
+            "created_at": "2026-01-07T00:00:00Z"
+          }
+        },
+        "400": {"status": "error", "message": "Invalid request.", "errors": {"content": ["Text content cannot be empty."]}},
+        "403": {"status": "error", "message": "You are not allowed to create community posts.", "errors": {"detail": "..."}}
+      }
+    },
+    {
+      "name": "List Posts",
+      "method": "GET",
+      "path": "/api/community/posts/",
+      "roles": ["patient", "student", "supervisor", "university_admin"],
+      "query_params": ["status", "author_id", "content_type"],
+      "responses": {
+        "200": {
+          "status": "success",
+          "data": [
+            {
+              "id": "<uuid>",
+              "title": "...",
+              "content": "...",
+              "content_type": "text",
+              "status": "approved"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Retrieve Post",
+      "method": "GET",
+      "path": "/api/community/posts/{id}/",
+      "roles": ["patient", "student", "supervisor", "university_admin"],
+      "responses": {
+        "200": {"status": "success", "data": {"id": "<uuid>", "status": "approved"}},
+        "404": {"status": "error", "message": "Content not found.", "errors": {"detail": "Not found."}}
+      }
+    },
+    {
+      "name": "Update Post (Pending Only)",
+      "method": "PATCH",
+      "path": "/api/community/posts/{id}/",
+      "roles": ["student"],
+      "request": {
+        "title": "Updated title",
+        "content": "Updated content"
+      },
+      "responses": {
+        "200": {"status": "success", "data": {"id": "<uuid>", "status": "pending"}},
+        "403": {"status": "error", "message": "Approved content cannot be modified.", "errors": {"detail": "..."}}
+      }
+    },
+    {
+      "name": "Delete Post (Soft Delete)",
+      "method": "DELETE",
+      "path": "/api/community/posts/{id}/",
+      "roles": ["student", "university_admin"],
+      "responses": {
+        "200": {"status": "success", "data": {"id": "<uuid>", "is_deleted": true}},
+        "403": {"status": "error", "message": "You are not allowed to delete content.", "errors": {"detail": "..."}}
+      }
+    },
+    {
+      "name": "List Pending Posts (Supervisor)",
+      "method": "GET",
+      "path": "/api/community/posts/pending/",
+      "roles": ["supervisor"],
+      "responses": {
+        "200": {"status": "success", "data": [{"id": "<uuid>", "status": "pending"}]}
+      }
+    },
+    {
+      "name": "Approve Post",
+      "method": "POST",
+      "path": "/api/community/posts/{id}/approve/",
+      "roles": ["supervisor"],
+      "responses": {
+        "200": {"status": "success", "data": {"id": "<uuid>", "status": "approved"}},
+        "400": {"status": "error", "message": "Invalid request.", "errors": {"detail": "..."}},
+        "403": {"status": "error", "message": "Only pending content can be approved.", "errors": {"detail": "..."}}
+      }
+    },
+    {
+      "name": "Reject Post",
+      "method": "POST",
+      "path": "/api/community/posts/{id}/reject/",
+      "roles": ["supervisor"],
+      "request": {"reason": "Not aligned with standards"},
+      "responses": {
+        "200": {"status": "success", "data": {"id": "<uuid>", "status": "rejected"}}
+      }
+    },
+    {
+      "name": "React (Like Toggle)",
+      "method": "POST",
+      "path": "/api/community/posts/{id}/react/",
+      "roles": ["patient", "student", "supervisor", "university_admin"],
+      "responses": {
+        "200": {"status": "success", "data": {"liked": true}}
+      }
+    },
+    {
+      "name": "Add Comment",
+      "method": "POST",
+      "path": "/api/community/posts/{id}/comments/",
+      "roles": ["student", "supervisor"],
+      "request": {"text": "Great explanation"},
+      "responses": {
+        "201": {"status": "success", "data": {"id": "<uuid>", "text": "Great explanation"}},
+        "403": {"status": "error", "message": "You can only comment on approved content.", "errors": {"detail": "..."}}
+      }
+    },
+    {
+      "name": "Approval Logs",
+      "method": "GET",
+      "path": "/api/community/approval-logs/",
+      "roles": ["university_admin", "tech_support"],
+      "responses": {
+        "200": {
+          "status": "success",
+          "data": [
+            {
+              "id": "<uuid>",
+              "post_id": "<uuid>",
+              "author_id": "<uuid>",
+              "approving_supervisor_id": "<uuid>",
+              "decision": "approved",
+              "created_at": "2026-01-07T00:00:00Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Student Public Rating",
+      "method": "GET",
+      "path": "/api/community/students/{student_id}/rating/",
+      "roles": ["patient", "student", "supervisor", "university_admin"],
+      "responses": {
+        "200": {
+          "status": "success",
+          "data": {
+            "student_id": "<uuid>",
+            "average_score": 82.5,
+            "stars": 4,
+            "total_evaluations": 10
+          }
+        }
+      }
+    }
+  ],
+  "aliases": [
+    {
+      "note": "Legacy routes preserved for backward compatibility",
+      "paths": ["/api/community/content/", "/api/community/content/{id}/approve/", "/api/community/content/{id}/reject/"]
+    }
+  ]
+}

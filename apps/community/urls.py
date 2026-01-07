@@ -2,11 +2,12 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
-from .views import ContentViewSet, student_public_rating_view
+from .views import ContentViewSet, ApprovalLogListView, student_public_rating_view
 
 app_name = "community"
 
 router = DefaultRouter()
+router.register(r"posts", ContentViewSet, basename="posts")
 router.register(r"content", ContentViewSet, basename="content")
 
 urlpatterns = [
@@ -14,6 +15,7 @@ urlpatterns = [
     path("", include(router.urls)),
     # Alias for pending approvals (moderators)
     path("approvals/", ContentViewSet.as_view({"get": "pending"}), name="content-approvals"),
+    path("approval-logs/", ApprovalLogListView.as_view(), name="approval-log-list"),
 
     # Student public rating
     path(

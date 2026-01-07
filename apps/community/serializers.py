@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 # ============================================================
 
 class ContentSerializer(serializers.ModelSerializer):
+    content = serializers.CharField(source="description", read_only=True)
     author_name = serializers.SerializerMethodField()
     university_name = serializers.CharField(source="university.name", read_only=True)
     approved_by_name = serializers.SerializerMethodField()
@@ -25,6 +26,7 @@ class ContentSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "title",
+            "content",
             "description",
             "content_type",
             "category",
@@ -43,6 +45,9 @@ class ContentSerializer(serializers.ModelSerializer):
             "is_public",
             "is_featured",
             "view_count",
+            "is_deleted",
+            "deleted_at",
+            "deleted_by",
             "likes_count",
             "comments_count",
             "created_at",
@@ -64,13 +69,15 @@ class ContentSerializer(serializers.ModelSerializer):
 # ============================================================
 
 class ContentCreateSerializer(serializers.ModelSerializer):
+    content = serializers.CharField(required=False, allow_blank=True)
     content_type = serializers.CharField()
-    category = serializers.CharField()
+    category = serializers.CharField(required=False, allow_blank=True)
 
     class Meta:
         model = Content
         fields = [
             "title",
+            "content",
             "description",
             "content_type",
             "category",
@@ -82,25 +89,81 @@ class ContentCreateSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, attrs):
+        content_value = attrs.pop("content", None)
+        if content_value is not None:
+            attrs["description"] = content_value
+
         ctype = (attrs.get("content_type") or "").strip().lower()
         category = (attrs.get("category") or "").strip().lower()
 
         # normalize content_type/category to valid choices; fall back to sensible defaults
         ctype_choices = dict(Content.ContentType.choices)
         if ctype not in ctype_choices:
-            ctype = Content.ContentType.ARTICLE
+            raise serializers.ValidationError({"content_type": _("Invalid content type.")})
         attrs["content_type"] = ctype
 
         category_choices = dict(Content.Category.choices)
-        if category not in category_choices:
-            category = Content.Category.GENERAL
-        attrs["category"] = category
+        if category:
+            if category not in category_choices:
+                category = Content.Category.GENERAL
+            attrs["category"] = category
+        else:
+            attrs["category"] = Content.Category.GENERAL
 
-        if ctype == Content.ContentType.LINK and not attrs.get("url"):
-            raise serializers.ValidationError({"url": _("URL is required for link content.")})
+        content_text = (attrs.get("description") or "").strip()
 
-        if ctype != Content.ContentType.LINK and not attrs.get("file"):
-            raise serializers.ValidationError({"file": _("File is required for this content type.")})
+        if ctype == Content.ContentType.TEXT and not content_text:
+            raise serializers.ValidationError({"content": _("Text content cannot be empty.")})
+        if ctype == Content.ContentType.IMAGE and not attrs.get("file"):
+            raise serializers.ValidationError({"file": _("Image file is required.")})
+        if ctype == Content.ContentType.VIDEO and not (attrs.get("file") or attrs.get("url")):
+            raise serializers.ValidationError({"file": _("Video requires a file or a URL.")})
+        if ctype == Content.ContentType.CASE and not content_text:
+            raise serializers.ValidationError({"content": _("Case description is required.")})
+
+        return attrs
+
+
+class ContentUpdateSerializer(serializers.ModelSerializer):
+    content = serializers.CharField(required=False, allow_blank=True)
+    content_type = serializers.CharField(required=False)
+    category = serializers.CharField(required=False, allow_blank=True)
+
+    class Meta:
+        model = Content
+        fields = [
+            "title",
+            "content",
+            "description",
+            "content_type",
+            "category",
+            "file",
+            "url",
+            "tags",
+            "is_public",
+            "is_featured",
+        ]
+
+    def validate(self, attrs):
+        content_value = attrs.pop("content", None)
+        if content_value is not None:
+            attrs["description"] = content_value
+
+        if "content_type" in attrs:
+            ctype = (attrs.get("content_type") or "").strip().lower()
+            ctype_choices = dict(Content.ContentType.choices)
+            if ctype not in ctype_choices:
+                raise serializers.ValidationError({"content_type": _("Invalid content type.")})
+            attrs["content_type"] = ctype
+
+        if "category" in attrs:
+            category = (attrs.get("category") or "").strip().lower()
+            category_choices = dict(Content.Category.choices)
+            if not category:
+                category = Content.Category.GENERAL
+            elif category not in category_choices:
+                category = Content.Category.GENERAL
+            attrs["category"] = category
 
         return attrs
 
@@ -139,6 +202,29 @@ class ContentCommentSerializer(serializers.ModelSerializer):
 
 class ContentCommentCreateSerializer(serializers.Serializer):
     text = serializers.CharField(min_length=1, max_length=5000)
+
+
+class CommunityApprovalLogSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    post_id = serializers.UUIDField(source="post.id")
+    author_id = serializers.UUIDField(source="author.id", allow_null=True)
+    author_name = serializers.SerializerMethodField()
+    approving_supervisor_id = serializers.UUIDField(source="approving_supervisor.id", allow_null=True)
+    approving_supervisor_name = serializers.SerializerMethodField()
+    decision = serializers.CharField()
+    reason = serializers.CharField(allow_null=True)
+    university_id = serializers.UUIDField(source="university.id", allow_null=True)
+    created_at = serializers.DateTimeField()
+
+    def get_author_name(self, obj):
+        if not obj.author:
+            return None
+        return obj.author.get_full_name() or obj.author.username
+
+    def get_approving_supervisor_name(self, obj):
+        if not obj.approving_supervisor:
+            return None
+        return obj.approving_supervisor.get_full_name() or obj.approving_supervisor.username
 
 
 # ============================================================

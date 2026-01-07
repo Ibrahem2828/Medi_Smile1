@@ -1,6 +1,7 @@
 # apps/community/permissions.py
 from rest_framework.permissions import BasePermission
 from apps.accounts.models import Role
+from .selectors import _resolve_university_id
 
 
 class CanCreateContent(BasePermission):
@@ -14,8 +15,6 @@ class CanCreateContent(BasePermission):
         return role in {
             Role.STUDENT,
             Role.SUPERVISOR,
-            Role.UNIVERSITY_ADMIN,
-            Role.TECH_SUPPORT,
         }
 
 
@@ -30,18 +29,21 @@ class CanViewContent(BasePermission):
         user = request.user
         role = getattr(getattr(user, "role", None), "name", None)
 
+        if getattr(obj, "is_deleted", False):
+            return False
+
         if obj.status != obj.Status.APPROVED:
             return False
 
-        if obj.is_public:
-            return True
+        if role == Role.PATIENT:
+            return obj.university_id == _resolve_university_id(user)
 
         if role in {
             Role.STUDENT,
             Role.SUPERVISOR,
             Role.UNIVERSITY_ADMIN,
         }:
-            return obj.university_id == getattr(user, "university_id", None)
+            return obj.university_id == _resolve_university_id(user)
 
         return False
 
@@ -50,18 +52,13 @@ class CanModerateContent(BasePermission):
     """
     Approve / Reject:
     - Supervisor (same university)
-    - University Admin (same university)
-    - Tech Support (all)
     """
 
     def has_object_permission(self, request, view, obj):
         role = getattr(getattr(request.user, "role", None), "name", None)
 
-        if role == Role.TECH_SUPPORT:
-            return True
-
-        if role in {Role.SUPERVISOR, Role.UNIVERSITY_ADMIN}:
-            return obj.university_id == getattr(request.user, "university_id", None)
+        if role == Role.SUPERVISOR:
+            return obj.university_id == _resolve_university_id(request.user)
 
         return False
 
@@ -73,12 +70,13 @@ class CanLikeContent(BasePermission):
     """
 
     def has_permission(self, request, view):
-        return request.user.is_authenticated
+        role = getattr(getattr(request.user, "role", None), "name", None)
+        return request.user.is_authenticated and role != Role.TECH_SUPPORT
 
 
 class CanCommentContent(BasePermission):
     """
-    - Student / Supervisor / University Admin
+    - Student / Supervisor
     - Patient: NOT allowed
     """
 
@@ -87,5 +85,17 @@ class CanCommentContent(BasePermission):
         return role in {
             Role.STUDENT,
             Role.SUPERVISOR,
+        }
+
+
+class CanViewApprovalLogs(BasePermission):
+    """
+    - University Admin / Tech Support
+    """
+
+    def has_permission(self, request, view):
+        role = getattr(getattr(request.user, "role", None), "name", None)
+        return role in {
             Role.UNIVERSITY_ADMIN,
+            Role.TECH_SUPPORT,
         }

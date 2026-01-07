@@ -3,7 +3,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from apps.accounts.models import User, Role
+from apps.accounts.models import User, Role, StudentProfile, SupervisorProfile
 from apps.universities.models import University
 from apps.evaluations.models import Evaluation, EvaluationStatus
 from apps.notifications.models import Notification
@@ -17,25 +17,29 @@ class CommunityAPITests(APITestCase):
     def setUp(self):
         self.university = University.objects.create(name="Test University")
 
+        student_role, _ = Role.objects.get_or_create(name=Role.STUDENT)
+        supervisor_role, _ = Role.objects.get_or_create(name=Role.SUPERVISOR)
+        patient_role, _ = Role.objects.get_or_create(name=Role.PATIENT)
+
         self.student = User.objects.create_user(
             username="student",
             password="pass",
-            role=Role.objects.get(name=Role.STUDENT),
-            university=self.university,
+            role=student_role,
+        )
+        StudentProfile.objects.create(user=self.student, university=self.university)
+
+        self.patient = User.objects.create_user(
+            username="patient",
+            password="pass",
+            role=patient_role,
         )
 
         self.supervisor = User.objects.create_user(
             username="supervisor",
             password="pass",
-            role=Role.objects.get(name=Role.SUPERVISOR),
-            university=self.university,
+            role=supervisor_role,
         )
-
-        self.patient = User.objects.create_user(
-            username="patient",
-            password="pass",
-            role=Role.objects.get(name=Role.PATIENT),
-        )
+        SupervisorProfile.objects.create(user=self.supervisor, university=self.university)
 
     # ---------------------------------------------------------
     # Public Rating
@@ -64,16 +68,15 @@ class CommunityAPITests(APITestCase):
 
     def test_student_content_is_pending_by_default(self):
         self.client.force_authenticate(self.student)
-        url = reverse("community:content-list")
+        url = reverse("community:posts-list")
 
         res = self.client.post(
             url,
             {
                 "title": "Post",
-                "description": "Desc",
-                "content_type": "link",
+                "content": "Educational text",
+                "content_type": "text",
                 "category": "general",
-                "url": "https://example.com",
             },
             format="json",
         )
@@ -91,11 +94,14 @@ class CommunityAPITests(APITestCase):
             author=self.student,
             university=self.university,
             title="Pending Post",
+            description="Pending content",
+            content_type=Content.ContentType.TEXT,
+            category=Content.Category.GENERAL,
             status=Content.Status.PENDING,
         )
 
         self.client.force_authenticate(self.supervisor)
-        url = reverse("community:content-approve", args=[content.id])
+        url = reverse("community:posts-approve", args=[content.id])
         res = self.client.post(url)
 
         self.assertEqual(res.status_code, status.HTTP_200_OK)
@@ -121,11 +127,14 @@ class CommunityAPITests(APITestCase):
             author=self.student,
             university=self.university,
             title="Pending Post",
+            description="Pending content",
+            content_type=Content.ContentType.TEXT,
+            category=Content.Category.GENERAL,
             status=Content.Status.PENDING,
         )
 
         self.client.force_authenticate(self.supervisor)
-        url = reverse("community:content-reject", args=[content.id])
+        url = reverse("community:posts-reject", args=[content.id])
         res = self.client.post(url, {"reason": "Not suitable"}, format="json")
 
         self.assertEqual(res.status_code, status.HTTP_200_OK)
