@@ -1,4 +1,6 @@
 # apps/reports/tests.py
+import uuid
+
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -119,3 +121,17 @@ class ReportsAPITest(APITestCase):
         url = reverse("reports:report-detail", args=[report.id])
         res = self.client.get(url)
         self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+    def test_create_report_invalid_target_returns_400(self):
+        self.client.force_authenticate(self.student)
+        create_url = reverse("reports:report-list")
+        payload = {
+            "report_type": "clinical_case",
+            "target_type": "case",
+            "target_id": str(uuid.uuid4()),
+            "content": {"summary": "Case summary"},
+        }
+
+        res = self.client.post(create_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("target_id", res.data.get("errors", {}))

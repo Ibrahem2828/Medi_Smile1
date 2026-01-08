@@ -165,7 +165,7 @@ class StudentReportsView(generics.ListAPIView):
     def get_queryset(self):
         user = resolve_request_user(self.request)
         student_id = self.kwargs["student_id"]
-        student = User.objects.get(id=student_id)
+        student = generics.get_object_or_404(User, id=student_id)
         return reports_for_student(student=student, viewer=user)
 
 
@@ -176,5 +176,5 @@ class UniversityReportsView(generics.ListAPIView):
     def get_queryset(self):
         user = resolve_request_user(self.request)
         university_id = self.kwargs["university_id"]
-        university = University.objects.get(id=university_id)
+        university = generics.get_object_or_404(University, id=university_id)
         return reports_for_university(university=university, viewer=user)

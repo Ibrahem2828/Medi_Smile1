@@ -5,7 +5,8 @@ from io import StringIO
 from pathlib import Path
 
 from django.conf import settings
-from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.exceptions import ValidationError as DjangoValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from django.utils import timezone
 
 from apps.accounts.models import Role, User
@@ -142,7 +143,12 @@ def create_report(*, actor, data: dict) -> Report:
         snapshot_data=data.get("snapshot_data"),
         status=Report.Status.DRAFT,
     )
-    report.full_clean()
+    try:
+        report.full_clean()
+    except DjangoValidationError as exc:
+        raise ValidationError(
+            getattr(exc, "message_dict", None) or getattr(exc, "messages", None) or str(exc)
+        ) from exc
     report.save()
 
     log_audit_event(
@@ -171,7 +177,12 @@ def update_report(*, actor, report: Report, data: dict) -> Report:
         report.status = Report.Status.DRAFT
         report.rejected_at = None
 
-    report.full_clean()
+    try:
+        report.full_clean()
+    except DjangoValidationError as exc:
+        raise ValidationError(
+            getattr(exc, "message_dict", None) or getattr(exc, "messages", None) or str(exc)
+        ) from exc
     report.save()
 
     log_audit_event(
