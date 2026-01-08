@@ -1,0 +1,109 @@
+{
+  "service": {
+    "name": "MediSmile Notifications",
+    "version": "2.0.0",
+    "base_url": "/api/notifications",
+    "languages": ["ar", "en"],
+    "principle": "Notifications are system-triggered, not user-generated"
+  },
+  "entity": {
+    "Notification": {
+      "fields": {
+        "id": "uuid",
+        "title": "string",
+        "message": "string",
+        "notification_type": "string",
+        "priority": "enum(low, normal, high, critical)",
+        "recipient": "uuid",
+        "sender": "uuid|null",
+        "status": "enum(pending, accepted, rejected, info)",
+        "is_read": "boolean",
+        "response_message": "string|null",
+        "case": "uuid|null",
+        "appointment": "uuid|null",
+        "target_content_type": "string|null",
+        "target_object_id": "uuid|null",
+        "payload": "json|null",
+        "created_at": "datetime",
+        "updated_at": "datetime"
+      }
+    }
+  },
+  "types_examples": [
+    "case_created", "case_accepted", "case_rejected", "case_assignment_requested", "case_assigned",
+    "appointment_created", "appointment_rescheduled", "appointment_cancelled", "appointment_reminder", "appointment_started",
+    "ai_analysis_completed", "ai_analysis_failed", "ai_review_required", "ai_review_completed",
+    "message_created",
+    "system_alert", "security_event"
+  ],
+  "lifecycle": [
+    "created by service/signal/task",
+    "visible only to recipient (scoped by university/ownership)",
+    "read toggle (is_read)",
+    "actionable: status -> accepted/rejected for procedural notifications",
+    "persisted (no delete) for auditability"
+  ],
+  "permissions": {
+    "list": "recipient-scoped; admin/tech per policy",
+    "retrieve": "recipient-scoped; admin/tech per policy",
+    "update": "recipient only (mark read/accept/reject); admin/tech per policy",
+    "create": "system only (services/signals/tasks)"
+  },
+  "endpoints": {
+    "list": {
+      "GET /api/notifications/": {
+        "filters": ["status", "is_read", "notification_type", "priority"],
+        "pagination": "standard"
+      }
+    },
+    "create": {
+      "POST /api/notifications/": {
+        "role": "system use (not end-user)",
+        "body": {
+          "title": "string",
+          "message": "string",
+          "notification_type": "string",
+          "priority": "low|normal|high|critical",
+          "recipient": "uuid",
+          "case": "uuid|null",
+          "appointment": "uuid|null",
+          "target_content_type": "string|null",
+          "target_object_id": "uuid|null",
+          "payload": "json|null"
+        },
+        "note": "should be invoked via services/signals, not exposed to users"
+      }
+    },
+    "detail": {
+      "GET /api/notifications/{id}/": { "response": "Notification" },
+      "PATCH /api/notifications/{id}/": {
+        "body": { "is_read": "boolean", "status": "accepted|rejected|info", "response_message": "string?" },
+        "effect": "mark read and/or accept/reject procedural notification"
+      }
+    }
+  },
+  "integration": {
+    "cases": ["case_created", "case_assigned", "case_status_changed"],
+    "appointments": ["appointment_created", "appointment_rescheduled", "appointment_cancelled", "appointment_reminder"],
+    "ai": ["ai_analysis_completed", "ai_analysis_failed", "ai_review_required", "ai_review_completed"],
+    "messaging": ["message_created"],
+    "system": ["system_alert", "security_event"]
+  },
+  "governance": {
+    "no_user_generated_notifications": true,
+    "audit_logging": true,
+    "scoped_by_university_and_ownership": true,
+    "no_public_broadcast": true
+  },
+  "optional_improvements": [
+    "bulk send for group reminders/alerts",
+    "WebSocket/FCM push layer while keeping DB record",
+    "rate limiting noisy event sources",
+    "unified service entrypoint notifications.services.send_notification"
+  ],
+  "errors": [
+    { "code": 401, "message": "Authentication required" },
+    { "code": 403, "message": "Forbidden (not recipient / scope violation)" },
+    { "code": 404, "message": "Notification not found" }
+  ]
+}

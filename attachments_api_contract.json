@@ -1,0 +1,92 @@
+{
+  "service": {
+    "name": "MediSmile Attachments",
+    "version": "2.0.0",
+    "base_url": "/api/attachments",
+    "languages": ["ar", "en"],
+    "principle": "Attachment is evidence, not content."
+  },
+  "entity": {
+    "Attachment": {
+      "fields": {
+        "id": "uuid",
+        "file_url": "string",
+        "original_filename": "string",
+        "file_size": "int",
+        "mime_type": "string",
+        "file_category": "enum(image, document, video, other)",
+        "attachment_type": "enum(before_image, after_image, report, other)",
+        "is_visible_to_patient": "boolean",
+        "case": "uuid",
+        "appointment": "uuid",
+        "uploaded_by": "uuid (student)",
+        "created_at": "datetime"
+      }
+    }
+  },
+  "context_rules": [
+    "الرفع مسموح للطالب فقط",
+    "الموعد يجب أن يتبع نفس الحالة",
+    "after_image يتطلب before_image لنفس الموعد"
+  ],
+  "permissions": {
+    "patient": { "read": "own case only & is_visible_to_patient=true", "create": false, "delete": false },
+    "student": { "read": "attachments of own cases/appointments", "create": true, "delete": "own attachments only" },
+    "supervisor": { "read": "attachments of supervised cases", "create": false, "delete": false },
+    "university_admin": { "read": "within university", "create": false, "delete": false },
+    "tech_support": { "read": "all (audit)", "create": false, "delete": false }
+  },
+  "endpoints": {
+    "list_create": {
+      "GET /api/attachments/": {
+        "scope": "filtered by role rules above",
+        "pagination": "standard"
+      },
+      "POST /api/attachments/": {
+        "role": "student only",
+        "body": {
+          "appointment_id": "uuid",
+          "file": "binary",
+          "attachment_type": "before_image|after_image|report|other"
+        },
+        "effects": [
+          "file_category inferred from mime_type",
+          "rollback storage on failure"
+        ]
+      }
+    },
+    "detail": {
+      "GET /api/attachments/<id>/": {
+        "role": "per permissions matrix",
+        "response": "Attachment"
+      }
+    }
+  },
+  "validation": {
+    "role_must_be_student_on_create": true,
+    "appointment_must_belong_to_case": true,
+    "after_image_requires_before": true,
+    "safe_urls": true
+  },
+  "storage": {
+    "backend": "pluggable (local/cloud)",
+    "path_strategy": "generate_attachment_path by university/case/appointment/type",
+    "no_internal_paths_exposed": true
+  },
+  "audit": {
+    "events": ["attachment.created", "attachment.delete_attempt"],
+    "metadata_only": true
+  },
+  "security": [
+    "no public attachments",
+    "patient visibility controlled by is_visible_to_patient",
+    "optional file size/type limits (recommend to enable)"
+  ],
+  "tests": [
+    "student upload success",
+    "unauthorized upload denied",
+    "case/appointment mismatch denied",
+    "patient cannot see hidden attachments",
+    "after_image without before_image denied"
+  ]
+}
