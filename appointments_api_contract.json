@@ -1,0 +1,108 @@
+{
+  "service": {
+    "name": "MediSmile Appointments",
+    "version": "2.0.0",
+    "base_url": "/api/appointments",
+    "language": "ar/en"
+  },
+  "principles": [
+    "كل موعد مرتبط بـ Case واحدة ولا مواعيد عامة.",
+    "صلاحيات الموعد مشتقة من صلاحيات الحالة ومن نفس الجامعة.",
+    "كل تغيير يسجل في CaseHistory.",
+    "حالات الحالة المقبولة للمواعيد: accepted | assigned | in_progress."
+  ],
+  "entity": {
+    "Appointment": {
+      "fields": {
+        "id": "uuid",
+        "case": "uuid",
+        "patient": "uuid",
+        "student": "uuid|null",
+        "supervisor": "uuid|null",
+        "scheduled_at": "datetime",
+        "duration_minutes": "int",
+        "location": "string|null",
+        "telehealth_link": "url|null",
+        "status": "enum(scheduled, rescheduled, cancelled, completed, no_show)",
+        "notes": "string|null",
+        "is_follow_up": "boolean",
+        "created_by": "uuid",
+        "created_at": "datetime",
+        "updated_at": "datetime"
+      }
+    }
+  },
+  "status_flow": {
+    "states": ["scheduled", "rescheduled", "cancelled", "completed", "no_show"],
+    "transitions": {
+      "scheduled": ["rescheduled", "cancelled", "completed", "no_show"],
+      "rescheduled": ["rescheduled", "cancelled", "completed", "no_show"]
+    },
+    "immutable": ["cancelled", "completed", "no_show"]
+  },
+  "endpoints": {
+    "list_and_create": {
+      "GET /api/appointments/": {
+        "role": "authenticated",
+        "scope": "patient->own, student->assigned, supervisor->supervised, admin->university, tech_support->all"
+      },
+      "POST /api/appointments/": {
+        "role": "student|supervisor",
+        "body": {
+          "case_id": "uuid",
+          "scheduled_at": "datetime",
+          "duration_minutes": "int?",
+          "location": "string?",
+          "telehealth_link": "string?",
+          "notes": "string?"
+        },
+        "rules": [
+          "case.status in [accepted, assigned, in_progress]",
+          "student must be assigned when creator=student",
+          "conflict check on patient/student/supervisor schedules"
+        ],
+        "response": { "id": "uuid", "status": "scheduled" }
+      }
+    },
+    "detail": {
+      "GET /api/appointments/<id>/": { "role": "scoped read" },
+      "PATCH /api/appointments/<id>/": {
+        "role": "student|supervisor",
+        "body": { "scheduled_at?": "datetime", "duration_minutes?": "int", "location?": "string", "telehealth_link?": "string", "notes?": "string", "is_archived?": "bool" },
+        "effect": "schedule change => status=rescheduled + CaseHistory"
+      }
+    },
+    "actions": {
+      "POST /api/appointments/<id>/reschedule/": {
+        "role": "patient|student|supervisor",
+        "body": { "scheduled_at": "datetime", "duration_minutes?": "int", "location?": "string", "telehealth_link?": "string", "reason?": "string" },
+        "effect": "status=rescheduled, conflict check, CaseHistory"
+      },
+      "POST /api/appointments/<id>/cancel/": {
+        "role": "patient|supervisor",
+        "body": { "reason": "string" },
+        "effect": "status=cancelled, CaseHistory"
+      },
+      "POST /api/appointments/<id>/complete/": {
+        "role": "student|supervisor",
+        "body": { "outcome": "completed|no_show", "notes?": "string" },
+        "effect": "status=completed|no_show, CaseHistory"
+      }
+    }
+  },
+  "conflicts": {
+    "check": "any overlap for patient/student/supervisor on active statuses (scheduled/rescheduled)",
+    "error": "Scheduling conflict detected."
+  },
+  "notifications_and_reminders": [
+    "Create/reschedule/cancel triggers notification.",
+    "Reminders: T-24h and T-1h."
+  ],
+  "filters": ["status", "date range", "participant"],
+  "errors": [
+    { "code": 401, "message": "Authentication required." },
+    { "code": 403, "message": "Forbidden (role/scope)." },
+    { "code": 404, "message": "Appointment not found or out of scope." },
+    { "code": 409, "message": "Scheduling conflict detected." }
+  ]
+}

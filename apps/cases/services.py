@@ -6,7 +6,7 @@ from django.contrib.contenttypes.models import ContentType
 from apps.audit.services import log_audit_event
 from apps.accounts.models import Role, User
 from apps.notifications.models import Notification
-from .models import Case, AIProposedCase, AIAnalysisSession
+from .models import Case, CaseHistory, AIProposedCase
 
 
 def _notify_users_about_case(*, recipients, notification_type, title, message, case, priority=Notification.Priority.NORMAL, sender=None, payload=None):
@@ -97,51 +97,6 @@ def complete_case(*, supervisor, case: Case):
     return case
 
 
-def create_case_from_ai(*, patient: User, university, ai_payload: dict, title: str | None = None, description: str | None = None) -> Case:
-    """
-    Create a critical case from AI diagnosis payload.
-    """
-    priority = Case.Priority.URGENT if ai_payload.get("severity_level") == "high" or ai_payload.get("urgency") == "urgent" else Case.Priority.HIGH
-    case = Case.objects.create(
-        patient=patient,
-        university=university,
-        title=title or ai_payload.get("diagnosis") or "AI Critical Case",
-        description=description or ai_payload.get("patient_explanation") or "",
-        priority=priority,
-        status=Case.Status.PENDING_ASSIGNMENT,
-        is_public=True,
-        is_ai_critical=True,
-        ai_metadata=ai_payload,
-    )
-
-    log_audit_event(
-        user=patient,
-        university=case.university,
-        action="cases.case.created_from_ai",
-        description="Case created from AI critical diagnosis",
-        content_object=case,
-        metadata={"priority": case.priority, "ai": ai_payload},
-    )
-
-    # Notify supervisors in the selected university
-    supervisors = User.objects.filter(
-        role__name=Role.SUPERVISOR,
-        supervisorprofile_profile__university=university,
-    )
-    _notify_users_about_case(
-        recipients=supervisors,
-        notification_type="case_created",
-        title=_("حالة حرجة جديدة بانتظار مشرف"),
-        message=_("حالة حرجة تم إنشاؤها من تشخيص الذكاء للمريض %(email)s تحتاج مراجعة.") % {"email": patient.email},
-        case=case,
-        priority=Notification.Priority.CRITICAL,
-        sender=patient,
-        payload={"ai": ai_payload},
-    )
-
-    return case
-
-
 # ============================================================
 # AI Proposed Case -> Case conversion
 # ============================================================
@@ -181,6 +136,13 @@ def create_case_from_proposal(*, patient: User, university_id, proposal: AIPropo
             "metadata": proposal.metadata,
             "raw_proposal": proposal.raw_proposal,
         },
+    )
+
+    CaseHistory.objects.create(
+        case=case,
+        action=CaseHistory.Action.CREATED,
+        description="Case created after patient accepted AI proposal.",
+        performed_by=patient,
     )
 
     log_audit_event(

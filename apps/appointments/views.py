@@ -1,15 +1,20 @@
 # apps/appointments/views.py
-from rest_framework import generics
+from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.views import APIView
 
 from apps.accounts.models import Role
+from apps.cases.models import CaseHistory
 
 from .models import Appointment
 from .serializers import (
     AppointmentSerializer,
     AppointmentCreateSerializer,
     AppointmentUpdateSerializer,
+    AppointmentRescheduleSerializer,
+    AppointmentCancelSerializer,
+    AppointmentCompleteSerializer,
 )
 from .permissions import (
     IsAuthenticatedAndActive,
@@ -102,18 +107,13 @@ class AppointmentListCreateView(generics.ListCreateAPIView):
         return AppointmentSerializer
 
     def perform_create(self, serializer):
-        """
-        Create appointment.
-
-        Business rules enforced in:
-        - AppointmentCreateSerializer.validate()
-        - Appointment.clean()
-
-        Future hooks:
-        - Notification scheduling (patient / student / supervisor)
-        - Audit logging
-        """
         serializer.save(context={"request": self.request})
+
+    def get_permissions(self):
+        base = [IsAuthenticatedAndActive()]
+        if self.request.method == "POST":
+            base.append(CanCreateAppointment())
+        return base
 
 
 # ============================================================
@@ -156,3 +156,124 @@ class AppointmentDetailView(generics.RetrieveUpdateAPIView):
         if self.request.method in ("PUT", "PATCH"):
             return AppointmentUpdateSerializer
         return AppointmentSerializer
+
+
+# ============================================================
+# Appointment Actions: Reschedule / Cancel / Complete
+# ============================================================
+
+class AppointmentRescheduleView(APIView):
+    permission_classes = [IsAuthenticatedAndActive]
+
+    def post(self, request, pk):
+        appointment = Appointment.objects.select_related("case", "patient", "student", "supervisor").filter(id=pk).first()
+        if not appointment:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        user = request.user
+        role = getattr(getattr(user, "role", None), "name", None)
+        if role == Role.PATIENT and appointment.patient_id != user.id:
+            return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+        if role == Role.STUDENT and appointment.student_id != user.id:
+            return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+        if role == Role.SUPERVISOR and appointment.supervisor_id != user.id:
+            return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+        if role not in {Role.PATIENT, Role.STUDENT, Role.SUPERVISOR}:
+            return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = AppointmentRescheduleSerializer(data=request.data, context={"appointment": appointment, "request": request})
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        appointment.scheduled_at = data["scheduled_at"]
+        appointment.duration_minutes = data["duration_minutes"]
+        appointment.location = data.get("location")
+        appointment.telehealth_link = data.get("telehealth_link")
+        appointment.status = Appointment.Status.RESCHEDULED
+        if data.get("reason"):
+            appointment.notes = f"{appointment.notes or ''}\n[Reschedule] {data['reason']}".strip()
+        appointment.save()
+
+        CaseHistory.objects.create(
+            case=appointment.case,
+            action=CaseHistory.Action.STATUS_CHANGED,
+            description="Appointment rescheduled.",
+            performed_by=user,
+        )
+        return Response({"status": "success", "data": AppointmentSerializer(appointment).data})
+
+
+class AppointmentCancelView(APIView):
+    permission_classes = [IsAuthenticatedAndActive]
+
+    def post(self, request, pk):
+        appointment = Appointment.objects.select_related("case", "patient", "student", "supervisor").filter(id=pk).first()
+        if not appointment:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        user = request.user
+        role = getattr(getattr(user, "role", None), "name", None)
+        if role not in {Role.PATIENT, Role.SUPERVISOR}:
+            return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+        if role == Role.PATIENT and appointment.patient_id != user.id:
+            return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+        if role == Role.SUPERVISOR and appointment.supervisor_id != user.id:
+            return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = AppointmentCancelSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        if appointment.status in {Appointment.Status.COMPLETED, Appointment.Status.CANCELLED, Appointment.Status.NO_SHOW}:
+            return Response({"detail": "Appointment already finalized."}, status=status.HTTP_400_BAD_REQUEST)
+
+        appointment.status = Appointment.Status.CANCELLED
+        reason = serializer.validated_data["reason"]
+        appointment.notes = f"{appointment.notes or ''}\n[Cancelled] {reason}".strip()
+        appointment.save()
+
+        CaseHistory.objects.create(
+            case=appointment.case,
+            action=CaseHistory.Action.STATUS_CHANGED,
+            description="Appointment cancelled.",
+            performed_by=user,
+        )
+        return Response({"status": "success", "data": AppointmentSerializer(appointment).data})
+
+
+class AppointmentCompleteView(APIView):
+    permission_classes = [IsAuthenticatedAndActive]
+
+    def post(self, request, pk):
+        appointment = Appointment.objects.select_related("case", "patient", "student", "supervisor").filter(id=pk).first()
+        if not appointment:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        user = request.user
+        role = getattr(getattr(user, "role", None), "name", None)
+        if role not in {Role.STUDENT, Role.SUPERVISOR}:
+            return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+        if role == Role.STUDENT and appointment.student_id != user.id:
+            return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+        if role == Role.SUPERVISOR and appointment.supervisor_id != user.id:
+            return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = AppointmentCompleteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        if appointment.status in {Appointment.Status.COMPLETED, Appointment.Status.CANCELLED, Appointment.Status.NO_SHOW}:
+            return Response({"detail": "Appointment already finalized."}, status=status.HTTP_400_BAD_REQUEST)
+
+        outcome = serializer.validated_data["outcome"]
+        notes = serializer.validated_data.get("notes")
+        appointment.status = outcome
+        if notes:
+            appointment.notes = f"{appointment.notes or ''}\n[Outcome] {notes}".strip()
+        appointment.save()
+
+        CaseHistory.objects.create(
+            case=appointment.case,
+            action=CaseHistory.Action.STATUS_CHANGED,
+            description=f"Appointment marked as {outcome}.",
+            performed_by=user,
+        )
+        return Response({"status": "success", "data": AppointmentSerializer(appointment).data})

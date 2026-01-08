@@ -1,0 +1,212 @@
+{
+  "service": {
+    "name": "MediSmile Cases",
+    "version": "2.0.0",
+    "base_url": "/api/cases",
+    "language": "ar/en"
+  },
+  "principles": [
+    "AI proposals do NOT create a case until the patient accepts.",
+    "All case queries are scoped by university + ownership + role.",
+    "CaseHistory is mandatory for every critical decision.",
+    "Status set is unified: new, accepted, rejected, needs_assignment_approval, assigned, in_progress, completed, closed."
+  ],
+  "status_flow": {
+    "states": ["new", "accepted", "rejected", "needs_assignment_approval", "assigned", "in_progress", "completed", "closed"],
+    "transitions": {
+      "new": ["accepted", "rejected"],
+      "accepted": ["needs_assignment_approval", "rejected"],
+      "needs_assignment_approval": ["accepted", "assigned"],
+      "assigned": ["in_progress"],
+      "in_progress": ["completed"],
+      "completed": ["closed"]
+    },
+    "notes": [
+      "Only supervisors decide on new -> accepted/rejected.",
+      "Students can request assignment only when status=accepted and is_public=true.",
+      "Assignment approval moves needs_assignment_approval -> assigned (or back to accepted)."
+    ]
+  },
+  "entities": {
+    "Case": {
+      "description": "Official medical case after patient acceptance.",
+      "fields": {
+        "id": "uuid",
+        "patient": "uuid",
+        "university": "uuid|null",
+        "assigned_student": "uuid|null",
+        "supervisor": "uuid|null",
+        "status": "enum(status_flow.states)",
+        "priority": "enum(low,medium,high,urgent)",
+        "is_public": "boolean",
+        "is_ai_critical": "boolean",
+        "ai_metadata": "json|null",
+        "created_at": "datetime",
+        "updated_at": "datetime"
+      }
+    },
+    "AIAnalysisSession": {
+      "description": "Holds one AI run for a patient (vision+text).",
+      "fields": {
+        "id": "uuid",
+        "patient": "uuid",
+        "university": "uuid|null",
+        "session_summary": "json|null",
+        "ui_hints": "json|null",
+        "created_at": "datetime"
+      }
+    },
+    "AIProposedCase": {
+      "description": "Single AI proposal awaiting patient decision.",
+      "fields": {
+        "id": "uuid",
+        "session": "uuid (AIAnalysisSession)",
+        "proposal_id": "string",
+        "tooth_id": "int|null",
+        "status": "enum(pending_patient, rejected_by_patient, approved_by_patient, rejected_by_supervisor, approved_by_supervisor, converted)",
+        "fusion_decision": "json",
+        "medical_report": "json",
+        "metadata": "json|null",
+        "raw_proposal": "json",
+        "converted_case": "uuid|null"
+      }
+    },
+    "CaseAssignmentRequest": {
+      "fields": {
+        "id": "uuid",
+        "case": "uuid",
+        "student": "uuid",
+        "message": "string|null",
+        "status": "enum(pending, accepted, rejected, cancelled)",
+        "supervisor_response": "string|null"
+      }
+    },
+    "CaseSession": {
+      "fields": {
+        "id": "uuid",
+        "case": "uuid",
+        "student": "uuid",
+        "supervisor": "uuid|null",
+        "notes": "string",
+        "status": "enum(draft, completed, needs_review, approved, rejected)",
+        "supervisor_feedback": "string|null"
+      }
+    },
+    "CaseHistory": {
+      "fields": {
+        "id": "uuid",
+        "case": "uuid",
+        "action": "enum(created, assignment_requested, assigned, status_changed, session_created, session_reviewed, completed, closed)",
+        "description": "string",
+        "performed_by": "uuid|null",
+        "created_at": "datetime"
+      }
+    }
+  },
+  "endpoints": {
+    "ai_proposals": {
+      "POST /api/cases/ai/proposals/": {
+        "role": "patient",
+        "body": {
+          "university": "uuid",
+          "session_summary": "json?",
+          "ui_hints": "json?",
+          "proposed_cases": [
+            {
+              "proposal_id": "p-123",
+              "tooth_id": 14,
+              "fusion_decision": { "final_diagnosis": "Caries", "urgency_level": "high", "match_score": 0.91 },
+              "medical_report": { "summary": "Findings summary", "report_text": "..." },
+              "metadata": {}
+            }
+          ]
+        },
+        "response": { "status": "success", "data": { "session_id": "uuid" } }
+      },
+      "GET /api/cases/ai/proposals/<session_id>/next/": {
+        "role": "patient",
+        "response": {
+          "status": "success",
+          "data": {
+            "session_id": "uuid",
+            "proposal_id": "p-123",
+            "tooth_id": 14,
+            "fusion_decision": {},
+            "medical_report": {},
+            "metadata": {},
+            "raw_proposal": {}
+          }
+        }
+      },
+      "POST /api/cases/ai/proposals/<session_id>/decision/": {
+        "role": "patient",
+        "body": { "proposal_id": "p-123", "decision": "accept|reject" },
+        "response_on_accept": { "status": "success", "data": { "case_id": "uuid" } },
+        "response_on_reject": { "status": "success", "message": "No pending proposals.", "data": null }
+      }
+    },
+    "cases": {
+      "GET /api/cases/": { "role": "authenticated", "filters": ["role", "university scope"], "note": "Read-only listing." },
+      "GET /api/cases/<id>/": { "role": "authenticated+scoped" },
+      "PATCH /api/cases/<id>/status/": {
+        "role": "supervisor|tech_support|university_admin (scoped)",
+        "body": { "status": "accepted|rejected|needs_assignment_approval|assigned|in_progress|completed|closed" }
+      },
+      "PATCH /api/cases/<id>/assign-supervisor/": {
+        "role": "supervisor|university_admin|tech_support",
+        "body": { "supervisor_id": "uuid" },
+        "effect": "Scopes case to supervisor university, sets status=accepted, is_public=true"
+      },
+      "POST /api/cases/<case_id>/supervisor-decision/": {
+        "role": "supervisor",
+        "body": { "decision": "accept|reject", "note": "string?" },
+        "effect": "new -> accepted/rejected, writes CaseHistory"
+      }
+    },
+    "assignment": {
+      "GET /api/cases/student/available/": {
+        "role": "student",
+        "result": "Cases with status=accepted, is_public=true in student's university."
+      },
+      "POST /api/cases/<case_id>/request-assignment/": {
+        "role": "student",
+        "response": { "request_id": "uuid" },
+        "effect": "Creates CaseAssignmentRequest, moves case to needs_assignment_approval, CaseHistory logged."
+      },
+      "GET /api/cases/supervisor/assignment-requests/": {
+        "role": "supervisor",
+        "result": "Pending requests in needs_assignment_approval for supervisor university."
+      },
+      "POST /api/cases/<case_id>/assignment-decision/": {
+        "role": "supervisor",
+        "body": { "decision": "approve|reject" },
+        "effect": "approve => assign student (status=assigned, is_public=false); reject => revert to accepted"
+      }
+    },
+    "sessions": {
+      "GET /api/cases/<case_id>/sessions/": { "role": "patient|student|supervisor", "scope": "based on role" },
+      "POST /api/cases/<case_id>/sessions/create/": {
+        "role": "student (assigned)",
+        "body": { "case": "uuid", "notes": "string" },
+        "effect": "Creates session, moves case assigned->in_progress."
+      },
+      "PATCH /api/cases/sessions/<id>/review/": {
+        "role": "supervisor (assigned)",
+        "body": { "status": "approved|rejected", "supervisor_feedback": "string?" }
+      }
+    }
+  },
+  "permissions": {
+    "patient": ["submit AI proposals", "accept/reject proposals", "read own cases/sessions"],
+    "student": ["list accepted public cases in university", "request assignment", "create sessions after assignment"],
+    "supervisor": ["decide on new cases", "approve/reject assignment requests", "review sessions", "status transitions on own cases"],
+    "university_admin": ["read scoped cases", "assign supervisor (scoped)"],
+    "tech_support": ["read/manage all cases (non-medical actions only)"]
+  },
+  "errors": [
+    { "code": "401", "message": "Authentication credentials were not provided." },
+    { "code": "403", "message": "permission_denied:role_forbidden or outside university scope." },
+    { "code": "404", "message": "Not found (case/proposal/session mismatch or scope violation)." },
+    { "code": "409", "message": "Invalid transition (status not allowed for current state)." }
+  ]
+}

@@ -8,14 +8,12 @@ from rest_framework.views import APIView
 from apps.accounts.models import Role
 from apps.accounts.permissions import IsAuthenticatedAndActive
 
-from .models import Case, CaseAssignmentRequest, CaseSession, AIAnalysisSession, AIProposedCase
+from .models import Case, CaseAssignmentRequest, CaseHistory, CaseSession, AIAnalysisSession, AIProposedCase
 from .serializers import (
     CaseSerializer,
-    CaseCreateSerializer,
     CaseUpdateSerializer,
     CaseStatusUpdateSerializer,
     CaseAssignSupervisorSerializer,
-    CaseCreateFromAISerializer,
     CaseAssignmentRequestDecisionSerializer,
     CaseAssignmentRequestSerializer,
     CaseSessionSerializer,
@@ -28,7 +26,6 @@ from .serializers import (
     AssignmentDecisionSerializer,
 )
 from .permissions import (
-    CanCreateCase,
     CanViewCase,
     CanUpdateCase,
     CanManageCaseStatus,
@@ -48,8 +45,13 @@ logger = logging.getLogger(__name__)
 # ============================================================
 # Case List & Create
 # ============================================================
-class CaseListCreateView(generics.ListCreateAPIView):
-    permission_classes = [IsAuthenticatedAndActive, CanCreateCase]
+class CaseListCreateView(generics.ListAPIView):
+    """
+    Read-only listing of cases. Creation is driven exclusively by AI proposal acceptance.
+    """
+
+    permission_classes = [IsAuthenticatedAndActive]
+    http_method_names = ["get"]
 
     def get_queryset(self):
         user = self.request.user
@@ -75,12 +77,7 @@ class CaseListCreateView(generics.ListCreateAPIView):
         return Case.objects.none()
 
     def get_serializer_class(self):
-        if self.request.method == "POST":
-            return CaseCreateSerializer
         return CaseSerializer
-
-    def perform_create(self, serializer):
-        serializer.save(context={"request": self.request})
 
 
 # ============================================================
@@ -117,18 +114,6 @@ class CaseAssignSupervisorView(generics.UpdateAPIView):
     serializer_class = CaseAssignSupervisorSerializer
     permission_classes = [IsAuthenticatedAndActive, CanAssignSupervisor]
     http_method_names = ["patch"]
-
-
-class CaseCreateFromAIView(generics.CreateAPIView):
-    """
-    Patient accepts AI diagnosis and creates a critical case for university routing.
-    """
-
-    serializer_class = CaseCreateFromAISerializer
-    permission_classes = [IsAuthenticatedAndActive]
-
-    def perform_create(self, serializer):
-        serializer.save(context={"request": self.request})
 
 
 # ============================================================
@@ -281,6 +266,8 @@ class AIProposalDecisionView(APIView):
 
         # accept
         try:
+            proposal.status = AIProposedCase.Status.APPROVED_BY_PATIENT
+            proposal.save(update_fields=["status", "updated_at"])
             case = create_case_from_proposal(
                 patient=request.user,
                 university_id=session.university_id,
@@ -340,6 +327,13 @@ class SupervisorCaseDecisionView(APIView):
             case.is_public = False
         case.save(update_fields=["status", "is_public", "updated_at"])
 
+        CaseHistory.objects.create(
+            case=case,
+            action=CaseHistory.Action.STATUS_CHANGED,
+            description="Supervisor decision on new case: %s." % decision,
+            performed_by=user,
+        )
+
         return Response({"status": "success", "message": "Decision saved.", "data": {"status": case.status}})
 
 
@@ -378,6 +372,12 @@ class StudentRequestAssignmentView(APIView):
 
         req = CaseAssignmentRequest.objects.create(case=case, student=user)
         req.apply_to_case()
+        CaseHistory.objects.create(
+            case=case,
+            action=CaseHistory.Action.ASSIGNMENT_REQUESTED,
+            description="Student requested assignment.",
+            performed_by=user,
+        )
         return Response({"status": "success", "message": "Assignment requested.", "data": {"request_id": str(req.id)}})
 
 
@@ -427,10 +427,22 @@ class SupervisorAssignmentDecisionView(APIView):
             case.status = Case.Status.ASSIGNED
             case.is_public = False
             req.status = CaseAssignmentRequest.Status.ACCEPTED
+            CaseHistory.objects.create(
+                case=case,
+                action=CaseHistory.Action.ASSIGNED,
+                description="Supervisor approved assignment request.",
+                performed_by=user,
+            )
         else:
             case.status = Case.Status.ACCEPTED
             case.is_public = True
             req.status = CaseAssignmentRequest.Status.REJECTED
+            CaseHistory.objects.create(
+                case=case,
+                action=CaseHistory.Action.STATUS_CHANGED,
+                description="Supervisor rejected assignment request.",
+                performed_by=user,
+            )
 
         case.save(update_fields=["student", "status", "is_public", "updated_at"])
         req.save(update_fields=["status", "updated_at"])

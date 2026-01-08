@@ -24,6 +24,46 @@ from .permissions import (
 # ============================================================
 # Room Views
 # ============================================================
+class RoomListView(generics.ListAPIView):
+    """
+    List accessible rooms for the authenticated user.
+    """
+    serializer_class = RoomSerializer
+    permission_classes = [
+        IsAuthenticatedAndActive,
+        MatrixPermission,
+    ]
+    permission_resource = "messaging.room"
+    permission_action = "view"
+    permission_ownership_checker = (
+        lambda user, room: CanViewRoom().has_object_permission(  # type: ignore
+            type("req", (), {"user": user})(), None, room
+        )
+    )
+
+    def get_queryset(self):
+        user = self.request.user
+        role_name = getattr(user, "role_name", None) or getattr(getattr(user, "role", None), "name", None)
+        qs = Room.objects.select_related(
+            "case",
+            "participant_patient",
+            "participant_student",
+        )
+
+        if role_name == Role.TECH_SUPPORT:
+            return qs
+        if role_name == Role.PATIENT:
+            return qs.filter(participant_patient=user)
+        if role_name == Role.STUDENT:
+            return qs.filter(participant_student=user)
+        if role_name == Role.SUPERVISOR:
+            return qs.filter(case__supervisor=user)
+        if role_name == Role.UNIVERSITY_ADMIN:
+            university_id = getattr(getattr(user, "universityadminprofile_profile", None), "university_id", None)
+            return qs.filter(case__university_id=university_id)
+        return Room.objects.none()
+
+
 class RoomRetrieveView(generics.RetrieveAPIView):
     """
     Retrieve conversation room for a case.

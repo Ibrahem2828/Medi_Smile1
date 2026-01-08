@@ -7,7 +7,7 @@ from apps.accounts.models import User, Role
 from medismile.utils.auth import resolve_request_user
 
 from .models import Case, CaseHistory, CaseAssignmentRequest, CaseSession, AIAnalysisSession, AIProposedCase
-from .services import create_case_from_ai, assign_case
+from .services import assign_case
 from apps.notifications.models import Notification
 from django.contrib.contenttypes.models import ContentType
 
@@ -224,95 +224,6 @@ class CaseSerializer(serializers.ModelSerializer):
 
 
 # ============================================================
-# Case Create
-# ============================================================
-class CaseCreateSerializer(serializers.ModelSerializer):
-    """
-    Create a new dental case.
-
-    - Patient: can create ONLY for himself (university not required initially)
-    - Non-patient creation: may set patient_id and (optionally) university
-    """
-
-    patient_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
-    university_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
-
-    class Meta:
-        model = Case
-        fields = ("title", "description", "priority", "is_public", "patient_id", "university_id")
-
-    def validate(self, attrs):
-        request = self.context.get("request")
-        user = resolve_request_user(request)
-
-        if not user:
-            raise serializers.ValidationError(_("Authentication required."))
-
-        # Patient can only create for himself and cannot publish immediately
-        if user.role.name == Role.PATIENT:
-            if attrs.get("patient_id"):
-                raise serializers.ValidationError({"patient_id": _("Patients cannot set patient_id.")})
-            if attrs.get("is_public"):
-                raise serializers.ValidationError(_("Patient cases cannot be public until routed to a university."))
-
-            active_exists = Case.objects.filter(
-                patient=user,
-                status__in=Case.ACTIVE_STATUSES,
-            ).exists()
-            if active_exists:
-                raise serializers.ValidationError(_("You already have an active case."))
-
-        # If is_public => must have university (either already or provided)
-        if attrs.get("is_public"):
-            if not attrs.get("university_id"):
-                raise serializers.ValidationError({"university_id": _("University is required for public cases.")})
-
-        return attrs
-
-    @transaction.atomic
-    def create(self, validated_data):
-        request = self.context.get("request")
-        user = resolve_request_user(request)
-
-        patient_id = validated_data.pop("patient_id", None)
-        university_id = validated_data.pop("university_id", None)
-
-        # Resolve patient
-        if user.role.name == Role.PATIENT:
-            patient = user
-        else:
-            patient = User.objects.filter(id=patient_id, role__name=Role.PATIENT).first()
-
-        if not patient:
-            raise serializers.ValidationError({"patient_id": _("Valid patient is required.")})
-
-        # Build case
-        case = Case(
-            patient=patient,
-            **validated_data,
-        )
-
-        # Link university only if provided / non-patient flow
-        if university_id:
-            case.university_id = university_id
-
-        # If public: enforce pending_assignment status
-        if case.is_public:
-            case.status = Case.Status.PENDING_ASSIGNMENT
-
-        case.save()
-
-        CaseHistory.objects.create(
-            case=case,
-            action=CaseHistory.Action.CREATED,
-            description=_("Case created."),
-            performed_by=user,
-        )
-
-        return case
-
-
-# ============================================================
 # Case Update
 # ============================================================
 class CaseUpdateSerializer(serializers.ModelSerializer):
@@ -337,12 +248,12 @@ class CaseUpdateSerializer(serializers.ModelSerializer):
         if user and user.role.name == Role.PATIENT:
             raise serializers.ValidationError(_("Patients cannot modify case details."))
 
-        # If moving to pending_assignment or public => require university
+        # If making case public or moving into assignment flow => require university
         new_status = attrs.get("status")
         new_public = attrs.get("is_public", case.is_public)
         new_university = attrs.get("university", case.university)
 
-        if new_public or new_status == Case.Status.PENDING_ASSIGNMENT:
+        if new_public or new_status in {Case.Status.ACCEPTED, Case.Status.NEEDS_ASSIGNMENT_APPROVAL}:
             if not new_university:
                 raise serializers.ValidationError(_("University is required for public/assignment cases."))
 
@@ -356,7 +267,7 @@ class CaseStatusUpdateSerializer(serializers.ModelSerializer):
     """
     Update case status (and optionally attach university before routing).
 
-    - Allows moving NEW -> PENDING_ASSIGNMENT (requires university)
+    - Allows moving NEW -> ACCEPTED/REJECTED (supervisor decision)
     - Supervisors can move their assigned cases along allowed transitions
     - Tech Support / University Admin (same university) can manage unassigned cases
     """
@@ -383,9 +294,6 @@ class CaseStatusUpdateSerializer(serializers.ModelSerializer):
                     {"status": _("Invalid status transition from %(from)s to %(to)s.") % {"from": case.status, "to": target_status}}
                 )
 
-        if target_status == Case.Status.PENDING_ASSIGNMENT and not target_university:
-            raise serializers.ValidationError({"university": _("University is required to move to pending assignment.")})
-
         return attrs
 
     @transaction.atomic
@@ -409,63 +317,6 @@ class CaseStatusUpdateSerializer(serializers.ModelSerializer):
         )
 
         return instance
-
-
-# ============================================================
-# AI-driven Case Creation (Patient acceptance)
-# ============================================================
-class CaseCreateFromAISerializer(serializers.Serializer):
-    title = serializers.CharField(required=False, allow_blank=True)
-    description = serializers.CharField(required=False, allow_blank=True)
-    university_id = serializers.UUIDField()
-    ai_report = serializers.JSONField()
-
-    def validate(self, attrs):
-        request = self.context.get("request")
-        user = resolve_request_user(request)
-        if not user or getattr(getattr(user, "role", None), "name", None) != Role.PATIENT:
-            raise serializers.ValidationError(_("Only patients can accept AI treatment and create cases."))
-
-        from apps.universities.models import University
-
-        university_id = attrs.get("university_id")
-        university = University.objects.filter(id=university_id, is_active=True).first()
-        if not university:
-            raise serializers.ValidationError({"university_id": _("Valid active university is required.")})
-
-        ai_report = attrs.get("ai_report") or {}
-        severity = ai_report.get("severity_level") or ai_report.get("severity")
-        if severity and str(severity).lower() not in {"high", "urgent"}:
-            # allow but mark non-critical if needed
-            ai_report["severity_level"] = str(severity).lower()
-        attrs["university"] = university
-        attrs["user"] = user
-        attrs["ai_report"] = ai_report
-        return attrs
-
-    def create(self, validated_data):
-        user = validated_data["user"]
-        university = validated_data["university"]
-        ai_report = validated_data["ai_report"]
-        title = validated_data.get("title") or ai_report.get("diagnosis") or "AI Critical Case"
-        description = validated_data.get("description") or ai_report.get("patient_explanation") or ""
-
-        case = create_case_from_ai(
-            patient=user,
-            university=university,
-            ai_payload=ai_report,
-            title=title,
-            description=description,
-        )
-
-        CaseHistory.objects.create(
-            case=case,
-            action=CaseHistory.Action.CREATED,
-            description=_("Case created from AI critical diagnosis."),
-            performed_by=user,
-        )
-
-        return case
 
 
 # ============================================================
@@ -612,7 +463,7 @@ class CaseAssignSupervisorSerializer(serializers.ModelSerializer):
         instance.university_id = supervisor_university_id
         instance.student = None  # reset student (open for assignment)
         instance.is_public = True  # open only to students of this university (enforced by selectors/validators)
-        instance.status = Case.Status.PENDING_ASSIGNMENT
+        instance.status = Case.Status.ACCEPTED
         instance.save()
 
         CaseHistory.objects.create(

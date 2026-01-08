@@ -25,7 +25,6 @@ class Case(models.Model):
     # --------------------------------------------------------
     class Status(models.TextChoices):
         NEW = "new", _("New (Initial Diagnosis)")
-        PENDING_ASSIGNMENT = "pending_assignment", _("Pending Assignment")  # legacy
         ACCEPTED = "accepted", _("Accepted by Supervisor")
         REJECTED = "rejected", _("Rejected by Supervisor")
         NEEDS_ASSIGNMENT_APPROVAL = "needs_assignment_approval", _("Needs Assignment Approval")
@@ -42,7 +41,6 @@ class Case(models.Model):
 
     ACTIVE_STATUSES = {
         Status.NEW,
-        Status.PENDING_ASSIGNMENT,
         Status.ACCEPTED,
         Status.NEEDS_ASSIGNMENT_APPROVAL,
         Status.ASSIGNED,
@@ -53,7 +51,6 @@ class Case(models.Model):
         Status.NEW: {Status.ACCEPTED, Status.REJECTED},
         Status.ACCEPTED: {Status.NEEDS_ASSIGNMENT_APPROVAL, Status.REJECTED},
         Status.NEEDS_ASSIGNMENT_APPROVAL: {Status.ACCEPTED, Status.ASSIGNED},
-        Status.PENDING_ASSIGNMENT: {Status.ASSIGNED},
         Status.ASSIGNED: {Status.IN_PROGRESS},
         Status.IN_PROGRESS: {Status.COMPLETED},
         Status.COMPLETED: {Status.CLOSED},
@@ -199,7 +196,7 @@ class Case(models.Model):
                 raise ValidationError(_("This patient already has an active case."))
 
         # If case is public / pending assignment, university must be set
-        if self.is_public or self.status in {self.Status.PENDING_ASSIGNMENT, self.Status.ACCEPTED, self.Status.NEEDS_ASSIGNMENT_APPROVAL}:
+        if self.is_public or self.status in {self.Status.ACCEPTED, self.Status.NEEDS_ASSIGNMENT_APPROVAL}:
             if not self.university_id:
                 raise ValidationError(_("University is required for public/assignment cases."))
 

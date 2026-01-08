@@ -3,7 +3,7 @@
 from typing import Optional
 from django.db.models import QuerySet, Q
 
-from apps.accounts.models import User
+from apps.accounts.models import User, Role
 from apps.cases.models import (
     Case,
     CaseAssignmentRequest,
@@ -65,7 +65,7 @@ def get_public_cases(*, university_id: Optional[str] = None) -> QuerySet[Case]:
 
     qs = Case.objects.filter(
         is_public=True,
-        status=Case.Status.PENDING_ASSIGNMENT,
+        status=Case.Status.ACCEPTED,
     )
 
     if university_id:

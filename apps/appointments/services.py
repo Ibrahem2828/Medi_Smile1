@@ -13,8 +13,14 @@ def create_appointment(*, student, case, data: dict) -> Appointment:
 
     appointment = Appointment.objects.create(
         case=case,
+        patient=case.patient,
         student=student,
+        supervisor=case.supervisor,
+        created_by=student,
         scheduled_at=data["scheduled_at"],
+        duration_minutes=data.get("duration_minutes", 30),
+        location=data.get("location"),
+        telehealth_link=data.get("telehealth_link"),
         notes=data.get("notes", ""),
     )
 
@@ -34,8 +40,9 @@ def update_appointment(*, student, appointment: Appointment, data: dict):
     if student.role.name != Role.STUDENT:
         raise PermissionDenied
 
-    appointment.scheduled_at = data.get("scheduled_at", appointment.scheduled_at)
-    appointment.notes = data.get("notes", appointment.notes)
+    for field in ["scheduled_at", "duration_minutes", "location", "telehealth_link", "notes"]:
+        if field in data:
+            setattr(appointment, field, data[field])
     appointment.save()
 
     log_audit_event(
@@ -49,12 +56,11 @@ def update_appointment(*, student, appointment: Appointment, data: dict):
     return appointment
 
 
-def complete_appointment(*, student, appointment: Appointment):
+def complete_appointment(*, student, appointment: Appointment, outcome=Appointment.Status.COMPLETED):
     if student.role.name != Role.STUDENT:
         raise PermissionDenied
 
-    appointment.completed_at = timezone.now()
-    appointment.is_completed = True
+    appointment.status = outcome
     appointment.save()
 
     log_audit_event(

@@ -65,7 +65,7 @@ class CanViewRoom(BasePermission):
 
     def has_object_permission(self, request, view, obj: Room):
         user = request.user
-        role = getattr(user, "role_name", None)
+        role = getattr(user, "role_name", None) or getattr(getattr(user, "role", None), "name", None)
         case = obj.case
 
         if role == Role.TECH_SUPPORT:
@@ -103,7 +103,7 @@ class CanSendMessage(BasePermission):
 
     def has_object_permission(self, request, view, obj: Room):
         user = request.user
-        role = getattr(user, "role_name", None)
+        role = getattr(user, "role_name", None) or getattr(getattr(user, "role", None), "name", None)
         case = obj.case
 
         if not is_case_chat_open(case):
@@ -125,7 +125,7 @@ class CanViewMessage(BasePermission):
 
     def has_object_permission(self, request, view, obj: Message):
         user = request.user
-        role = getattr(user, "role_name", None)
+        role = getattr(user, "role_name", None) or getattr(getattr(user, "role", None), "name", None)
         room = obj.room
         case = room.case
 

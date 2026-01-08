@@ -90,7 +90,7 @@ class AppointmentCreationTests(AppointmentsBaseTestCase):
             url,
             {
                 "case_id": str(self.case.id),
-                "appointment_date": timezone.now() + timezone.timedelta(days=1),
+                "scheduled_at": timezone.now() + timezone.timedelta(days=1),
                 "notes": "Initial appointment",
             },
         )
@@ -106,7 +106,7 @@ class AppointmentCreationTests(AppointmentsBaseTestCase):
             url,
             {
                 "case_id": str(self.case.id),
-                "appointment_date": timezone.now() + timezone.timedelta(days=1),
+                "scheduled_at": timezone.now() + timezone.timedelta(days=1),
             },
         )
 
@@ -124,7 +124,7 @@ class AppointmentVisibilityTests(AppointmentsBaseTestCase):
             student=self.student,
             supervisor=self.supervisor,
             created_by=self.student,
-            appointment_date=timezone.now() + timezone.timedelta(days=2),
+            scheduled_at=timezone.now() + timezone.timedelta(days=2),
         )
 
     def test_patient_can_view_own_appointment(self):
@@ -161,7 +161,7 @@ class AppointmentScopeTests(AppointmentsBaseTestCase):
             student=self.student,
             supervisor=self.supervisor,
             created_by=self.student,
-            appointment_date=timezone.now() + timezone.timedelta(days=3),
+            scheduled_at=timezone.now() + timezone.timedelta(days=3),
         )
 
     def test_university_admin_sees_only_university_appointments(self):

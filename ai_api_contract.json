@@ -1,0 +1,121 @@
+{
+  "service": {
+    "name": "MediSmile AI",
+    "version": "2.0.0",
+    "base_url": "/api/ai",
+    "language": "ar/en",
+    "principle": "AI proposes — Humans decide — System records"
+  },
+  "entities": {
+    "AIDiagnosis": {
+      "fields": {
+        "id": "uuid",
+        "case": "uuid",
+        "patient": "uuid",
+        "requested_by": "uuid|null",
+        "status": "enum(pending, completed, failed, reviewed)",
+        "diagnosis_label": "string",
+        "primary_diagnosis": "string|null",
+        "detected_findings": "json|null",
+        "confidence_level": "enum(low, medium, high)",
+        "severity_level": "enum(low, moderate, high)",
+        "urgency_level": "enum(non_urgent, urgent)",
+        "ai_metadata": "json",
+        "patient_explanation": "string",
+        "report_text": "string|null",
+        "recommendations": "string|null",
+        "error_message": "string",
+        "reviewed_by": "uuid|null",
+        "reviewed_at": "datetime|null",
+        "created_at": "datetime",
+        "updated_at": "datetime"
+      }
+    }
+  },
+  "lifecycle": [
+    "pending -> completed/failed (بعد استدعاء Vision/NLP/Fusion)",
+    "completed -> reviewed (اعتماد/رفض المشرف)",
+    "no case creation هنا؛ التحويل إلى Proposals يتم في قسم الحالات بعد موافقة المريض"
+  ],
+  "endpoints": {
+    "diagnosis": {
+      "POST /api/ai/diagnose/": {
+        "role": "patient (أو مخوّل ضمن السياسة)",
+        "body": {
+          "symptoms_text": "string",
+          "patient_id": "uuid?",
+          "image_urls": "string[]?"
+        },
+        "response": {
+          "diagnosis": "AIDiagnosis",
+          "primary_suggestion": "json",
+          "next_suggestion": "json",
+          "all_suggestions": "json[]"
+        },
+        "throttle_scope": "ai-diagnose"
+      }
+    },
+    "read": {
+      "GET /api/ai/diagnoses/": {
+        "role": "scoped (patient/student/supervisor/admin/tech)",
+        "scope_rule": "selectors enforce university + ownership"
+      },
+      "GET /api/ai/diagnoses/<id>/": {
+        "role": "scoped via CanAccessAIDiagnosis"
+      }
+    },
+    "review": {
+      "POST /api/ai/diagnoses/<id>/review/": {
+        "role": "supervisor",
+        "body": { "approved": "bool", "note": "string?" },
+        "effect": "status -> reviewed; logs audit"
+      }
+    },
+    "health": {
+      "GET /api/ai/health/": {
+        "role": "tech_support|supervisor|admin (per policy)",
+        "returns": {
+          "engines": {
+            "symptoms": { "url": "string", "timeout": "int" },
+            "vision": { "url": "string", "timeout": "int" },
+            "fusion": { "url": "string", "timeout": "int" }
+          }
+        }
+      }
+    },
+    "patient-shortcut": {
+      "GET /api/ai/my-analysis/": {
+        "role": "patient",
+        "returns": "latest completed/reviewed diagnosis for latest case or processing status"
+      }
+    }
+  },
+  "permissions": {
+    "patient": ["request", "read own", "my-analysis"],
+    "student": ["read scoped to assigned cases"],
+    "supervisor": ["read university scope", "review"],
+    "tech_support": ["read/monitor/health"],
+    "admin": ["read university scope"]
+  },
+  "governance": {
+    "no_case_creation": true,
+    "store_full_ai_metadata": true,
+    "audit_logging": true,
+    "throttling": ["ai-diagnose", "ai-review", "ai-health", "ai-my-analysis"],
+    "selector_enforced_scoping": true
+  },
+  "integration": {
+    "vision": "external engine (FastAPI) via integrations/endpoints.py",
+    "nlp": "symptoms/text engine",
+    "fusion": "combines vision + text and returns proposals/risk flags"
+  },
+  "notifications": [
+    "optional: on completed/failed/reviewed (to patient/student/supervisor)"
+  ],
+  "errors": [
+    { "code": 401, "message": "Authentication required." },
+    { "code": 403, "message": "Forbidden (role/scope)." },
+    { "code": 404, "message": "Not found or out of scope." },
+    { "code": 429, "message": "Throttle limit exceeded." }
+  ]
+}

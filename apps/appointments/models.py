@@ -26,8 +26,7 @@ class Appointment(models.Model):
     # ============================================================
     class Status(models.TextChoices):
         SCHEDULED = "scheduled", _("Scheduled")
-        CONFIRMED = "confirmed", _("Confirmed")
-        IN_PROGRESS = "in_progress", _("In Progress")
+        RESCHEDULED = "rescheduled", _("Rescheduled")
         COMPLETED = "completed", _("Completed")
         CANCELLED = "cancelled", _("Cancelled")
         NO_SHOW = "no_show", _("No Show")
@@ -61,11 +60,13 @@ class Appointment(models.Model):
 
     student = models.ForeignKey(
         User,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         related_name="student_appointments",
         limit_choices_to={"role__name": Role.STUDENT},
         verbose_name=_("Student"),
-        help_text=_("Student responsible for this appointment."),
+        help_text=_("Student responsible for this appointment (nullable before assignment)."),
     )
 
     supervisor = models.ForeignKey(
@@ -90,9 +91,31 @@ class Appointment(models.Model):
     # ============================================================
     # Appointment Details
     # ============================================================
-    appointment_date = models.DateTimeField(
-        verbose_name=_("Appointment Date"),
+    scheduled_at = models.DateTimeField(
+        verbose_name=_("Scheduled At"),
         help_text=_("Scheduled date and time for the appointment."),
+    )
+
+    duration_minutes = models.PositiveSmallIntegerField(
+        default=30,
+        verbose_name=_("Duration (minutes)"),
+        help_text=_("Expected duration of the appointment."),
+    )
+
+    location = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        verbose_name=_("Location"),
+        help_text=_("Physical location if in-person."),
+    )
+
+    telehealth_link = models.URLField(
+        max_length=500,
+        null=True,
+        blank=True,
+        verbose_name=_("Telehealth Link"),
+        help_text=_("Virtual meeting link if remote."),
     )
 
     status = models.CharField(
@@ -134,9 +157,9 @@ class Appointment(models.Model):
         db_table = "appointments"
         verbose_name = _("Appointment")
         verbose_name_plural = _("Appointments")
-        ordering = ["-appointment_date"]
+        ordering = ["-scheduled_at"]
         indexes = [
-            models.Index(fields=["appointment_date"], name="idx_appt_date"),
+            models.Index(fields=["scheduled_at"], name="idx_appt_date"),
             models.Index(fields=["status"], name="idx_appt_status"),
             models.Index(fields=["student"], name="idx_appt_student"),
             models.Index(fields=["patient"], name="idx_appt_patient"),
@@ -151,22 +174,27 @@ class Appointment(models.Model):
         """
         Enforce MediSmile business rules:
         - Appointment must match the case participants
-        - Appointment cannot exist before case assignment to student
+        - Appointment must align with case lifecycle
         - Immutable once completed/cancelled/no_show
         """
 
         super().clean()
 
-        # Case must be assigned to a student before appointments
-        if not self.case.student_id:
-            raise ValidationError(_("Appointment cannot be created before case assignment."))
+        # Case status eligibility
+        if self.case.status not in {Case.Status.ACCEPTED, Case.Status.ASSIGNED, Case.Status.IN_PROGRESS}:
+            raise ValidationError(_("Appointment cannot be created for this case status."))
 
         # Consistency with case participants
         if self.case.patient_id != self.patient_id:
             raise ValidationError(_("Patient must match the case patient."))
 
-        if self.case.student_id != self.student_id:
-            raise ValidationError(_("Student must match the assigned case student."))
+        if self.case.student_id:
+            if self.student_id and self.case.student_id != self.student_id:
+                raise ValidationError(_("Student must match the assigned case student."))
+        else:
+            # If case has no student yet, appointment can omit student (supervisor-created)
+            if self.student_id:
+                raise ValidationError(_("Student cannot be set before case assignment."))
 
         if self.case.supervisor_id:
             # If case has a supervisor, appointment supervisor must match it (or be empty and auto-filled by logic)
@@ -197,4 +225,4 @@ class Appointment(models.Model):
         return super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"Appointment | {self.appointment_date:%Y-%m-%d %H:%M} | Patient: {self.patient.email}"
+        return f"Appointment | {self.scheduled_at:%Y-%m-%d %H:%M} | Patient: {self.patient.email}"

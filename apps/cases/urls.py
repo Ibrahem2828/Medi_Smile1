@@ -6,7 +6,6 @@ from .views import (
     CaseDetailView,
     CaseStatusUpdateView,
     CaseAssignSupervisorView,
-    CaseCreateFromAIView,
     CaseAssignmentRequestCreateView,
     CaseAssignmentRequestDecisionView,
     CaseSessionListView,
@@ -46,11 +45,6 @@ urlpatterns = [
         "<uuid:pk>/assign-supervisor/",
         CaseAssignSupervisorView.as_view(),
         name="case-assign-supervisor",
-    ),
-    path(
-        "ai/create/",
-        CaseCreateFromAIView.as_view(),
-        name="case-create-from-ai",
     ),
 
     # =====================================================

@@ -6,8 +6,39 @@ from rest_framework import serializers
 from medismile.utils.auth import resolve_request_user
 
 from apps.accounts.models import User, Role
-from apps.cases.models import Case
+from apps.cases.models import Case, CaseHistory
 from .models import Appointment
+from django.utils import timezone
+
+
+# ============================================================
+# Helpers
+# ============================================================
+def _check_conflicts(*, scheduled_at, duration_minutes, patient_id, student_id=None, supervisor_id=None, appointment_id=None):
+    """
+    Reject overlapping appointments for patient/student/supervisor on active slots.
+    """
+    end_at = scheduled_at + timezone.timedelta(minutes=duration_minutes)
+    qs = Appointment.objects.filter(status__in=[Appointment.Status.SCHEDULED, Appointment.Status.RESCHEDULED])
+    if appointment_id:
+        qs = qs.exclude(id=appointment_id)
+
+    def overlaps(appt):
+        appt_end = appt.scheduled_at + timezone.timedelta(minutes=appt.duration_minutes or 0)
+        return appt.scheduled_at < end_at and scheduled_at < appt_end
+
+    # collect minimal set
+    related = []
+    if patient_id:
+        related.extend(list(qs.filter(patient_id=patient_id)))
+    if student_id:
+        related.extend(list(qs.filter(student_id=student_id)))
+    if supervisor_id:
+        related.extend(list(qs.filter(supervisor_id=supervisor_id)))
+
+    for appt in related:
+        if overlaps(appt):
+            raise serializers.ValidationError(_("Scheduling conflict detected."))
 
 
 # ============================================================
@@ -63,7 +94,10 @@ class AppointmentSerializer(serializers.ModelSerializer):
             "student",
             "supervisor",
             "created_by",
-            "appointment_date",
+            "scheduled_at",
+            "duration_minutes",
+            "location",
+            "telehealth_link",
             "status",
             "is_follow_up",
             "notes",
@@ -77,19 +111,28 @@ class AppointmentSerializer(serializers.ModelSerializer):
 # ============================================================
 # Create Serializer
 # ============================================================
+
 class AppointmentCreateSerializer(serializers.ModelSerializer):
     """
     Business Rules (per MediSmile):
-    - ❌ Patient cannot create
-    - ✅ Student creates for assigned case
-    - ✅ Supervisor can create only for cases he supervises (exception)
+    - Patient cannot create
+    - Student creates for assigned case
+    - Supervisor can create only for cases he supervises (exception)
     """
 
     case_id = serializers.UUIDField(write_only=True)
 
     class Meta:
         model = Appointment
-        fields = ("case_id", "appointment_date", "is_follow_up", "notes")
+        fields = (
+            "case_id",
+            "scheduled_at",
+            "duration_minutes",
+            "location",
+            "telehealth_link",
+            "is_follow_up",
+            "notes",
+        )
 
     def validate(self, attrs):
         request = self.context.get("request")
@@ -108,21 +151,31 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
         except Case.DoesNotExist:
             raise serializers.ValidationError({"case_id": _("Case not found.")})
 
-        # Case must be assigned (student required)
-        if not case.student_id:
-            raise serializers.ValidationError(_("Appointment cannot be created before case assignment."))
+        if case.status not in {Case.Status.ACCEPTED, Case.Status.ASSIGNED, Case.Status.IN_PROGRESS}:
+            raise serializers.ValidationError(_("Appointment cannot be created for this case status."))
 
-        # Student rules
-        if role_name == Role.STUDENT and case.student_id != actor.id:
-            raise serializers.ValidationError(_("You are not assigned to this case."))
+        if role_name == Role.STUDENT:
+            if not case.student_id or case.student_id != actor.id:
+                raise serializers.ValidationError(_("You are not assigned to this case."))
+            attrs["student"] = actor
+        else:
+            attrs["student"] = case.student
 
-        # Supervisor rules
         if role_name == Role.SUPERVISOR and case.supervisor_id != actor.id:
             raise serializers.ValidationError(_("You are not supervising this case."))
 
+        scheduled_at = attrs.get("scheduled_at")
+        duration = attrs.get("duration_minutes") or 30
+        _check_conflicts(
+            scheduled_at=scheduled_at,
+            duration_minutes=duration,
+            patient_id=case.patient_id,
+            student_id=attrs.get("student").id if attrs.get("student") else None,
+            supervisor_id=case.supervisor_id,
+        )
+
         attrs["case"] = case
         attrs["patient"] = case.patient
-        attrs["student"] = case.student
         attrs["supervisor"] = case.supervisor
         attrs["created_by"] = actor
 
@@ -132,30 +185,31 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         validated_data.pop("case_id", None)
         appointment = Appointment.objects.create(**validated_data)
+        CaseHistory.objects.create(
+            case=appointment.case,
+            action=CaseHistory.Action.STATUS_CHANGED,
+            description=_("Appointment created."),
+            performed_by=validated_data.get("created_by"),
+        )
         return appointment
 
 
-# ============================================================
-# Update Serializer
-# ============================================================
 class AppointmentUpdateSerializer(serializers.ModelSerializer):
     """
-    Update appointment serializer.
-
-    Permissions (aligned with your scenario):
-    - ❌ Patient: cannot update date/notes/status (he requests change via messaging)
-    - ✅ Student:
-        - update appointment_date
-        - update notes
-        - update status (limited by views/actions)
-        - archive
-    - ✅ Supervisor:
-        - status only (limited)
+    Update appointment (notes/reschedule). Status terminal changes handled by action endpoints.
     """
 
     class Meta:
         model = Appointment
-        fields = ("appointment_date", "status", "notes", "is_archived")
+        fields = (
+            "scheduled_at",
+            "duration_minutes",
+            "location",
+            "telehealth_link",
+            "status",
+            "notes",
+            "is_archived",
+        )
 
     def validate(self, attrs):
         request = self.context.get("request")
@@ -170,26 +224,92 @@ class AppointmentUpdateSerializer(serializers.ModelSerializer):
         if role_name == Role.PATIENT:
             raise serializers.ValidationError(_("Patients are not allowed to modify appointments."))
 
-        # immutable final states
         if instance.status in {Appointment.Status.COMPLETED, Appointment.Status.CANCELLED, Appointment.Status.NO_SHOW}:
             raise serializers.ValidationError(_("Completed/cancelled/no-show appointments cannot be modified."))
 
-        # Student permissions
         if role_name == Role.STUDENT:
             if instance.student_id != actor.id:
                 raise serializers.ValidationError(_("You are not assigned to this appointment."))
 
-        # Supervisor permissions: status only
         if role_name == Role.SUPERVISOR:
             if instance.supervisor_id != actor.id:
                 raise serializers.ValidationError(_("You are not supervising this appointment."))
 
-            forbidden = {"appointment_date", "notes", "is_archived"}
-            if forbidden.intersection(attrs.keys()):
-                raise serializers.ValidationError(_("Supervisors can only update appointment status."))
+        schedule_changed = any(field in attrs for field in ("scheduled_at", "duration_minutes", "location", "telehealth_link"))
+        if "status" in attrs:
+            raise serializers.ValidationError(_("Use dedicated endpoints to change appointment status."))
 
-        # Other roles disallowed
-        if role_name not in {Role.STUDENT, Role.SUPERVISOR}:
-            raise serializers.ValidationError(_("Not allowed."))
+        if schedule_changed:
+            scheduled_at = attrs.get("scheduled_at", instance.scheduled_at)
+            duration = attrs.get("duration_minutes", instance.duration_minutes)
+            _check_conflicts(
+                scheduled_at=scheduled_at,
+                duration_minutes=duration,
+                patient_id=instance.patient_id,
+                student_id=instance.student_id,
+                supervisor_id=instance.supervisor_id,
+                appointment_id=instance.id,
+            )
 
         return attrs
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        schedule_changed = any(field in validated_data for field in ("scheduled_at", "duration_minutes", "location", "telehealth_link"))
+
+        for field in ("scheduled_at", "duration_minutes", "location", "telehealth_link", "notes", "is_archived"):
+            if field in validated_data:
+                setattr(instance, field, validated_data[field])
+
+        if schedule_changed:
+            instance.status = Appointment.Status.RESCHEDULED
+
+        instance.save()
+
+        CaseHistory.objects.create(
+            case=instance.case,
+            action=CaseHistory.Action.STATUS_CHANGED,
+            description=("Appointment rescheduled." if schedule_changed else "Appointment updated."),
+            performed_by=resolve_request_user(self.context.get("request")),
+        )
+        return instance
+
+
+# ============================================================
+# Action Serializers (Reschedule / Cancel / Complete)
+# ============================================================
+
+class AppointmentRescheduleSerializer(serializers.Serializer):
+    scheduled_at = serializers.DateTimeField()
+    duration_minutes = serializers.IntegerField(required=False, min_value=1)
+    location = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    telehealth_link = serializers.URLField(required=False, allow_blank=True, allow_null=True)
+    reason = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    def validate(self, attrs):
+        appointment: Appointment = self.context["appointment"]
+        actor = resolve_request_user(self.context.get("request"))
+        if appointment.status in {Appointment.Status.COMPLETED, Appointment.Status.CANCELLED, Appointment.Status.NO_SHOW}:
+            raise serializers.ValidationError(_("Cannot reschedule a completed/cancelled/no-show appointment."))
+        scheduled_at = attrs["scheduled_at"]
+        duration = attrs.get("duration_minutes") or appointment.duration_minutes
+        _check_conflicts(
+            scheduled_at=scheduled_at,
+            duration_minutes=duration,
+            patient_id=appointment.patient_id,
+            student_id=appointment.student_id,
+            supervisor_id=appointment.supervisor_id,
+            appointment_id=appointment.id,
+        )
+        attrs["duration_minutes"] = duration
+        attrs["actor"] = actor
+        return attrs
+
+
+class AppointmentCancelSerializer(serializers.Serializer):
+    reason = serializers.CharField()
+
+
+class AppointmentCompleteSerializer(serializers.Serializer):
+    outcome = serializers.ChoiceField(choices=[Appointment.Status.COMPLETED, Appointment.Status.NO_SHOW])
+    notes = serializers.CharField(required=False, allow_blank=True, allow_null=True)

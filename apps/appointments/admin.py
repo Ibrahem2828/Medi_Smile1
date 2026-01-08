@@ -17,7 +17,7 @@ class AppointmentAdmin(BaseOptimizedAdmin):
     """
 
     list_display = (
-        "appointment_date",
+        "scheduled_at",
         "case",
         "patient",
         "student",
@@ -32,7 +32,7 @@ class AppointmentAdmin(BaseOptimizedAdmin):
         "status",
         "is_follow_up",
         "is_archived",
-        "appointment_date",
+        "scheduled_at",
     )
 
     search_fields = (
@@ -42,7 +42,7 @@ class AppointmentAdmin(BaseOptimizedAdmin):
         "case__title",
     )
 
-    ordering = ("-appointment_date",)
+    ordering = ("-scheduled_at",)
 
     readonly_fields = (
         "id",
@@ -58,8 +58,11 @@ class AppointmentAdmin(BaseOptimizedAdmin):
     fieldsets = (
         (_("Appointment Details"), {
             "fields": (
-                "appointment_date",
+                "scheduled_at",
                 "status",
+                "duration_minutes",
+                "location",
+                "telehealth_link",
                 "is_follow_up",
                 "notes",
                 "is_archived",
