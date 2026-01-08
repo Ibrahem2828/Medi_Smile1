@@ -1,8 +1,17 @@
 # apps/reports/selectors.py
+from django.core.exceptions import ObjectDoesNotExist
+
 from apps.accounts.models import Role
 from apps.cases.models import Case
 
 from .models import Report
+
+
+def _safe_get_profile(user, attr):
+    try:
+        return getattr(user, attr)
+    except (AttributeError, ObjectDoesNotExist):
+        return None
 
 
 def _resolve_university_id(user):
@@ -15,7 +24,7 @@ def _resolve_university_id(user):
         "universityadminprofile_profile",
         "patientprofile_profile",
     ):
-        profile = getattr(user, attr, None)
+        profile = _safe_get_profile(user, attr)
         uni_id = getattr(profile, "university_id", None)
         if uni_id:
             return uni_id

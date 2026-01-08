@@ -9,7 +9,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from django.utils import timezone
 
-from apps.accounts.models import Role, User
+from apps.accounts.models import Role, User, StudentProfile
 from apps.audit.services import log_audit_event
 from apps.notifications.audit_bridge import notify_on_audit_event
 from apps.cases.models import Case
@@ -36,7 +36,8 @@ def _get_target_context(target_type: str, target_id):
         student = User.objects.filter(id=target_id, role__name=Role.STUDENT).first()
         if not student:
             raise ValidationError({"target_id": "Student not found."})
-        university = getattr(getattr(student, "studentprofile_profile", None), "university", None)
+        profile = StudentProfile.objects.select_related("university").filter(user=student).first()
+        university = profile.university if profile else None
         if not university:
             raise ValidationError({"target_id": "Student is not linked to a university."})
         return {
@@ -99,6 +100,8 @@ def create_report(*, actor, data: dict) -> Report:
 
     if role_name == Role.SUPERVISOR:
         supervisor_university_id = _resolve_university_id(actor)
+        if not supervisor_university_id:
+            raise PermissionDenied("Supervisor profile is not linked to a university.")
         if supervisor_university_id and university.id != supervisor_university_id:
             raise PermissionDenied("You can only create reports within your university.")
         allowed_supervisor_types = {
@@ -114,6 +117,8 @@ def create_report(*, actor, data: dict) -> Report:
 
     if role_name == Role.UNIVERSITY_ADMIN:
         admin_university_id = _resolve_university_id(actor)
+        if not admin_university_id:
+            raise PermissionDenied("University Admin profile is not linked to a university.")
         allowed_admin_types = {
             Report.ReportType.UNIVERSITY_STUDENTS,
             Report.ReportType.UNIVERSITY_SUPERVISORS,
