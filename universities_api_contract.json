@@ -1,0 +1,222 @@
+{
+  "service": {
+    "name": "Universities",
+    "version": "2.0.0",
+    "base_url": "/api/universities",
+    "language": "ar/en"
+  },
+  "entities": {
+    "University": {
+      "fields": {
+        "id": "uuid",
+        "name": "string",
+        "code": "string",
+        "is_active": "boolean",
+        "created_at": "datetime",
+        "updated_at": "datetime"
+      }
+    },
+    "Faculty": {
+      "fields": { "id": "uuid", "name": "string", "description": "string|null", "is_active": "boolean" }
+    },
+    "AcademicProgram": {
+      "fields": {
+        "id": "uuid",
+        "faculty": "uuid|null",
+        "name": "string",
+        "code": "string",
+        "level": "enum(bachelor, master, doctorate, diploma, certificate)",
+        "duration_years": "int",
+        "description": "string|null",
+        "is_active": "boolean"
+      }
+    },
+    "AcademicYear": {
+      "fields": { "id": "uuid", "name": "string", "start_date": "date", "end_date": "date", "is_active": "boolean" }
+    },
+    "Course": {
+      "fields": {
+        "id": "uuid",
+        "name": "string",
+        "code": "string",
+        "academic_year": "uuid|null",
+        "program": "uuid|null",
+        "supervisor": "uuid|null",
+        "students": "uuid[]",
+        "description": "string|null",
+        "credits": "int",
+        "is_active": "boolean"
+      }
+    }
+  },
+  "endpoints": {
+    "universities": {
+      "GET /api/universities/": {
+        "role": "admin scoped",
+        "response": { "results": ["University"] }
+      },
+      "POST /api/universities/": {
+        "role": "tech_support",
+        "body": { "name": "string", "code": "string", "is_active?": "boolean" },
+        "response": "University"
+      },
+      "GET /api/universities/<id>/": {
+        "role": "admin scoped",
+        "response": "University"
+      },
+      "PATCH /api/universities/<id>/": {
+        "role": "tech_support",
+        "body": { "name?": "string", "code?": "string", "is_active?": "boolean" },
+        "response": "University"
+      }
+    },
+    "faculties": {
+      "GET /api/universities/faculties/": {
+        "role": "admin scoped",
+        "response": { "results": ["Faculty"] }
+      },
+      "POST /api/universities/faculties/": {
+        "role": "tech_support|university_admin",
+        "body": { "name": "string", "description?": "string", "is_active?": "boolean" },
+        "response": "Faculty"
+      },
+      "GET /api/universities/faculties/<id>/": {
+        "role": "admin scoped",
+        "response": "Faculty"
+      },
+      "PATCH /api/universities/faculties/<id>/": {
+        "role": "tech_support|university_admin",
+        "body": { "name?": "string", "description?": "string", "is_active?": "boolean" },
+        "response": "Faculty"
+      },
+      "DELETE /api/universities/faculties/<id>/": {
+        "role": "tech_support|university_admin",
+        "response": { "detail": "Faculty removed." }
+      }
+    },
+    "programs": {
+      "GET /api/universities/programs/": {
+        "role": "admin scoped",
+        "response": { "results": ["AcademicProgram"] }
+      },
+      "POST /api/universities/programs/": {
+        "role": "tech_support|university_admin",
+        "body": {
+          "faculty": "uuid|null",
+          "name": "string",
+          "code": "string",
+          "level": "enum(bachelor, master, doctorate, diploma, certificate)",
+          "duration_years": "int",
+          "description?": "string",
+          "is_active?": "boolean"
+        },
+        "response": "AcademicProgram"
+      },
+      "GET /api/universities/programs/<id>/": {
+        "role": "admin scoped",
+        "response": "AcademicProgram"
+      },
+      "PATCH /api/universities/programs/<id>/": {
+        "role": "tech_support|university_admin",
+        "body": {
+          "faculty?": "uuid|null",
+          "name?": "string",
+          "code?": "string",
+          "level?": "enum(bachelor, master, doctorate, diploma, certificate)",
+          "duration_years?": "int",
+          "description?": "string",
+          "is_active?": "boolean"
+        },
+        "response": "AcademicProgram"
+      },
+      "DELETE /api/universities/programs/<id>/": {
+        "role": "tech_support|university_admin",
+        "response": { "detail": "Program removed." }
+      }
+    },
+    "academic_years": {
+      "GET /api/universities/academic-years/": {
+        "role": "admin scoped",
+        "response": { "results": ["AcademicYear"] }
+      },
+      "POST /api/universities/academic-years/": {
+        "role": "tech_support|university_admin",
+        "body": {
+          "name": "string",
+          "start_date": "date",
+          "end_date": "date",
+          "is_active?": "boolean"
+        },
+        "response": "AcademicYear"
+      },
+      "GET /api/universities/academic-years/<id>/": {
+        "role": "admin scoped",
+        "response": "AcademicYear"
+      },
+      "PATCH /api/universities/academic-years/<id>/": {
+        "role": "tech_support|university_admin",
+        "body": { "name?": "string", "start_date?": "date", "end_date?": "date", "is_active?": "boolean" },
+        "response": "AcademicYear"
+      },
+      "DELETE /api/universities/academic-years/<id>/": {
+        "role": "tech_support|university_admin",
+        "response": { "detail": "Academic year removed." }
+      }
+    },
+    "courses": {
+      "GET /api/universities/courses/": {
+        "role": "admin scoped",
+        "response": { "results": ["Course"] }
+      },
+      "POST /api/universities/courses/": {
+        "role": "tech_support|university_admin",
+        "body": {
+          "name": "string",
+          "code": "string",
+          "academic_year": "uuid|null",
+          "program": "uuid|null",
+          "supervisor": "uuid|null",
+          "students": ["uuid"],
+          "description?": "string",
+          "credits": "int",
+          "is_active?": "boolean"
+        },
+        "response": "Course"
+      },
+      "GET /api/universities/courses/<id>/": {
+        "role": "admin scoped",
+        "response": "Course"
+      },
+      "PATCH /api/universities/courses/<id>/": {
+        "role": "tech_support|university_admin",
+        "body": {
+          "name?": "string",
+          "code?": "string",
+          "academic_year?": "uuid|null",
+          "program?": "uuid|null",
+          "supervisor?": "uuid|null",
+          "students?": ["uuid"],
+          "description?": "string",
+          "credits?": "int",
+          "is_active?": "boolean"
+        },
+        "response": "Course"
+      },
+      "DELETE /api/universities/courses/<id>/": {
+        "role": "tech_support|university_admin",
+        "response": { "detail": "Course removed." }
+      }
+    }
+  },
+  "permissions": {
+    "tech_support": ["full CRUD on universities and catalog objects"],
+    "university_admin": ["create/update faculties, programs, academic years, courses"],
+    "admin scoped": ["read across university with scoping"]
+  },
+  "errors": [
+    { "code": 400, "message": "Validation error." },
+    { "code": 401, "message": "Authentication required." },
+    { "code": 403, "message": "Forbidden for this role or university scope." },
+    { "code": 404, "message": "Record not found or out of scope." }
+  ]
+}

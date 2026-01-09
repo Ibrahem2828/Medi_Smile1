@@ -1,0 +1,114 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MediSmile API Workspace</title>
+    <link rel="stylesheet" href="{% static 'ui/app.css' %}">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="logo">MS</div>
+          <div class="brand-text">
+            <span class="brand-title">MediSmile</span>
+            <span class="brand-subtitle">API Workspace</span>
+          </div>
+        </div>
+        <nav class="section-nav" id="section-nav"></nav>
+        <div class="sidebar-footer">
+          <div class="sidebar-note">Contract driven, role aware, always synced.</div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div class="topbar-title">
+            <h1>Contract Explorer</h1>
+            <p>Explore AI Diagnosis, Cases, Appointments, Accounts, Universities, Audit, Backup, and Support.</p>
+          </div>
+          <div class="topbar-actions">
+            <label class="field">
+              <span>Base URL</span>
+              <input id="base-url" type="url" placeholder="https://medismile1-production.up.railway.app">
+            </label>
+            <label class="field">
+              <span>Bearer Token</span>
+              <input id="auth-token" type="password" placeholder="Paste JWT access token">
+            </label>
+            <button class="theme-toggle" id="theme-toggle" type="button">Toggle Theme</button>
+          </div>
+        </header>
+
+        <section class="overview" id="overview"></section>
+        <section class="content" id="content"></section>
+      </main>
+    </div>
+
+    <div class="modal" id="detail-modal" aria-hidden="true">
+      <div class="modal-backdrop" data-close-modal></div>
+      <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal-header">
+          <div>
+            <p class="modal-group" id="modal-group"></p>
+            <h2 id="modal-title"></h2>
+            <p class="modal-path" id="modal-path"></p>
+          </div>
+          <button class="icon-button" type="button" data-close-modal>Close</button>
+        </div>
+        <div class="modal-body">
+          <div class="modal-grid">
+            <div class="detail-block">
+              <h3>Access</h3>
+              <div class="detail-row"><span>Role</span><span id="modal-role"></span></div>
+              <div class="detail-row"><span>Scope</span><span id="modal-scope"></span></div>
+              <div class="detail-row"><span>Effect</span><span id="modal-effect"></span></div>
+            </div>
+            <div class="detail-block">
+              <h3>Request Body</h3>
+              <pre id="modal-request"></pre>
+            </div>
+            <div class="detail-block">
+              <h3>Response</h3>
+              <pre id="modal-response"></pre>
+            </div>
+            <div class="detail-block">
+              <h3>Rules</h3>
+              <div id="modal-rules"></div>
+            </div>
+          </div>
+
+          <div class="modal-test">
+            <div class="test-header">
+              <h3>Test Endpoint</h3>
+              <span class="test-hint">Requires valid access credentials.</span>
+            </div>
+            <div class="test-grid">
+              <label class="field">
+                <span>Method</span>
+                <input id="modal-method" type="text" readonly>
+              </label>
+              <label class="field">
+                <span>URL</span>
+                <input id="modal-url" type="text" readonly>
+              </label>
+            </div>
+            <label class="field">
+              <span>Request JSON</span>
+              <textarea id="modal-body" rows="6" placeholder="{ }"></textarea>
+            </label>
+            <div class="test-actions">
+              <button class="primary-button" id="run-test" type="button">Run Test</button>
+              <span id="test-status"></span>
+            </div>
+            <pre class="test-output" id="test-output"></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="{% static 'ui/app.js' %}"></script>
+  </body>
+</html>

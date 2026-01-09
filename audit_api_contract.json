@@ -1,0 +1,58 @@
+{
+  "service": {
+    "name": "Audit",
+    "version": "2.0.0",
+    "base_url": "/api/audit",
+    "language": "ar/en"
+  },
+  "entities": {
+    "AuditLog": {
+      "fields": {
+        "id": "uuid",
+        "actor_id": "uuid|null",
+        "actor_role": "string|null",
+        "action": "string",
+        "target_type": "string",
+        "target_id": "uuid|null",
+        "method": "string",
+        "path": "string",
+        "ip_address": "string|null",
+        "user_agent": "string|null",
+        "status_code": "int",
+        "payload_snapshot": "json|null",
+        "created_at": "datetime"
+      }
+    }
+  },
+  "endpoints": {
+    "logs": {
+      "GET /api/audit/logs/": {
+        "role": "tech_support | admin (scoped)",
+        "query": {
+          "actor_id?": "uuid",
+          "action?": "string",
+          "target_type?": "string",
+          "target_id?": "uuid",
+          "from?": "datetime",
+          "to?": "datetime",
+          "status_code?": "int",
+          "search?": "string"
+        },
+        "response": { "results": ["AuditLog"] }
+      },
+      "GET /api/audit/logs/<id>/": {
+        "role": "tech_support | admin (scoped)",
+        "response": "AuditLog"
+      }
+    }
+  },
+  "permissions": {
+    "tech_support": ["read all logs"],
+    "admin": ["read logs within university scope"]
+  },
+  "errors": [
+    { "code": 401, "message": "Authentication required." },
+    { "code": 403, "message": "Forbidden for this role." },
+    { "code": 404, "message": "Audit log not found." }
+  ]
+}

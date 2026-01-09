@@ -1,7 +1,8 @@
 # apps/audit/views.py
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 
 from django.db.models import Count, Q
+from django.db.models.functions import TruncDate
 from django.utils import timezone
 
 from rest_framework import generics, status
@@ -82,29 +83,46 @@ def audit_statistics(request):
     Scoped by university for University Admin.
     """
     user = request.user
+    role_name = getattr(getattr(user, "role", None), "name", None)
     qs = AuditLog.objects.all()
 
-    if user.role.name == Role.UNIVERSITY_ADMIN:
+    if role_name == Role.UNIVERSITY_ADMIN:
         qs = qs.filter(university_id=user.university_id)
+
+    today = timezone.localdate()
+    start_day = today - timedelta(days=29)
+    start_at = timezone.make_aware(datetime.combine(start_day, time.min))
+    end_at = timezone.make_aware(datetime.combine(today + timedelta(days=1), time.min))
+    qs = qs.filter(created_at__gte=start_at, created_at__lt=end_at)
 
     action_counts = list(
         qs.values("action")
-        .annotate(count=Count("action"))
+        .annotate(count=Count("id"))
         .order_by("-count")
     )
 
     top_users = list(
-        qs.values("user__email")
-        .annotate(count=Count("user"))
+        qs.exclude(user__isnull=True)
+        .values("user__email")
+        .annotate(count=Count("id"))
         .order_by("-count")[:10]
     )
 
-    today = timezone.now().date()
+    daily_counts_map = {
+        row["day"]: row["count"]
+        for row in (
+            qs.annotate(day=TruncDate("created_at"))
+            .values("day")
+            .annotate(count=Count("id"))
+        )
+    }
+
     daily_counts = []
     for i in range(30):
-        day = today - timedelta(days=i)
-        daily_counts.append({"date": day.strftime("%Y-%m-%d"), "count": qs.filter(created_at__date=day).count()})
-    daily_counts.reverse()
+        day = start_day + timedelta(days=i)
+        daily_counts.append(
+            {"date": day.strftime("%Y-%m-%d"), "count": daily_counts_map.get(day, 0)}
+        )
 
     return Response(
         {

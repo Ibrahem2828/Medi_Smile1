@@ -1,0 +1,181 @@
+{
+  "service": {
+    "name": "Accounts",
+    "version": "2.0.0",
+    "base_url": "/api/accounts",
+    "language": "ar/en"
+  },
+  "entities": {
+    "User": {
+      "fields": {
+        "id": "uuid",
+        "email": "string",
+        "username": "string",
+        "first_name": "string",
+        "last_name": "string",
+        "role": "enum(patient, student, supervisor, university_admin, tech_support)",
+        "role_id": "uuid|null",
+        "university_id": "uuid|null",
+        "fcm_token": "string|null",
+        "is_active": "boolean",
+        "created_at": "datetime",
+        "updated_at": "datetime"
+      }
+    },
+    "AuthTokens": {
+      "fields": {
+        "refresh": "jwt",
+        "access": "jwt",
+        "expires_in": "int"
+      }
+    }
+  },
+  "endpoints": {
+    "auth": {
+      "POST /api/accounts/login/patient/": {
+        "role": "AllowAny",
+        "body": { "email": "string", "password": "string" },
+        "response": { "detail": "Login successful.", "tokens": "AuthTokens", "user": "User" }
+      },
+      "POST /api/accounts/login/student/": {
+        "role": "AllowAny",
+        "body": { "email": "string", "password": "string" },
+        "response": { "detail": "Login successful.", "tokens": "AuthTokens", "user": "User" }
+      },
+      "POST /api/accounts/login/supervisor/": {
+        "role": "AllowAny",
+        "body": { "email": "string", "password": "string" },
+        "response": { "detail": "Login successful.", "tokens": "AuthTokens", "user": "User" }
+      },
+      "POST /api/accounts/login/university-admin/": {
+        "role": "AllowAny",
+        "body": { "email": "string", "password": "string" },
+        "response": { "detail": "Login successful.", "tokens": "AuthTokens", "user": "User" }
+      },
+      "POST /api/accounts/login/tech-support/": {
+        "role": "AllowAny",
+        "body": { "email": "string", "password": "string" },
+        "response": { "detail": "Login successful.", "tokens": "AuthTokens", "user": "User" }
+      }
+    },
+    "registration": {
+      "POST /api/accounts/register/patient/": {
+        "role": "AllowAny",
+        "body": {
+          "email": "string",
+          "username": "string",
+          "first_name": "string",
+          "last_name": "string",
+          "password": "string",
+          "password_confirm": "string"
+        },
+        "response": { "id": "uuid", "email": "string", "role": "patient" }
+      },
+      "POST /api/accounts/create/student/": {
+        "role": "university_admin",
+        "body": {
+          "email": "string",
+          "username": "string",
+          "first_name": "string",
+          "last_name": "string",
+          "password": "string",
+          "password_confirm": "string"
+        },
+        "response": { "user": "User" }
+      },
+      "POST /api/accounts/create/supervisor/": {
+        "role": "university_admin",
+        "body": {
+          "email": "string",
+          "username": "string",
+          "first_name": "string",
+          "last_name": "string",
+          "password": "string",
+          "password_confirm": "string"
+        },
+        "response": { "user": "User" }
+      },
+      "POST /api/accounts/create/university-admin/": {
+        "role": "tech_support",
+        "body": {
+          "email": "string",
+          "username": "string",
+          "first_name": "string",
+          "last_name": "string",
+          "password": "string",
+          "password_confirm": "string",
+          "university_id": "uuid"
+        },
+        "response": { "user": "User" }
+      },
+      "POST /api/accounts/create/tech-support/": {
+        "role": "tech_support",
+        "body": {
+          "email": "string",
+          "username": "string",
+          "first_name": "string",
+          "last_name": "string",
+          "password": "string",
+          "password_confirm": "string"
+        },
+        "response": { "user": "User" }
+      }
+    },
+    "profile": {
+      "GET /api/accounts/me/patient/": { "role": "patient", "response": "User" },
+      "PATCH /api/accounts/me/patient/": {
+        "role": "patient",
+        "body": { "first_name?": "string", "last_name?": "string", "username?": "string", "password?": "string" },
+        "response": "User"
+      },
+      "GET /api/accounts/me/student/": { "role": "student", "response": "User" },
+      "PATCH /api/accounts/me/student/": {
+        "role": "student",
+        "body": { "first_name?": "string", "last_name?": "string", "username?": "string", "password?": "string" },
+        "response": "User"
+      },
+      "GET /api/accounts/me/supervisor/": { "role": "supervisor", "response": "User" },
+      "PATCH /api/accounts/me/supervisor/": {
+        "role": "supervisor",
+        "body": { "first_name?": "string", "last_name?": "string", "username?": "string", "password?": "string" },
+        "response": "User"
+      },
+      "GET /api/accounts/me/university-admin/": { "role": "university_admin", "response": "User" },
+      "PATCH /api/accounts/me/university-admin/": {
+        "role": "university_admin",
+        "body": { "first_name?": "string", "last_name?": "string", "username?": "string", "password?": "string" },
+        "response": "User"
+      },
+      "GET /api/accounts/me/tech-support/": { "role": "tech_support", "response": "User" },
+      "PATCH /api/accounts/me/tech-support/": {
+        "role": "tech_support",
+        "body": { "first_name?": "string", "last_name?": "string", "username?": "string", "password?": "string" },
+        "response": "User"
+      }
+    },
+    "fcm_token": {
+      "POST /api/accounts/me/token/": {
+        "role": "authenticated",
+        "body": { "fcm_token": "string" },
+        "response": { "detail": "Token registered." }
+      },
+      "DELETE /api/accounts/me/token/": {
+        "role": "authenticated",
+        "response": { "detail": "Token removed." }
+      }
+    }
+  },
+  "permissions": {
+    "patient": ["register", "login", "self-profile", "manage-fcm-token"],
+    "student": ["login", "self-profile", "manage-fcm-token"],
+    "supervisor": ["login", "self-profile", "manage-fcm-token"],
+    "university_admin": ["login", "create student/supervisor", "self-profile"],
+    "tech_support": ["login", "create university_admin/tech_support", "self-profile"]
+  },
+  "errors": [
+    { "code": 400, "message": "Validation error." },
+    { "code": 401, "message": "Invalid credentials." },
+    { "code": 403, "message": "Forbidden for this role." },
+    { "code": 404, "message": "User not found or inactive." }
+  ]
+}

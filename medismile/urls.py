@@ -4,6 +4,8 @@ from django.conf import settings
 from django.conf.urls.static import static
 from django.http import JsonResponse
 
+from medismile.ui_views import ui_index, ui_contract
+
 
 # ============================================================
 # System / Health
@@ -43,6 +45,8 @@ urlpatterns = [
     # System Endpoints
     # --------------------------------------------------------
     path("health/", health_check, name="health-check"),
+    path("ui/", ui_index, name="ui-index"),
+    path("ui/contracts/<slug:contract>/", ui_contract, name="ui-contract"),
 
     # --------------------------------------------------------
     # API v1 - Core Accounts & Identity

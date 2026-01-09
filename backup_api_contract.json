@@ -1,0 +1,50 @@
+{
+  "service": {
+    "name": "Backup",
+    "version": "2.0.0",
+    "base_url": "/api/backup",
+    "language": "ar/en"
+  },
+  "entities": {
+    "BackupJob": {
+      "fields": {
+        "id": "uuid",
+        "name": "string",
+        "job_type": "enum(backup, restore)",
+        "status": "enum(pending, running, completed, failed)",
+        "started_at": "datetime|null",
+        "finished_at": "datetime|null",
+        "created_by": "uuid",
+        "notes": "string|null",
+        "storage_path": "string|null"
+      }
+    }
+  },
+  "endpoints": {
+    "jobs": {
+      "GET /api/backup/jobs/": {
+        "role": "tech_support",
+        "response": { "results": ["BackupJob"] }
+      },
+      "POST /api/backup/jobs/": {
+        "role": "tech_support",
+        "body": { "name": "string", "notes?": "string" },
+        "response": { "job": "BackupJob", "detail": "Backup job queued." }
+      },
+      "POST /api/backup/jobs/<id>/restore/": {
+        "role": "tech_support",
+        "body": { "target_path?": "string", "notes?": "string" },
+        "response": { "job": "BackupJob", "detail": "Restore job queued." }
+      }
+    }
+  },
+  "permissions": {
+    "tech_support": ["list jobs", "start backup", "start restore"]
+  },
+  "errors": [
+    { "code": 401, "message": "Authentication required." },
+    { "code": 403, "message": "Forbidden for this role." },
+    { "code": 404, "message": "Job not found." },
+    { "code": 409, "message": "Job already running or immutable." }
+  ]
+}

@@ -1,0 +1,69 @@
+{
+  "service": {
+    "name": "Support",
+    "version": "2.0.0",
+    "base_url": "/api/support",
+    "language": "ar/en"
+  },
+  "entities": {
+    "SupportTicket": {
+      "fields": {
+        "id": "uuid",
+        "subject": "string",
+        "body": "string",
+        "priority": "enum(low, normal, high, critical)",
+        "status": "enum(open, in_progress, resolved, closed)",
+        "attachments": "string[]",
+        "created_by": "uuid",
+        "assigned_to": "uuid|null",
+        "created_at": "datetime",
+        "updated_at": "datetime"
+      }
+    }
+  },
+  "endpoints": {
+    "tickets": {
+      "GET /api/support/tickets/": {
+        "role": "admin scoped | tech_support | creator scoped",
+        "response": { "results": ["SupportTicket"] }
+      },
+      "POST /api/support/tickets/": {
+        "role": "authenticated",
+        "body": {
+          "subject": "string",
+          "body": "string",
+          "priority": "enum(low, normal, high, critical)",
+          "attachments?": ["string"]
+        },
+        "response": "SupportTicket"
+      },
+      "GET /api/support/tickets/<id>/": {
+        "role": "admin scoped | tech_support | creator scoped",
+        "response": "SupportTicket"
+      },
+      "PATCH /api/support/tickets/<id>/": {
+        "role": "tech_support|admin scoped",
+        "body": {
+          "status?": "enum(open, in_progress, resolved, closed)",
+          "priority?": "enum(low, normal, high, critical)",
+          "assigned_to?": "uuid|null",
+          "body?": "string",
+          "subject?": "string",
+          "attachments?": ["string"]
+        },
+        "response": "SupportTicket"
+      }
+    }
+  },
+  "permissions": {
+    "authenticated": ["create ticket"],
+    "tech_support": ["list all tickets", "update status", "assign tickets"],
+    "admin scoped": ["view university tickets", "update status"]
+  },
+  "errors": [
+    { "code": 400, "message": "Validation error." },
+    { "code": 401, "message": "Authentication required." },
+    { "code": 403, "message": "Forbidden for this role or scope." },
+    { "code": 404, "message": "Ticket not found." }
+  ]
+}
