@@ -6,6 +6,10 @@ from django.http import JsonResponse
 
 from medismile.ui_views import ui_index, ui_contract
 
+admin.site.site_header = "MediSmile Admin"
+admin.site.site_title = "MediSmile Admin"
+admin.site.index_title = "Administration"
+
 
 # ============================================================
 # System / Health

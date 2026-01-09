@@ -34,6 +34,7 @@ class EvaluationAdmin(BaseOptimizedAdmin):
     readonly_fields = ("id", "created_at", "updated_at", "submitted_at", "finalized_at")
     ordering = ("-created_at",)
     list_select_related = ("student", "evaluator", "university")
+    autocomplete_fields = ("student", "evaluator", "university", "case", "session", "appointment")
 
     fieldsets = (
         (_("Evaluation Information"), {"fields": ("id", "university", "status", "target_type", "target_id")}),
@@ -66,3 +67,4 @@ class EvaluationAdjustmentAdmin(BaseOptimizedAdmin):
     )
     readonly_fields = ("id", "adjusted_at")
     ordering = ("-adjusted_at",)
+    autocomplete_fields = ("evaluation", "adjusted_by")

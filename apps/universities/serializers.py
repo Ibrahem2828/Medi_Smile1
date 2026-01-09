@@ -323,6 +323,8 @@ class CourseSerializer(serializers.ModelSerializer):
         university = self.context.get("university") or attrs.get("university")
         if not university:
             raise serializers.ValidationError(_("University context is required to create or update a course."))
+        if not getattr(university, "is_active", False):
+            raise serializers.ValidationError(_("University is inactive."))
 
         academic_year = attrs.get("academic_year")
         program = attrs.get("program")
@@ -375,7 +377,11 @@ class CourseSerializer(serializers.ModelSerializer):
 
         # Auto-assign default faculty if none provided
         if not faculty:
-            attrs["faculty"] = get_or_create_dentistry_faculty(university)
+            try:
+                attrs["faculty"] = get_or_create_dentistry_faculty(university)
+            except DjangoValidationError as exc:
+                details = getattr(exc, "message_dict", None) or getattr(exc, "messages", None) or str(exc)
+                raise serializers.ValidationError(details)
 
         return attrs
 
@@ -384,7 +390,11 @@ class CourseSerializer(serializers.ModelSerializer):
         students = validated_data.pop("students", [])
         # Auto-assign default dentistry faculty
         if not validated_data.get("faculty"):
-            validated_data["faculty"] = get_or_create_dentistry_faculty(university)
+            try:
+                validated_data["faculty"] = get_or_create_dentistry_faculty(university)
+            except DjangoValidationError as exc:
+                details = getattr(exc, "message_dict", None) or getattr(exc, "messages", None) or str(exc)
+                raise serializers.ValidationError(details)
         try:
             course = Course.objects.create(university=university, **validated_data)
         except DjangoValidationError as exc:

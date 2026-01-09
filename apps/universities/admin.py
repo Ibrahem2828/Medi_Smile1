@@ -78,6 +78,7 @@ class FacultyAdmin(BaseOptimizedAdmin):
     ordering = ("university__name", "name")
 
     readonly_fields = ("created_at",)
+    autocomplete_fields = ("university",)
 
     fieldsets = (
         (None, {"fields": ("university", "name", "is_active")}),
@@ -105,6 +106,7 @@ class AcademicProgramAdmin(BaseOptimizedAdmin):
     ordering = ("university__name", "name")
 
     readonly_fields = ("created_at",)
+    autocomplete_fields = ("university", "faculty")
 
     fieldsets = (
         (None, {"fields": ("university", "faculty", "name", "code")}),
@@ -141,6 +143,7 @@ class AcademicYearAdmin(BaseOptimizedAdmin):
     ordering = ("-start_date",)
 
     readonly_fields = ("created_at",)
+    autocomplete_fields = ("university",)
 
     fieldsets = (
         (None, {"fields": ("university", "name", "is_active")}),
@@ -177,3 +180,4 @@ class CourseAdmin(BaseOptimizedAdmin):
     ordering = ("university__name", "name")
     readonly_fields = ("created_at",)
     filter_horizontal = ("students",)
+    autocomplete_fields = ("university", "faculty", "academic_year", "supervisor")

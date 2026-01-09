@@ -30,7 +30,9 @@ class NotificationAdmin(BaseOptimizedAdmin):
         "title",
         "message",
         "recipient__username",
+        "recipient__email",
         "sender__username",
+        "sender__email",
     )
 
     readonly_fields = (
@@ -90,3 +92,4 @@ class NotificationAdmin(BaseOptimizedAdmin):
     )
 
     ordering = ("-created_at",)
+    autocomplete_fields = ("sender", "recipient", "appointment", "target_content_type")

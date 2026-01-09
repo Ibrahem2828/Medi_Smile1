@@ -73,6 +73,9 @@ def get_admin_university(request):
     if not profile.university:
         raise PermissionDenied(_("University Admin is not assigned to a university."))
 
+    if not profile.university.is_active:
+        raise PermissionDenied(_("University is inactive."))
+
     return profile.university
 
 
@@ -243,8 +246,6 @@ class CourseListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         university = get_admin_university(self.request)
-        # Ensure default faculty exists for the university
-        get_or_create_dentistry_faculty(university)
         return Course.objects.filter(university=university, is_active=True).select_related(
             "university", "faculty", "academic_year", "program", "supervisor"
         ).prefetch_related("students")

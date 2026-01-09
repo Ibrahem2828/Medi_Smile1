@@ -66,6 +66,7 @@ class SupportTicketAdmin(BaseOptimizedAdmin):
     ordering = ("-created_at",)
     date_hierarchy = "created_at"
     list_select_related = ("created_by", "assigned_to")
+    autocomplete_fields = ("created_by", "assigned_to")
 
     readonly_fields = (
         "id",
@@ -130,6 +131,7 @@ class SupportTicketResponseAdmin(BaseOptimizedAdmin):
 
     ordering = ("-created_at",)
     list_select_related = ("ticket", "author")
+    autocomplete_fields = ("ticket", "author")
 
     readonly_fields = (
         "id",

@@ -45,6 +45,7 @@ class CaseAdmin(BaseOptimizedAdmin):
     )
 
     ordering = ("-created_at",)
+    autocomplete_fields = ("patient", "student", "supervisor", "university")
 
     readonly_fields = ("id", "created_at", "updated_at")
 
@@ -131,6 +132,7 @@ class CaseAssignmentRequestAdmin(BaseOptimizedAdmin):
     search_fields = ("case__title", "student__email")
 
     readonly_fields = ("id", "created_at", "updated_at")
+    autocomplete_fields = ("case", "student")
 
     fieldsets = (
         (None, {
@@ -172,6 +174,7 @@ class CaseSessionAdmin(BaseOptimizedAdmin):
     )
 
     readonly_fields = ("id", "created_at", "updated_at")
+    autocomplete_fields = ("case", "student", "supervisor")
 
     fieldsets = (
         (_("Session"), {

@@ -18,6 +18,7 @@ class RoomAdmin(BaseOptimizedAdmin):
         "participant_student",
         "created_at",
     )
+    list_filter = ("created_at",)
 
     readonly_fields = (
         "id",
@@ -34,9 +35,11 @@ class RoomAdmin(BaseOptimizedAdmin):
         "participant_student__first_name",
         "participant_student__last_name",
         "participant_student__email",
+        "case__title",
     )
 
     ordering = ("-created_at",)
+    autocomplete_fields = ("case", "participant_patient", "participant_student")
 
     def has_add_permission(self, request):
         return False
@@ -61,6 +64,7 @@ class MessageAdmin(BaseOptimizedAdmin):
         "is_system",
         "sent_at",
     )
+    list_filter = ("is_system", "sent_at")
 
     readonly_fields = (
         "id",
@@ -72,6 +76,8 @@ class MessageAdmin(BaseOptimizedAdmin):
     )
 
     ordering = ("-sent_at",)
+    search_fields = ("content", "sender__email", "room__case__title")
+    autocomplete_fields = ("room", "sender")
 
     def has_add_permission(self, request):
         return False

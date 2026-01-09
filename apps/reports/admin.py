@@ -55,6 +55,7 @@ class ReportAdmin(BaseOptimizedAdmin):
         "university",
         "approved_by",
     )
+    autocomplete_fields = ("author", "student", "university", "approved_by")
 
     # ============================================================
     # Readonly & Protection

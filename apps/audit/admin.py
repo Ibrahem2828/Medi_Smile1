@@ -20,6 +20,7 @@ class AuditLogAdmin(BaseOptimizedAdmin):
 
     list_filter = ("action", "university", "created_at")
     search_fields = ("user__email", "user__username", "description", "metadata", "ip_address")
+    autocomplete_fields = ("user", "university", "content_type")
     readonly_fields = (
         "id",
         "user",

@@ -1,0 +1,211 @@
+:root,
+html[data-theme="light"] {
+  --primary: #0ea5a4;
+  --secondary: #0f3a4a;
+  --accent: #f4b74a;
+  --primary-fg: #ffffff;
+  --body-bg: #f4f7fb;
+  --body-fg: #0f172a;
+  --body-quiet-color: #5b6b85;
+  --body-loud-color: #0b1220;
+  --header-bg: #0f172a;
+  --header-color: #e2f7f4;
+  --header-branding-color: #8ce1d3;
+  --header-link-color: #ffffff;
+  --breadcrumbs-bg: #0b2430;
+  --breadcrumbs-fg: #c7e5ee;
+  --breadcrumbs-link-fg: #ffffff;
+  --link-fg: #0f5b6e;
+  --link-hover-color: #0ea5a4;
+  --link-selected-fg: #0f3a4a;
+  --hairline-color: #d7e1ee;
+  --border-color: #d5dde9;
+  --darkened-bg: #e9eef6;
+  --selected-bg: #e6f6f5;
+  --selected-row: #fff0cf;
+  --button-bg: #0f3a4a;
+  --button-hover-bg: #0b2b36;
+  --default-button-bg: #0ea5a4;
+  --default-button-hover-bg: #0b8b8a;
+  --close-button-bg: #3c4658;
+  --close-button-hover-bg: #1f2937;
+  --delete-button-bg: #c2410c;
+  --delete-button-hover-bg: #9a3412;
+  --font-family-primary: "Manrope", "Cairo", "Space Grotesk", sans-serif;
+}
+
+html[data-theme="dark"] {
+  --primary: #2dd4bf;
+  --secondary: #0b1f26;
+  --accent: #f6c453;
+  --primary-fg: #0b111a;
+  --body-bg: #0b111a;
+  --body-fg: #e2e8f0;
+  --body-quiet-color: #94a3b8;
+  --body-loud-color: #f8fafc;
+  --header-bg: #0b111a;
+  --header-color: #d1fae5;
+  --header-branding-color: #5eead4;
+  --header-link-color: #f8fafc;
+  --breadcrumbs-bg: #12212b;
+  --breadcrumbs-fg: #9fb9c8;
+  --breadcrumbs-link-fg: #f8fafc;
+  --link-fg: #7dd3fc;
+  --link-hover-color: #5eead4;
+  --link-selected-fg: #5eead4;
+  --hairline-color: #1f2937;
+  --border-color: #1f2937;
+  --darkened-bg: #111827;
+  --selected-bg: #0f1f2c;
+  --selected-row: #1f2937;
+  --button-bg: #0f172a;
+  --button-hover-bg: #1f2937;
+  --default-button-bg: #2dd4bf;
+  --default-button-hover-bg: #14b8a6;
+  --close-button-bg: #334155;
+  --close-button-hover-bg: #1f2937;
+  --delete-button-bg: #f97316;
+  --delete-button-hover-bg: #ea580c;
+}
+
+body {
+  background: var(--body-bg);
+}
+
+#header {
+  background: linear-gradient(120deg, #0f172a 0%, #0f3a4a 45%, #0ea5a4 100%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.ms-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ms-brand__logo {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, #0ea5a4, #f4b74a);
+  color: #0b111a;
+  font-family: "Space Grotesk", "Cairo", sans-serif;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-decoration: none;
+}
+
+.ms-brand__text {
+  display: flex;
+  flex-direction: column;
+}
+
+.ms-brand__title {
+  color: #f8fafc;
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.ms-brand__subtitle {
+  color: rgba(248, 250, 252, 0.7);
+  font-size: 12px;
+}
+
+#user-tools a,
+#header a:link,
+#header a:visited {
+  color: var(--header-link-color);
+}
+
+#content {
+  padding: 24px 28px 32px;
+}
+
+.breadcrumbs {
+  background: var(--breadcrumbs-bg);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.module {
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
+  border: 1px solid var(--border-color);
+}
+
+.module caption,
+.module h2 {
+  font-family: "Space Grotesk", "Cairo", sans-serif;
+}
+
+.dashboard .module table {
+  border-radius: 16px;
+}
+
+.dashboard .module caption {
+  background: var(--darkened-bg);
+  padding: 12px 16px;
+}
+
+.object-tools a {
+  border-radius: 999px;
+}
+
+.button,
+input[type="submit"],
+input[type="button"],
+.submit-row input,
+a.button {
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.button.default,
+input[type="submit"].default {
+  box-shadow: 0 10px 20px rgba(14, 165, 164, 0.2);
+}
+
+.form-row {
+  border-bottom: 1px solid var(--hairline-color);
+}
+
+.form-row:last-child {
+  border-bottom: none;
+}
+
+.inline-group {
+  border-radius: 16px;
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+}
+
+.selector-available h2,
+.selector-chosen h2 {
+  background: var(--darkened-bg);
+}
+
+.login #container {
+  border-radius: 20px;
+  box-shadow: 0 24px 40px rgba(15, 23, 42, 0.16);
+  border: 1px solid var(--border-color);
+}
+
+.login #content {
+  padding: 28px;
+}
+
+.login .form-row label {
+  font-weight: 600;
+}
+
+@media (max-width: 1024px) {
+  #content {
+    padding: 20px;
+  }
+
+  .ms-brand__title {
+    font-size: 14px;
+  }
+}

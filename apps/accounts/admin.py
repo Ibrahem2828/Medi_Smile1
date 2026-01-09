@@ -148,7 +148,7 @@ class UserAdmin(BaseOptimizedAdmin, DjangoUserAdmin):
     search_fields = ("email", "username", "first_name", "last_name")
     ordering = ("-date_joined",)
     list_select_related = ("role", "created_by")
-    autocomplete_fields = ("created_by",)
+    autocomplete_fields = ("role", "created_by")
 
     readonly_fields = (
         "last_login",

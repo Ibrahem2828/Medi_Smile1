@@ -27,6 +27,7 @@ class ContentAdmin(BaseOptimizedAdmin):
 
     readonly_fields = ("id", "created_at", "updated_at", "approved_at", "deleted_at")
     list_select_related = ("author", "university", "approved_by")
+    autocomplete_fields = ("author", "university", "approved_by", "deleted_by")
 
     fieldsets = (
         (_("Content"), {"fields": ("id", "title", "description", "content_type", "category", "tags")}),
@@ -58,3 +59,4 @@ class CommunityApprovalLogAdmin(BaseOptimizedAdmin):
     search_fields = ("post__title", "author__email", "approving_supervisor__email")
     ordering = ("-created_at",)
     readonly_fields = ("id", "created_at")
+    autocomplete_fields = ("post", "author", "approving_supervisor", "university")

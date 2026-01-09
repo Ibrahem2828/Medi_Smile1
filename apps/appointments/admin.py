@@ -33,6 +33,7 @@ class AppointmentAdmin(BaseOptimizedAdmin):
         "is_follow_up",
         "is_archived",
         "scheduled_at",
+        "created_at",
     )
 
     search_fields = (
@@ -43,6 +44,7 @@ class AppointmentAdmin(BaseOptimizedAdmin):
     )
 
     ordering = ("-scheduled_at",)
+    autocomplete_fields = ("case", "patient", "student", "supervisor", "created_by")
 
     readonly_fields = (
         "id",

@@ -41,6 +41,7 @@ class AttachmentAdmin(BaseOptimizedAdmin):
     )
 
     ordering = ("-created_at",)
+    autocomplete_fields = ("case", "appointment", "uploaded_by")
 
     readonly_fields = (
         "id",
