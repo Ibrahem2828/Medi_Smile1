@@ -247,6 +247,20 @@ if not DEBUG:
 CORS_ALLOW_ALL_ORIGINS = True
 
 # ============================================================
+# CSRF / Security (Production)
+# ============================================================
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CSRF_TRUSTED_ORIGINS",
+        "https://medismile1-production.up.railway.app",
+    ).split(",")
+    if origin.strip()
+]
+
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+# ============================================================
 # Logging
 # ============================================================
 LOGGING = {
