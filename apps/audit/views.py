@@ -9,10 +9,12 @@ from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.exceptions import PermissionDenied
 
 from django.contrib.contenttypes.models import ContentType
 
 from apps.accounts.models import Role
+from django.utils.translation import gettext_lazy as _
 from apps.accounts.permissions import IsUniversityAdmin, IsTechSupport
 from .models import AuditLog
 from .serializers import AuditLogSerializer
@@ -33,11 +35,14 @@ class AuditLogListView(generics.ListAPIView):
         qs = AuditLog.objects.select_related("user", "university", "content_type")
 
         user = self.request.user
-        role_name = user.role.name
+        role_name = getattr(getattr(user, "role", None), "name", None)
 
         # University scoping
         if role_name == Role.UNIVERSITY_ADMIN:
-            qs = qs.filter(university_id=user.university_id)
+            university_id = _get_university_id_for_admin(user)
+            if not university_id:
+                raise PermissionDenied(_("University Admin profile not found."))
+            qs = qs.filter(university_id=university_id)
 
         # Filters
         user_id = self.request.query_params.get("user_id")
@@ -87,7 +92,10 @@ def audit_statistics(request):
     qs = AuditLog.objects.all()
 
     if role_name == Role.UNIVERSITY_ADMIN:
-        qs = qs.filter(university_id=user.university_id)
+        university_id = _get_university_id_for_admin(user)
+        if not university_id:
+            raise PermissionDenied(_("University Admin profile not found."))
+        qs = qs.filter(university_id=university_id)
 
     today = timezone.localdate()
     start_day = today - timedelta(days=29)
@@ -132,3 +140,11 @@ def audit_statistics(request):
         },
         status=status.HTTP_200_OK,
     )
+
+
+def _get_university_id_for_admin(user):
+    try:
+        profile = user.universityadminprofile_profile
+    except Exception:
+        return None
+    return getattr(profile, "university_id", None)

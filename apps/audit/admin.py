@@ -1,10 +1,18 @@
 # apps/audit/admin.py
 from django.contrib import admin
+from django.contrib.contenttypes.models import ContentType
 from django.utils.translation import gettext_lazy as _
 
 from medismile.admin_mixins import BaseOptimizedAdmin
 
 from .models import AuditLog
+
+
+@admin.register(ContentType)
+class ContentTypeAdmin(BaseOptimizedAdmin):
+    search_fields = ("app_label", "model")
+    list_display = ("app_label", "model")
+    ordering = ("app_label", "model")
 
 
 @admin.register(AuditLog)
