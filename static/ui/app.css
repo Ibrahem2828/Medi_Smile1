@@ -567,10 +567,29 @@ body::after {
   color: var(--muted);
 }
 
+.test-note {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .test-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
+}
+
+.param-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.param-grid.is-empty {
+  display: none;
+}
+
+.param-grid .field input {
+  min-width: 160px;
 }
 
 .test-actions {

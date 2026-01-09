@@ -27,7 +27,7 @@
         <header class="topbar">
           <div class="topbar-title">
             <h1>Contract Explorer</h1>
-            <p>Explore AI Diagnosis, Cases, Appointments, Accounts, Universities, Audit, Backup, and Support.</p>
+            <p>Explore every MediSmile module and test live endpoints from one workspace.</p>
           </div>
           <div class="topbar-actions">
             <label class="field">
@@ -95,8 +95,11 @@
                 <input id="modal-url" type="text" readonly>
               </label>
             </div>
+            <div class="param-grid is-empty" id="path-params"></div>
+            <div class="param-grid is-empty" id="query-params"></div>
+            <p class="test-note">Tip: fill path/query params to avoid 404 or 400 responses.</p>
             <label class="field">
-              <span>Request JSON</span>
+              <span>Request JSON / Query</span>
               <textarea id="modal-body" rows="6" placeholder="{ }"></textarea>
             </label>
             <div class="test-actions">

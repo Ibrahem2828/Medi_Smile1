@@ -1,9 +1,15 @@
 const CONTRACTS = [
   { key: "accounts", label: "Accounts", url: "/ui/contracts/accounts/" },
-  { key: "ai", label: "AI Diagnosis", url: "/ui/contracts/ai/" },
+  { key: "universities", label: "Universities", url: "/ui/contracts/universities/" },
   { key: "cases", label: "Cases", url: "/ui/contracts/cases/" },
   { key: "appointments", label: "Appointments", url: "/ui/contracts/appointments/" },
-  { key: "universities", label: "Universities", url: "/ui/contracts/universities/" },
+  { key: "evaluations", label: "Evaluations", url: "/ui/contracts/evaluations/" },
+  { key: "attachments", label: "Attachments", url: "/ui/contracts/attachments/" },
+  { key: "messaging", label: "Messaging", url: "/ui/contracts/messaging/" },
+  { key: "notifications", label: "Notifications", url: "/ui/contracts/notifications/" },
+  { key: "reports", label: "Reports", url: "/ui/contracts/reports/" },
+  { key: "community", label: "Community", url: "/ui/contracts/community/" },
+  { key: "ai", label: "AI Diagnosis", url: "/ui/contracts/ai/" },
   { key: "audit", label: "Audit", url: "/ui/contracts/audit/" },
   { key: "backup", label: "Backup", url: "/ui/contracts/backup/" },
   { key: "support", label: "Support", url: "/ui/contracts/support/" },
@@ -32,6 +38,8 @@ const dom = {
   modalRules: document.getElementById("modal-rules"),
   modalMethod: document.getElementById("modal-method"),
   modalUrl: document.getElementById("modal-url"),
+  pathParams: document.getElementById("path-params"),
+  queryParams: document.getElementById("query-params"),
   modalBody: document.getElementById("modal-body"),
   runTest: document.getElementById("run-test"),
   testStatus: document.getElementById("test-status"),
@@ -95,9 +103,18 @@ function formatValue(value) {
   return String(value);
 }
 
+function normalizeBaseUrl(value) {
+  const raw = value.trim();
+  if (!raw) return DEFAULT_BASE_URL;
+  if (/^https?:\/\//i.test(raw)) return raw.replace(/\/$/, "");
+  if (/^(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$/i.test(raw)) {
+    return `http://${raw}`.replace(/\/$/, "");
+  }
+  return `https://${raw}`.replace(/\/$/, "");
+}
+
 function getBaseUrl() {
-  const raw = (dom.baseUrlInput.value || DEFAULT_BASE_URL).trim();
-  return raw.replace(/\/$/, "");
+  return normalizeBaseUrl(dom.baseUrlInput.value || DEFAULT_BASE_URL);
 }
 
 function setTheme(theme) {
@@ -118,10 +135,12 @@ function initTheme() {
 
 function initBaseUrl() {
   const stored = localStorage.getItem(BASE_URL_KEY);
-  dom.baseUrlInput.value = stored || DEFAULT_BASE_URL;
+  dom.baseUrlInput.value = normalizeBaseUrl(stored || DEFAULT_BASE_URL);
   dom.baseUrlInput.addEventListener("change", () => {
-    const value = dom.baseUrlInput.value.trim();
-    if (value) localStorage.setItem(BASE_URL_KEY, value);
+    const normalized = normalizeBaseUrl(dom.baseUrlInput.value);
+    dom.baseUrlInput.value = normalized;
+    if (normalized) localStorage.setItem(BASE_URL_KEY, normalized);
+    updateModalUrl();
   });
 }
 
@@ -136,6 +155,130 @@ function flattenEndpoints(endpoints) {
     });
   });
   return items;
+}
+
+function resolveEndpointPath(endpoint) {
+  const rawPath = endpoint.path || "";
+  if (/^https?:\/\//i.test(rawPath)) return rawPath;
+  if (rawPath.startsWith("/")) return rawPath;
+  const baseUrl = endpoint.contract?.service?.base_url || "";
+  if (!baseUrl) return `/${rawPath}`;
+  const basePath = baseUrl.startsWith("/") ? baseUrl : `/${baseUrl}`;
+  return `${basePath}/${rawPath}`.replace(/\/{2,}/g, "/");
+}
+
+function parsePathParams(path) {
+  const params = [];
+  const regex = /<([^>]+)>/g;
+  let match;
+  while ((match = regex.exec(path)) !== null) {
+    const token = match[0];
+    const rawName = match[1];
+    const name = rawName.includes(":") ? rawName.split(":").pop() : rawName;
+    params.push({ token, name });
+  }
+  return params;
+}
+
+function extractQueryDefinitions(details) {
+  if (!details) return [];
+  const query = details.query;
+  if (Array.isArray(query)) {
+    return query.map((name) => ({
+      name: String(name).replace(/\?$/, ""),
+      hint: "",
+    }));
+  }
+  if (query && typeof query === "object") {
+    return Object.entries(query).map(([name, hint]) => ({
+      name: String(name).replace(/\?$/, ""),
+      hint: formatValue(hint),
+    }));
+  }
+  return [];
+}
+
+function renderPathParams(path) {
+  dom.pathParams.innerHTML = "";
+  const params = parsePathParams(path);
+  if (!params.length) {
+    dom.pathParams.classList.add("is-empty");
+    return;
+  }
+  dom.pathParams.classList.remove("is-empty");
+  params.forEach((param) => {
+    const label = el("label", "field");
+    label.appendChild(el("span", null, `Path ${param.name}`));
+    const input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = param.name;
+    input.dataset.placeholder = param.token;
+    label.appendChild(input);
+    dom.pathParams.appendChild(label);
+  });
+}
+
+function renderQueryParams(definitions) {
+  dom.queryParams.innerHTML = "";
+  if (!definitions.length) {
+    dom.queryParams.classList.add("is-empty");
+    return;
+  }
+  dom.queryParams.classList.remove("is-empty");
+  definitions.forEach((param) => {
+    const label = el("label", "field");
+    label.appendChild(el("span", null, `Query ${param.name}`));
+    const input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = param.hint || param.name;
+    input.dataset.key = param.name;
+    label.appendChild(input);
+    dom.queryParams.appendChild(label);
+  });
+}
+
+function collectPathParams() {
+  return Array.from(dom.pathParams.querySelectorAll("input")).map((input) => ({
+    placeholder: input.dataset.placeholder,
+    value: input.value.trim(),
+  }));
+}
+
+function collectQueryParams() {
+  return Array.from(dom.queryParams.querySelectorAll("input"))
+    .map((input) => [input.dataset.key, input.value.trim()])
+    .filter(([, value]) => value);
+}
+
+function applyPathParams(path, values) {
+  let resolved = path;
+  values.forEach(({ placeholder, value }) => {
+    if (value) {
+      resolved = resolved.replace(placeholder, encodeURIComponent(value));
+    }
+  });
+  return resolved;
+}
+
+function appendQueryParams(url, params) {
+  if (!params.length) return url;
+  const query = new URLSearchParams(params).toString();
+  return url.includes("?") ? `${url}&${query}` : `${url}?${query}`;
+}
+
+function buildEndpointUrl(endpoint, queryParams) {
+  const rawPath = resolveEndpointPath(endpoint);
+  const resolvedPath = applyPathParams(rawPath, collectPathParams());
+  if (/^https?:\/\//i.test(rawPath)) {
+    return appendQueryParams(resolvedPath, queryParams);
+  }
+  return appendQueryParams(`${getBaseUrl()}${resolvedPath}`, queryParams);
+}
+
+function updateModalUrl() {
+  const endpoint = state.endpointMap.get(state.activeEndpointId);
+  if (!endpoint) return;
+  dom.modalUrl.value = buildEndpointUrl(endpoint, collectQueryParams());
 }
 
 function renderOverview(counts) {
@@ -322,28 +465,43 @@ async function loadContracts() {
   loadingCard.appendChild(el("p", null, "Fetching API definitions from the server."));
   dom.overview.appendChild(loadingCard);
 
-  try {
-    const results = await Promise.all(
-      CONTRACTS.map(async (entry) => {
-        const response = await fetch(entry.url);
-        if (!response.ok) {
-          throw new Error(`Failed to load ${entry.key}`);
-        }
-        const data = await response.json();
-        return { key: entry.key, data };
-      })
-    );
-    results.forEach(({ key, data }) => {
-      state.contracts[key] = data;
-    });
+  const results = await Promise.allSettled(
+    CONTRACTS.map(async (entry) => {
+      const response = await fetch(entry.url);
+      if (!response.ok) {
+        throw new Error(`Failed to load ${entry.key}`);
+      }
+      const data = await response.json();
+      return { key: entry.key, data };
+    })
+  );
+
+  const failures = [];
+  results.forEach((result, index) => {
+    const entry = CONTRACTS[index];
+    if (result.status === "fulfilled") {
+      state.contracts[entry.key] = result.value.data;
+    } else {
+      failures.push(entry.label);
+    }
+  });
+
+  if (Object.keys(state.contracts).length) {
     renderContracts();
-  } catch (error) {
-    dom.overview.innerHTML = "";
-    const errorCard = el("div", "overview-card");
-    errorCard.appendChild(el("h3", null, "Contracts unavailable"));
-    errorCard.appendChild(el("p", null, error.message));
-    dom.overview.appendChild(errorCard);
+    if (failures.length) {
+      const warnCard = el("div", "overview-card");
+      warnCard.appendChild(el("h3", null, "Missing contracts"));
+      warnCard.appendChild(el("p", null, failures.join(", ")));
+      dom.overview.appendChild(warnCard);
+    }
+    return;
   }
+
+  dom.overview.innerHTML = "";
+  const errorCard = el("div", "overview-card");
+  errorCard.appendChild(el("h3", null, "Contracts unavailable"));
+  errorCard.appendChild(el("p", null, "No contract files could be loaded."));
+  dom.overview.appendChild(errorCard);
 }
 
 function openModal(endpointId) {
@@ -370,8 +528,13 @@ function openModal(endpointId) {
   }
 
   dom.modalMethod.value = endpoint.method;
-  dom.modalUrl.value = `${getBaseUrl()}${endpoint.path}`;
-  dom.modalBody.value = formatJson(endpoint.details.body || endpoint.details.query);
+  const resolvedPath = resolveEndpointPath(endpoint);
+  renderPathParams(resolvedPath);
+  renderQueryParams(extractQueryDefinitions(endpoint.details));
+  updateModalUrl();
+  const prefersQuery = ["GET", "HEAD"].includes(endpoint.method);
+  const defaultBody = endpoint.details.body ?? (prefersQuery ? endpoint.details.query : undefined);
+  dom.modalBody.value = formatJson(defaultBody);
   dom.testStatus.textContent = "";
   dom.testOutput.textContent = "";
 
@@ -389,9 +552,6 @@ async function runTest() {
   const endpoint = state.endpointMap.get(state.activeEndpointId);
   if (!endpoint) return;
 
-  const url = `${getBaseUrl()}${endpoint.path}`;
-  dom.modalUrl.value = url;
-
   const method = endpoint.method.toUpperCase();
   const headers = { "Content-Type": "application/json" };
   const token = dom.tokenInput.value.trim();
@@ -399,6 +559,34 @@ async function runTest() {
 
   const options = { method, headers };
   const bodyText = dom.modalBody.value.trim();
+  const queryParams = collectQueryParams();
+
+  if (["GET", "HEAD"].includes(method) && bodyText && !queryParams.length) {
+    try {
+      const parsed = JSON.parse(bodyText);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("Query JSON must be an object.");
+      }
+      Object.entries(parsed).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== "") {
+          queryParams.push([key, String(value)]);
+        }
+      });
+    } catch (error) {
+      dom.testStatus.textContent = "Invalid JSON query.";
+      dom.testOutput.textContent = error.message;
+      return;
+    }
+  }
+
+  const url = buildEndpointUrl(endpoint, queryParams);
+  dom.modalUrl.value = url;
+  if (url.includes("<") || url.includes(">")) {
+    dom.testStatus.textContent = "Fill path parameters before testing.";
+    dom.testOutput.textContent = "";
+    return;
+  }
+
   if (!["GET", "HEAD"].includes(method) && bodyText) {
     try {
       options.body = JSON.stringify(JSON.parse(bodyText));
@@ -472,6 +660,8 @@ function bindEvents() {
   });
 
   dom.runTest.addEventListener("click", runTest);
+  dom.pathParams.addEventListener("input", updateModalUrl);
+  dom.queryParams.addEventListener("input", updateModalUrl);
 
   dom.modal.addEventListener("click", (event) => {
     if (event.target.matches("[data-close-modal]")) {
