@@ -386,7 +386,10 @@ class CourseSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
-        university = self.context["university"]
+        university = self.context.get("university") or validated_data.get("university")
+        if not university:
+            raise serializers.ValidationError(_("University context is required to create a course."))
+        validated_data.pop("university", None)
         students = validated_data.pop("students", [])
         # Auto-assign default dentistry faculty
         if not validated_data.get("faculty"):

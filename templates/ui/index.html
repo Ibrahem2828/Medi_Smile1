@@ -43,6 +43,42 @@
           </div>
         </header>
 
+        <section class="auth-panel" id="auth-panel">
+          <div class="auth-header">
+            <div>
+              <h2>Auth Toolkit</h2>
+              <p>Use JWT tokens for cross-origin tests. CSRF is auto-sent for same-origin session calls.</p>
+            </div>
+            <div class="auth-status" id="auth-status">Token missing</div>
+          </div>
+          <div class="auth-grid">
+            <label class="field">
+              <span>Role</span>
+              <select id="auth-role">
+                <option value="university-admin">University Admin</option>
+                <option value="tech-support">Tech Support</option>
+                <option value="supervisor">Supervisor</option>
+                <option value="student">Student</option>
+                <option value="patient">Patient</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Email</span>
+              <input id="auth-email" type="email" placeholder="user@medismile.com">
+            </label>
+            <label class="field">
+              <span>Password</span>
+              <input id="auth-password" type="password" placeholder="Password">
+            </label>
+            <div class="auth-actions">
+              <button class="primary-button" id="auth-login" type="button">Get Token</button>
+              <button class="ghost-button" id="auth-clear" type="button">Clear Token</button>
+              <button class="ghost-button" id="auth-copy" type="button">Copy Token</button>
+            </div>
+          </div>
+          <p class="auth-help" id="auth-help"></p>
+        </section>
+
         <section class="overview" id="overview"></section>
         <section class="content" id="content"></section>
       </main>

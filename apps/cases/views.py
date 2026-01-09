@@ -1,5 +1,6 @@
 # apps/cases/views.py
 from django.db import models
+from django.conf import settings
 from rest_framework import generics, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -37,6 +38,7 @@ from .permissions import (
 from .services import create_case_from_proposal
 from django.core.exceptions import ValidationError
 import logging
+import traceback
 from django.db import transaction
 
 logger = logging.getLogger(__name__)
@@ -168,7 +170,7 @@ class CaseSessionCreateView(generics.CreateAPIView):
     permission_classes = [IsAuthenticatedAndActive, CanCreateSession]
 
     def perform_create(self, serializer):
-        serializer.save(context={"request": self.request})
+        serializer.save()
 
 
 class CaseSessionReviewView(generics.UpdateAPIView):
@@ -190,19 +192,49 @@ class AIProposalIngestView(generics.CreateAPIView):
     permission_classes = [IsAuthenticatedAndActive]
 
     def perform_create(self, serializer):
-        serializer.save(context={"request": self.request})
+        serializer.save()
 
     def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
         try:
-            return super().create(request, *args, **kwargs)
+            self.perform_create(serializer)
         except ValidationError as exc:
-            return Response({"status": "error", "message": "Invalid request", "errors": exc.message_dict}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as exc:
-            logger.exception("AI proposal ingest failed", exc_info=exc)
             return Response(
-                {"status": "error", "message": "حدث خطأ غير متوقع. يرجى المحاولة لاحقًا.", "errors": str(exc)},
+                {"status": "error", "message": "Invalid request", "errors": exc.message_dict},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        except Exception as exc:
+            logger.exception("AI proposal ingest failed", exc_info=exc)
+            errors = str(exc) or repr(exc)
+            if getattr(settings, "EXPOSE_ERROR_DETAILS", False):
+                errors = {
+                    "type": exc.__class__.__name__,
+                    "message": str(exc),
+                    "traceback": traceback.format_exc(),
+                }
+            return Response(
+                {"status": "error", "message": "Unexpected error. See errors for details.", "errors": errors},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        session = serializer.instance
+        proposals_count = session.proposals.count() if session else 0
+        next_path = f"/api/cases/ai/proposals/{session.id}/next/" if session else None
+        return Response(
+            {
+                "status": "success",
+                "message": "AI proposals stored. Review the next proposal to create a case.",
+                "data": {
+                    "session_id": str(session.id),
+                    "university": str(session.university_id) if session and session.university_id else None,
+                    "proposals_count": proposals_count,
+                    "next": next_path,
+                },
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class AIProposalNextView(APIView):

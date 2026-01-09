@@ -5,6 +5,7 @@ from django.conf import settings
 from django.http import JsonResponse, Http404
 from django.middleware.csrf import get_token
 from django.shortcuts import render
+from django.views.decorators.csrf import ensure_csrf_cookie
 
 
 CONTRACT_FILES = {
@@ -25,6 +26,7 @@ CONTRACT_FILES = {
 }
 
 
+@ensure_csrf_cookie
 def ui_index(request):
     csrf_token = get_token(request)
     return render(request, "ui/index.html", {"csrf_token": csrf_token})

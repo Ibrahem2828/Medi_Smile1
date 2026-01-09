@@ -152,8 +152,7 @@ class FacultyListCreateView(generics.ListCreateAPIView):
         )
 
     def perform_create(self, serializer):
-        university = get_admin_university(self.request)
-        serializer.save(university=university)
+        serializer.save()
 
 
 class FacultyRetrieveUpdateDeleteView(generics.RetrieveUpdateDestroyAPIView):

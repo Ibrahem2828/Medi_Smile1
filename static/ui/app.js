@@ -18,6 +18,17 @@ const CONTRACTS = [
 const DEFAULT_BASE_URL = "https://medismile1-production.up.railway.app";
 const THEME_KEY = "medismile-ui-theme";
 const BASE_URL_KEY = "medismile-ui-base-url";
+const TOKEN_KEY = "medismile-ui-token";
+const AUTH_ROLE_KEY = "medismile-ui-auth-role";
+const AUTH_EMAIL_KEY = "medismile-ui-auth-email";
+
+const LOGIN_PATHS = {
+  "university-admin": "/api/accounts/login/university-admin/",
+  "tech-support": "/api/accounts/login/tech-support/",
+  supervisor: "/api/accounts/login/supervisor/",
+  student: "/api/accounts/login/student/",
+  patient: "/api/accounts/login/patient/",
+};
 
 const dom = {
   nav: document.getElementById("section-nav"),
@@ -26,6 +37,14 @@ const dom = {
   themeToggle: document.getElementById("theme-toggle"),
   baseUrlInput: document.getElementById("base-url"),
   tokenInput: document.getElementById("auth-token"),
+  authRole: document.getElementById("auth-role"),
+  authEmail: document.getElementById("auth-email"),
+  authPassword: document.getElementById("auth-password"),
+  authLogin: document.getElementById("auth-login"),
+  authClear: document.getElementById("auth-clear"),
+  authCopy: document.getElementById("auth-copy"),
+  authStatus: document.getElementById("auth-status"),
+  authHelp: document.getElementById("auth-help"),
   modal: document.getElementById("detail-modal"),
   modalGroup: document.getElementById("modal-group"),
   modalTitle: document.getElementById("modal-title"),
@@ -111,7 +130,7 @@ function getCookie(name) {
 
 function getCsrfToken() {
   const meta = document.querySelector('meta[name="csrf-token"]');
-  if (meta && meta.content) return meta.content;
+  if (meta && meta.content && meta.content !== "NOTPROVIDED") return meta.content;
   return getCookie("csrftoken");
 }
 
@@ -138,6 +157,185 @@ function getBaseUrl() {
   return normalizeBaseUrl(dom.baseUrlInput.value || DEFAULT_BASE_URL);
 }
 
+function setAuthStatus(text, state) {
+  if (!dom.authStatus) return;
+  dom.authStatus.textContent = text;
+  dom.authStatus.classList.remove("is-ready", "is-warning");
+  if (state) dom.authStatus.classList.add(state);
+}
+
+function decodeJwtPayload(token) {
+  if (!token) return null;
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+  const padding = payload.length % 4;
+  const padded = padding ? `${payload}${"=".repeat(4 - padding)}` : payload;
+  try {
+    return JSON.parse(atob(padded));
+  } catch (error) {
+    return null;
+  }
+}
+
+function describeToken(token) {
+  const payload = decodeJwtPayload(token);
+  if (payload && payload.exp) {
+    const expiresAt = new Date(payload.exp * 1000);
+    const minutes = Math.round((expiresAt.getTime() - Date.now()) / 60000);
+    if (!Number.isNaN(minutes)) {
+      if (minutes <= 0) {
+        return { label: "Token expired", state: "is-warning" };
+      }
+      if (minutes < 60) {
+        return { label: `Token ready (${minutes}m left)`, state: "is-ready" };
+      }
+      const hours = Math.round(minutes / 60);
+      return { label: `Token ready (${hours}h left)`, state: "is-ready" };
+    }
+  }
+  return { label: "Token ready", state: "is-ready" };
+}
+
+function setStoredToken(token) {
+  const value = token ? token.trim() : "";
+  if (value) {
+    localStorage.setItem(TOKEN_KEY, value);
+  } else {
+    localStorage.removeItem(TOKEN_KEY);
+  }
+  if (dom.tokenInput) dom.tokenInput.value = value;
+  updateAuthHint();
+}
+
+function updateAuthHint() {
+  if (!dom.authHelp) return;
+  const token = dom.tokenInput ? dom.tokenInput.value.trim() : "";
+  const sameOrigin = isSameOrigin(getBaseUrl());
+  if (token) {
+    const info = describeToken(token);
+    setAuthStatus(info.label, info.state);
+    dom.authHelp.textContent = sameOrigin
+      ? "JWT active. Session CSRF remains available for same-origin calls."
+      : "JWT active for cross-origin calls.";
+    return;
+  }
+  if (sameOrigin) {
+    setAuthStatus("Session mode", "is-warning");
+    dom.authHelp.textContent =
+      "No JWT token. Session auth will require CSRF for POST/PUT/PATCH/DELETE.";
+  } else {
+    setAuthStatus("Token required", "is-warning");
+    dom.authHelp.textContent =
+      "Cross-origin request detected. Use JWT to avoid CSRF errors.";
+  }
+}
+
+function persistAuthBasics() {
+  if (dom.authRole) localStorage.setItem(AUTH_ROLE_KEY, dom.authRole.value);
+  if (dom.authEmail) localStorage.setItem(AUTH_EMAIL_KEY, dom.authEmail.value.trim());
+}
+
+async function handleAuthLogin() {
+  if (!dom.authRole || !dom.authEmail || !dom.authPassword) return;
+  const roleKey = dom.authRole.value;
+  const loginPath = LOGIN_PATHS[roleKey];
+  const email = dom.authEmail.value.trim();
+  const password = dom.authPassword.value;
+
+  if (!loginPath) {
+    setAuthStatus("Select a role", "is-warning");
+    dom.authHelp.textContent = "Pick a role to request a token.";
+    return;
+  }
+
+  if (!email || !password) {
+    setAuthStatus("Credentials required", "is-warning");
+    dom.authHelp.textContent = "Email and password are required.";
+    return;
+  }
+
+  setAuthStatus("Authenticating...", "is-warning");
+  dom.authHelp.textContent = "Requesting access token...";
+  persistAuthBasics();
+
+  const url = `${getBaseUrl()}${loginPath}`;
+  const headers = { "Content-Type": "application/json" };
+  const sameOrigin = isSameOrigin(url);
+  const csrfToken = getCsrfToken();
+  if (csrfToken && sameOrigin) {
+    headers["X-CSRFToken"] = csrfToken;
+  }
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ email, password }),
+      credentials: sameOrigin ? "same-origin" : "omit",
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const detail = data.detail || data.message || "Login failed.";
+      setAuthStatus("Login failed", "is-warning");
+      dom.authHelp.textContent = detail;
+      return;
+    }
+    const accessToken = data && data.tokens ? data.tokens.access : "";
+    if (!accessToken) {
+      setAuthStatus("Token missing", "is-warning");
+      dom.authHelp.textContent = "Login succeeded but no access token returned.";
+      return;
+    }
+    setStoredToken(accessToken);
+    dom.authPassword.value = "";
+    dom.authHelp.textContent = "Token stored. You can run tests now.";
+  } catch (error) {
+    setAuthStatus("Auth request failed", "is-warning");
+    dom.authHelp.textContent = error.message || "Request failed.";
+  }
+}
+
+function clearAuthToken() {
+  setStoredToken("");
+  if (dom.authHelp) dom.authHelp.textContent = "Token cleared.";
+}
+
+async function copyAuthToken() {
+  const token = dom.tokenInput ? dom.tokenInput.value.trim() : "";
+  if (!token) {
+    setAuthStatus("No token to copy", "is-warning");
+    if (dom.authHelp) dom.authHelp.textContent = "Add or fetch a token first.";
+    return;
+  }
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(token);
+    } else if (dom.tokenInput) {
+      dom.tokenInput.focus();
+      dom.tokenInput.select();
+      document.execCommand("copy");
+    }
+    if (dom.authHelp) dom.authHelp.textContent = "Token copied to clipboard.";
+  } catch (error) {
+    if (dom.authHelp) {
+      dom.authHelp.textContent = "Copy failed. Select the token manually.";
+    }
+  }
+}
+
+function initAuth() {
+  const storedToken = localStorage.getItem(TOKEN_KEY) || "";
+  const storedRole = localStorage.getItem(AUTH_ROLE_KEY) || "";
+  const storedEmail = localStorage.getItem(AUTH_EMAIL_KEY) || "";
+
+  if (storedToken && dom.tokenInput) dom.tokenInput.value = storedToken;
+  if (storedRole && dom.authRole) dom.authRole.value = storedRole;
+  if (storedEmail && dom.authEmail) dom.authEmail.value = storedEmail;
+
+  updateAuthHint();
+}
+
 function setTheme(theme) {
   document.documentElement.dataset.theme = theme;
   localStorage.setItem(THEME_KEY, theme);
@@ -157,11 +355,13 @@ function initTheme() {
 function initBaseUrl() {
   const stored = localStorage.getItem(BASE_URL_KEY);
   dom.baseUrlInput.value = normalizeBaseUrl(stored || DEFAULT_BASE_URL);
+  updateAuthHint();
   dom.baseUrlInput.addEventListener("change", () => {
     const normalized = normalizeBaseUrl(dom.baseUrlInput.value);
     dom.baseUrlInput.value = normalized;
     if (normalized) localStorage.setItem(BASE_URL_KEY, normalized);
     updateModalUrl();
+    updateAuthHint();
   });
 }
 
@@ -690,6 +890,29 @@ function bindEvents() {
   dom.runTest.addEventListener("click", runTest);
   dom.pathParams.addEventListener("input", updateModalUrl);
   dom.queryParams.addEventListener("input", updateModalUrl);
+  if (dom.authLogin) dom.authLogin.addEventListener("click", handleAuthLogin);
+  if (dom.authClear) dom.authClear.addEventListener("click", clearAuthToken);
+  if (dom.authCopy) dom.authCopy.addEventListener("click", copyAuthToken);
+  if (dom.authRole) {
+    dom.authRole.addEventListener("change", () => {
+      persistAuthBasics();
+      updateAuthHint();
+    });
+  }
+  if (dom.authEmail) {
+    dom.authEmail.addEventListener("input", persistAuthBasics);
+  }
+  if (dom.tokenInput) {
+    dom.tokenInput.addEventListener("input", () => {
+      const value = dom.tokenInput.value.trim();
+      if (value) {
+        localStorage.setItem(TOKEN_KEY, value);
+      } else {
+        localStorage.removeItem(TOKEN_KEY);
+      }
+      updateAuthHint();
+    });
+  }
 
   dom.modal.addEventListener("click", (event) => {
     if (event.target.matches("[data-close-modal]")) {
@@ -707,6 +930,7 @@ function bindEvents() {
 document.addEventListener("DOMContentLoaded", () => {
   initTheme();
   initBaseUrl();
+  initAuth();
   bindEvents();
   loadContracts();
 });
