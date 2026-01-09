@@ -2,6 +2,7 @@
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import DatabaseError
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.conf import settings
 from django.utils.translation import gettext_lazy as _
 
 from rest_framework import generics, serializers, status
@@ -25,6 +26,7 @@ from .serializers import (
 from apps.accounts.permissions import IsUniversityAdmin, IsTechSupport
 from apps.accounts.models import Role, StudentProfile, PatientProfile
 import logging
+import traceback
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +246,18 @@ class CourseListCreateView(generics.ListCreateAPIView):
     serializer_class = CourseSerializer
     permission_classes = [IsAuthenticated, IsUniversityAdmin]
 
+    def _format_exception(self, exc):
+        if getattr(settings, "EXPOSE_ERROR_DETAILS", False):
+            return {
+                "type": exc.__class__.__name__,
+                "message": str(exc),
+                "traceback": traceback.format_exc(),
+            }
+        return str(exc) or repr(exc)
+
+    def _error_response(self, *, message, errors=None, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR):
+        return Response({"status": "error", "message": message, "errors": errors}, status=status_code)
+
     def get_queryset(self):
         university = get_admin_university(self.request)
         return Course.objects.filter(university=university, is_active=True).select_related(
@@ -258,6 +272,50 @@ class CourseListCreateView(generics.ListCreateAPIView):
     def perform_create(self, serializer):
         university = get_admin_university(self.request)
         serializer.save(university=university)
+
+    def list(self, request, *args, **kwargs):
+        try:
+            return super().list(request, *args, **kwargs)
+        except PermissionDenied:
+            raise
+        except (DjangoValidationError, serializers.ValidationError) as exc:
+            return self._error_response(message="Invalid request.", errors=self._format_exception(exc), status_code=status.HTTP_400_BAD_REQUEST)
+        except DatabaseError as exc:
+            logger.exception("Course list db error", exc_info=exc)
+            return self._error_response(
+                message="Database schema error. Please run migrations.",
+                errors=self._format_exception(exc),
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        except Exception as exc:
+            logger.exception("Course list failed", exc_info=exc)
+            return self._error_response(
+                message="Unexpected error. See errors for details.",
+                errors=self._format_exception(exc),
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    def create(self, request, *args, **kwargs):
+        try:
+            return super().create(request, *args, **kwargs)
+        except PermissionDenied:
+            raise
+        except (DjangoValidationError, serializers.ValidationError) as exc:
+            return self._error_response(message="Invalid request.", errors=self._format_exception(exc), status_code=status.HTTP_400_BAD_REQUEST)
+        except DatabaseError as exc:
+            logger.exception("Course create db error", exc_info=exc)
+            return self._error_response(
+                message="Database schema error. Please run migrations.",
+                errors=self._format_exception(exc),
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        except Exception as exc:
+            logger.exception("Course create failed", exc_info=exc)
+            return self._error_response(
+                message="Unexpected error. See errors for details.",
+                errors=self._format_exception(exc),
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
 class CourseRetrieveUpdateDeleteView(generics.RetrieveUpdateDestroyAPIView):

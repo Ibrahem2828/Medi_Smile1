@@ -15,6 +15,7 @@ load_dotenv()  # تحميل متغيرات البيئة عند العمل محل
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-secret-key")
 DEBUG = os.getenv("DEBUG", "True") == "True"
+EXPOSE_ERROR_DETAILS = os.getenv("EXPOSE_ERROR_DETAILS", str(DEBUG)) == "True"
 
 ALLOWED_HOSTS = os.getenv(
     "ALLOWED_HOSTS",

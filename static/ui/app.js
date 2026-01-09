@@ -103,6 +103,27 @@ function formatValue(value) {
   return String(value);
 }
 
+function getCookie(name) {
+  const pattern = new RegExp(`(?:^|; )${name.replace(/[-.+*]/g, "\\$&")}=([^;]*)`);
+  const match = document.cookie.match(pattern);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
+function getCsrfToken() {
+  const meta = document.querySelector('meta[name="csrf-token"]');
+  if (meta && meta.content) return meta.content;
+  return getCookie("csrftoken");
+}
+
+function isSameOrigin(url) {
+  try {
+    const target = new URL(url, window.location.href);
+    return target.origin === window.location.origin;
+  } catch (error) {
+    return false;
+  }
+}
+
 function normalizeBaseUrl(value) {
   const raw = value.trim();
   if (!raw) return DEFAULT_BASE_URL;
@@ -585,6 +606,13 @@ async function runTest() {
     dom.testStatus.textContent = "Fill path parameters before testing.";
     dom.testOutput.textContent = "";
     return;
+  }
+
+  const sameOrigin = isSameOrigin(url);
+  options.credentials = sameOrigin ? "same-origin" : "omit";
+  const csrfToken = getCsrfToken();
+  if (csrfToken && !["GET", "HEAD", "OPTIONS", "TRACE"].includes(method) && sameOrigin) {
+    headers["X-CSRFToken"] = csrfToken;
   }
 
   if (!["GET", "HEAD"].includes(method) && bodyText) {

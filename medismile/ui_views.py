@@ -3,6 +3,7 @@ import json
 
 from django.conf import settings
 from django.http import JsonResponse, Http404
+from django.middleware.csrf import get_token
 from django.shortcuts import render
 
 
@@ -25,7 +26,8 @@ CONTRACT_FILES = {
 
 
 def ui_index(request):
-    return render(request, "ui/index.html")
+    csrf_token = get_token(request)
+    return render(request, "ui/index.html", {"csrf_token": csrf_token})
 
 
 def ui_contract(request, contract):

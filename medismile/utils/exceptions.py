@@ -2,8 +2,10 @@ from rest_framework.views import exception_handler
 from rest_framework.response import Response
 from rest_framework import status
 from django.utils.translation import gettext_lazy as _
+from django.conf import settings
 
 import logging
+import traceback
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +47,20 @@ def custom_exception_handler(exc, context):
     # ---------------------------------------------
     logger.exception("Unhandled exception occurred", exc_info=exc)
 
+    expose_details = bool(getattr(settings, "EXPOSE_ERROR_DETAILS", False))
+    details = None
+    if expose_details:
+        details = {
+            "type": exc.__class__.__name__,
+            "message": str(exc),
+            "traceback": traceback.format_exc(),
+        }
+
     return Response(
         {
             "status": "error",
             "message": _("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."),
-            "errors": None,
+            "errors": details,
         },
         status=status.HTTP_500_INTERNAL_SERVER_ERROR,
     )
