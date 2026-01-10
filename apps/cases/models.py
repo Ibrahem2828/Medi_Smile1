@@ -17,7 +17,6 @@ class Case(models.Model):
     Dental medical case.
 
     Represents ONE dental problem for ONE patient.
-    A patient can have ONLY ONE active case at a time.
     """
 
     # --------------------------------------------------------
@@ -182,18 +181,6 @@ class Case(models.Model):
 
         if self.supervisor and getattr(self.supervisor.role, "name", None) != Role.SUPERVISOR:
             raise ValidationError(_("Assigned supervisor must have role 'supervisor'."))
-
-        # One active case per patient
-        if self.patient and self.status in self.ACTIVE_STATUSES:
-            qs = Case.objects.filter(
-                patient=self.patient,
-                status__in=self.ACTIVE_STATUSES,
-            )
-            if self.pk:
-                qs = qs.exclude(pk=self.pk)
-
-            if qs.exists():
-                raise ValidationError(_("This patient already has an active case."))
 
         # If case is public / pending assignment, university must be set
         if self.is_public or self.status in {self.Status.ACCEPTED, self.Status.NEEDS_ASSIGNMENT_APPROVAL}:

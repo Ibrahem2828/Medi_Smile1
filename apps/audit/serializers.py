@@ -34,7 +34,7 @@ class AuditLogSerializer(serializers.ModelSerializer):
     - University Admin (scoped)
     """
 
-    actor = AuditUserSerializer(read_only=True)
+    actor = AuditUserSerializer(source="user", read_only=True)
     university_name = serializers.CharField(
         source="university.name",
         read_only=True,
@@ -64,9 +64,9 @@ class AuditLogSerializer(serializers.ModelSerializer):
     # =========================
 
     def get_target_type(self, obj):
-        if obj.target_content_type:
-            return obj.target_content_type.model
+        if obj.content_type:
+            return obj.content_type.model
         return None
 
     def get_target_id(self, obj):
-        return obj.target_object_id
+        return obj.object_id

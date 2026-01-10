@@ -1,4 +1,6 @@
 # apps/cases/views.py
+from copy import deepcopy
+import uuid
 from django.db import models
 from django.conf import settings
 from rest_framework import generics, status
@@ -42,6 +44,35 @@ import traceback
 from django.db import transaction
 
 logger = logging.getLogger(__name__)
+
+
+def _case_id_visible_to_patient(case_id, patient) -> bool:
+    try:
+        case_uuid = uuid.UUID(str(case_id))
+    except (TypeError, ValueError):
+        return False
+    return Case.objects.filter(id=case_uuid, patient=patient).exists()
+
+
+def _sanitize_ai_metadata(metadata, *, patient):
+    if not isinstance(metadata, dict):
+        return metadata
+    cleaned = dict(metadata)
+    case_id = cleaned.get("case_id")
+    if case_id and not _case_id_visible_to_patient(case_id, patient):
+        cleaned.pop("case_id", None)
+    return cleaned
+
+
+def _sanitize_ai_raw_proposal(raw_proposal, *, patient):
+    if not isinstance(raw_proposal, dict):
+        return raw_proposal
+    cleaned = deepcopy(raw_proposal)
+    if "case_id" in cleaned and not _case_id_visible_to_patient(cleaned.get("case_id"), patient):
+        cleaned.pop("case_id", None)
+    if isinstance(cleaned.get("metadata"), dict):
+        cleaned["metadata"] = _sanitize_ai_metadata(cleaned["metadata"], patient=patient)
+    return cleaned
 
 
 # ============================================================
@@ -243,7 +274,7 @@ class AIProposalNextView(APIView):
     def get(self, request, session_id):
         session = AIAnalysisSession.objects.filter(id=session_id, patient=request.user).first()
         if not session:
-            return Response({"status": "error", "message": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"status": "error", "message": "Session not found or not accessible."}, status=status.HTTP_404_NOT_FOUND)
 
         proposals = list(session.proposals.filter(status=AIProposedCase.Status.PENDING_PATIENT))
         def sort_key(p):
@@ -257,6 +288,8 @@ class AIProposalNextView(APIView):
         if not proposal:
             return Response({"status": "success", "message": "No pending proposals.", "data": None})
 
+        metadata = _sanitize_ai_metadata(proposal.metadata or {}, patient=request.user)
+        raw_proposal = _sanitize_ai_raw_proposal(proposal.raw_proposal or {}, patient=request.user)
         data = AIProposalNextSerializer(
             {
                 "session_id": session.id,
@@ -264,8 +297,8 @@ class AIProposalNextView(APIView):
                 "tooth_id": proposal.tooth_id,
                 "fusion_decision": proposal.fusion_decision or {},
                 "medical_report": proposal.medical_report or {},
-                "metadata": proposal.metadata or {},
-                "raw_proposal": proposal.raw_proposal or {},
+                "metadata": metadata,
+                "raw_proposal": raw_proposal,
             }
         ).data
         return Response({"status": "success", "data": data})
@@ -277,7 +310,7 @@ class AIProposalDecisionView(APIView):
     def post(self, request, session_id):
         session = AIAnalysisSession.objects.filter(id=session_id, patient=request.user).first()
         if not session:
-            return Response({"status": "error", "message": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"status": "error", "message": "Session not found or not accessible."}, status=status.HTTP_404_NOT_FOUND)
 
         serializer = AIProposalDecisionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -298,16 +331,17 @@ class AIProposalDecisionView(APIView):
 
         # accept
         try:
-            proposal.status = AIProposedCase.Status.APPROVED_BY_PATIENT
-            proposal.save(update_fields=["status", "updated_at"])
-            case = create_case_from_proposal(
-                patient=request.user,
-                university_id=session.university_id,
-                proposal=proposal,
-            )
-            proposal.status = AIProposedCase.Status.CONVERTED
-            proposal.converted_case = case
-            proposal.save(update_fields=["status", "converted_case", "updated_at"])
+            with transaction.atomic():
+                proposal.status = AIProposedCase.Status.APPROVED_BY_PATIENT
+                proposal.save(update_fields=["status", "updated_at"])
+                case = create_case_from_proposal(
+                    patient=request.user,
+                    university_id=session.university_id,
+                    proposal=proposal,
+                )
+                proposal.status = AIProposedCase.Status.CONVERTED
+                proposal.converted_case = case
+                proposal.save(update_fields=["status", "converted_case", "updated_at"])
             return Response({"status": "success", "message": "Case created from proposal.", "data": {"case_id": str(case.id)}})
         except ValidationError as exc:
             return Response({"status": "error", "message": "Invalid data", "errors": exc.message_dict}, status=status.HTTP_400_BAD_REQUEST)

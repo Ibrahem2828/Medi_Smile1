@@ -125,6 +125,10 @@
       },
       "GET /api/cases/ai/proposals/<session_id>/next/": {
         "role": "patient",
+        "notes": [
+          "Returns 404 when the session is missing or outside the caller scope.",
+          "metadata may omit internal case_id values that are not accessible to the patient."
+        ],
         "response": {
           "status": "success",
           "data": {
@@ -140,6 +144,9 @@
       },
       "POST /api/cases/ai/proposals/<session_id>/decision/": {
         "role": "patient",
+        "notes": [
+          "Returns 404 when the session is missing or outside the caller scope."
+        ],
         "body": { "proposal_id": "p-123", "decision": "accept|reject" },
         "response_on_accept": { "status": "success", "data": { "case_id": "uuid" } },
         "response_on_reject": { "status": "success", "message": "No pending proposals.", "data": null }
