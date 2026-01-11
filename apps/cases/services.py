@@ -1,6 +1,6 @@
 # apps/cases/services.py
 from django.utils import timezone
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.contrib.contenttypes.models import ContentType
 
 from apps.audit.services import log_audit_event
@@ -28,8 +28,15 @@ def _notify_users_about_case(*, recipients, notification_type, title, message, c
         for user in recipients
     ])
 
+def _ensure_patient_can_create_case(patient: User):
+    if Case.objects.filter(patient=patient, status__in=Case.ACTIVE_STATUSES).exists():
+        raise ValidationError(
+            {"case": "You already have an active case. Complete it before creating a new one."}
+        )
+
 
 def create_case(*, patient, data: dict) -> Case:
+    _ensure_patient_can_create_case(patient)
     case = Case.objects.create(
         patient=patient,
         university=data["university"],
@@ -113,6 +120,7 @@ def _priority_from_urgency(urgency: str):
 
 
 def create_case_from_proposal(*, patient: User, university_id, proposal: AIProposedCase) -> Case:
+    _ensure_patient_can_create_case(patient)
     fusion = proposal.fusion_decision or {}
     medical_report = proposal.medical_report or {}
     urgency = fusion.get("urgency_level")

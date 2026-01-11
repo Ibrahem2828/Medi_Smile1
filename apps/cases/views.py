@@ -4,7 +4,7 @@ import uuid
 from django.db import models
 from django.conf import settings
 from rest_framework import generics, status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, SAFE_METHODS
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -120,6 +120,11 @@ class CaseDetailView(generics.RetrieveUpdateAPIView):
     queryset = Case.objects.all()
     serializer_class = CaseSerializer
     permission_classes = [IsAuthenticatedAndActive, CanViewCase, CanUpdateCase]
+
+    def get_permissions(self):
+        if self.request.method in SAFE_METHODS:
+            return [IsAuthenticatedAndActive(), CanViewCase()]
+        return [IsAuthenticatedAndActive(), CanUpdateCase()]
 
     def get_serializer_class(self):
         if self.request.method in ("PUT", "PATCH"):
