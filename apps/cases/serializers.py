@@ -65,6 +65,10 @@ class CaseAssignmentRequestSerializer(serializers.ModelSerializer):
         )
 
 
+class StudentAssignmentRequestSerializer(serializers.Serializer):
+    message = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+
 # ============================================================
 # Sessions
 # ============================================================

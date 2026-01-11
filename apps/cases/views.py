@@ -19,6 +19,7 @@ from .serializers import (
     CaseAssignSupervisorSerializer,
     CaseAssignmentRequestDecisionSerializer,
     CaseAssignmentRequestSerializer,
+    StudentAssignmentRequestSerializer,
     CaseSessionSerializer,
     CaseSessionCreateSerializer,
     CaseSessionReviewSerializer,
@@ -440,6 +441,8 @@ class StudentRequestAssignmentView(APIView):
 
     @transaction.atomic
     def post(self, request, case_id):
+        serializer = StudentAssignmentRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         user = request.user
         if getattr(getattr(user, "role", None), "name", None) != Role.STUDENT:
             return Response({"status": "error", "message": "Only students allowed."}, status=status.HTTP_403_FORBIDDEN)
@@ -452,7 +455,11 @@ class StudentRequestAssignmentView(APIView):
         if existing:
             return Response({"status": "error", "message": "Request already pending."}, status=status.HTTP_400_BAD_REQUEST)
 
-        req = CaseAssignmentRequest.objects.create(case=case, student=user)
+        req = CaseAssignmentRequest.objects.create(
+            case=case,
+            student=user,
+            message=serializer.validated_data.get("message"),
+        )
         req.apply_to_case()
         CaseHistory.objects.create(
             case=case,
