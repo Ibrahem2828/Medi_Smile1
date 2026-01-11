@@ -125,7 +125,7 @@ class ThreadListCreateView(RoomCreateMixin, generics.ListCreateAPIView):
         MatrixPermission,
     ]
     permission_resource = "messaging.room"
-    permission_ownership_checker = (
+    permission_ownership_checker = staticmethod(
         lambda user, obj: (
             CanViewRoom().has_object_permission(  # type: ignore
                 type("req", (), {"user": user})(), None, obj
@@ -137,7 +137,7 @@ class ThreadListCreateView(RoomCreateMixin, generics.ListCreateAPIView):
             )
         )
     )
-    permission_state_checker = lambda obj: is_room_chat_open(obj)  # type: ignore
+    permission_state_checker = staticmethod(lambda obj: is_room_chat_open(obj))  # type: ignore
 
     def get_queryset(self):
         user = self.request.user
@@ -197,7 +197,7 @@ class RoomRetrieveView(generics.RetrieveAPIView):
     ]
     permission_resource = "messaging.room"
     permission_action = "view"
-    permission_ownership_checker = (
+    permission_ownership_checker = staticmethod(
         lambda user, room: CanViewRoom().has_object_permission(  # type: ignore
             type("req", (), {"user": user})(), None, room
         )
@@ -216,13 +216,13 @@ class RoomCreateView(RoomCreateMixin, generics.CreateAPIView):
     ]
     permission_resource = "messaging.room"
     permission_action = "create"
-    permission_ownership_checker = (
+    permission_ownership_checker = staticmethod(
         lambda user, obj: (
             (isinstance(obj, Case) and user in {obj.patient, obj.student})
             or (isinstance(obj, Course) and is_course_participant(user, obj))
         )
     )
-    permission_state_checker = lambda obj: is_room_chat_open(obj)  # type: ignore
+    permission_state_checker = staticmethod(lambda obj: is_room_chat_open(obj))  # type: ignore
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -248,12 +248,12 @@ class MessageListCreateView(generics.ListCreateAPIView):
     throttle_scope = "messaging"
     permission_resource = "messaging.message"
     permission_action = "view"
-    permission_ownership_checker = (
+    permission_ownership_checker = staticmethod(
         lambda user, obj: CanViewRoom().has_object_permission(  # type: ignore
             type("req", (), {"user": user})(), None, obj if isinstance(obj, Room) else obj.room  # type: ignore
         )
     )
-    permission_scope_checker = (
+    permission_scope_checker = staticmethod(
         lambda user, obj: (
             True
             if getattr(user, "role_name", None) != Role.UNIVERSITY_ADMIN
@@ -262,7 +262,7 @@ class MessageListCreateView(generics.ListCreateAPIView):
             )
         )
     )
-    permission_state_checker = (
+    permission_state_checker = staticmethod(
         lambda obj: is_room_chat_open(obj if isinstance(obj, Room) else obj.room)  # type: ignore
     )
 
@@ -334,12 +334,12 @@ class MessageDetailView(generics.RetrieveAPIView):
     ]
     permission_resource = "messaging.message"
     permission_action = "view"
-    permission_ownership_checker = (
+    permission_ownership_checker = staticmethod(
         lambda user, message: CanViewMessage().has_object_permission(  # type: ignore
             type("req", (), {"user": user})(), None, message
         )
     )
-    permission_scope_checker = (
+    permission_scope_checker = staticmethod(
         lambda user, message: (
             True
             if getattr(user, "role_name", None) != Role.UNIVERSITY_ADMIN

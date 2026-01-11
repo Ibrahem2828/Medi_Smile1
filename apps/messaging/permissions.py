@@ -65,6 +65,8 @@ def is_course_chat_open(course: Course) -> bool:
 
 
 def is_room_chat_open(room_or_case_or_course) -> bool:
+    if room_or_case_or_course is None:
+        return True
     if isinstance(room_or_case_or_course, Room):
         if room_or_case_or_course.thread_type == Room.ThreadType.COURSE:
             if not room_or_case_or_course.course_id:
