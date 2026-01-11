@@ -337,7 +337,7 @@ class Report(models.Model):
         - is_active
         - review_notes / approved_by / approved_at / locked_at
         """
-        if self.pk:
+        if not self._state.adding:
             old = Report.objects.filter(pk=self.pk).only(
                 "author_id",
                 "author_role",
