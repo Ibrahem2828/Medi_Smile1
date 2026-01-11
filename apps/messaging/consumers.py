@@ -11,8 +11,8 @@ from apps.audit.services import log_audit_event
 from .models import Room, Message
 from .permissions import (
     is_case_participant,
-    is_university_admin_for_case,
-    is_case_chat_open,
+    is_university_admin_for_room,
+    is_room_chat_open,
 )
 
 User = get_user_model()
@@ -91,24 +91,33 @@ class ChatConsumer(AsyncWebsocketConsumer):
         try:
             room = Room.objects.select_related(
                 "case",
+                "course",
                 "participant_patient",
                 "participant_student",
+                "participant_supervisor",
             ).get(id=self.room_id)
         except Room.DoesNotExist:
             return False
 
         user = self.user
-        role = getattr(user, "role_name", None)
+        role = getattr(user, "role_name", None) or getattr(getattr(user, "role", None), "name", None)
         case = room.case
 
         if role == Role.TECH_SUPPORT:
             return True
 
+        if room.thread_type == Room.ThreadType.COURSE:
+            if role in {Role.STUDENT, Role.SUPERVISOR}:
+                return user in {room.participant_student, room.participant_supervisor}
+            if role == Role.UNIVERSITY_ADMIN:
+                return is_university_admin_for_room(user, room)
+            return False
+
         if role in {Role.PATIENT, Role.STUDENT, Role.SUPERVISOR}:
             return is_case_participant(user, case)
 
         if role == Role.UNIVERSITY_ADMIN:
-            return is_university_admin_for_case(user, case)
+            return is_university_admin_for_room(user, room)
 
         return False
 
@@ -117,40 +126,49 @@ class ChatConsumer(AsyncWebsocketConsumer):
         try:
             room = Room.objects.select_related(
                 "case",
+                "course",
                 "participant_patient",
                 "participant_student",
+                "participant_supervisor",
             ).get(id=self.room_id)
         except Room.DoesNotExist:
             return False
 
         user = self.user
-        role = getattr(user, "role_name", None)
+        role = getattr(user, "role_name", None) or getattr(getattr(user, "role", None), "name", None)
 
-        if role not in {Role.PATIENT, Role.STUDENT}:
+        if not is_room_chat_open(room):
             return False
 
-        if not is_case_chat_open(room.case):
+        if room.thread_type == Room.ThreadType.COURSE:
+            if role not in {Role.STUDENT, Role.SUPERVISOR}:
+                return False
+            return user in {room.participant_student, room.participant_supervisor}
+
+        if role not in {Role.PATIENT, Role.STUDENT}:
             return False
 
         return user in {room.participant_patient, room.participant_student}
 
     @database_sync_to_async
     def create_message(self, content: str) -> Message:
-        room = Room.objects.get(id=self.room_id)
+        room = Room.objects.select_related("case", "course").get(id=self.room_id)
         msg = Message.objects.create(
             room=room,
             sender=self.user,
             content=content.strip(),
         )
+        university = room.case.university if room.case_id else room.course.university
         log_audit_event(
             user=self.user,
-            university=room.case.university,
+            university=university,
             action="messaging.message.sent.ws",
             description="Message sent via websocket",
             content_object=msg,
             metadata={
                 "room_id": str(room.id),
-                "case_id": str(room.case_id),
+                "case_id": str(room.case_id) if room.case_id else None,
+                "course_id": str(room.course_id) if room.course_id else None,
             },
         )
         return msg
@@ -158,8 +176,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def _log_ws_event(self, action: str, description: str):
         try:
-            room = Room.objects.select_related("case").filter(id=self.room_id).first()
-            university = room.case.university if room else None
+            room = Room.objects.select_related("case", "course").filter(id=self.room_id).first()
+            university = None
+            if room:
+                university = room.case.university if room.case_id else room.course.university
         except Exception:
             room = None
             university = None

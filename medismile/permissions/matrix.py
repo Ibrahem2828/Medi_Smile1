@@ -29,6 +29,7 @@ PERMISSION_MATRIX: dict[str, dict[str, dict]] = {
             "roles": {
                 "student",
                 "patient",
+                "supervisor",
             },
             "ownership_required": True,
             "university_scope_required": False,
@@ -52,6 +53,7 @@ PERMISSION_MATRIX: dict[str, dict[str, dict]] = {
             "roles": {
                 "student",
                 "patient",
+                "supervisor",
             },
             "ownership_required": True,
             "university_scope_required": False,

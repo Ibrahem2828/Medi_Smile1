@@ -13,18 +13,24 @@ from .models import Room, Message
 class RoomAdmin(BaseOptimizedAdmin):
     list_display = (
         "id",
+        "thread_type",
         "case",
+        "course",
         "participant_patient",
         "participant_student",
+        "participant_supervisor",
         "created_at",
     )
     list_filter = ("created_at",)
 
     readonly_fields = (
         "id",
+        "thread_type",
         "case",
+        "course",
         "participant_patient",
         "participant_student",
+        "participant_supervisor",
         "created_at",
     )
 
@@ -35,11 +41,15 @@ class RoomAdmin(BaseOptimizedAdmin):
         "participant_student__first_name",
         "participant_student__last_name",
         "participant_student__email",
+        "participant_supervisor__first_name",
+        "participant_supervisor__last_name",
+        "participant_supervisor__email",
         "case__title",
+        "course__name",
     )
 
     ordering = ("-created_at",)
-    autocomplete_fields = ("case", "participant_patient", "participant_student")
+    autocomplete_fields = ("case", "course", "participant_patient", "participant_student", "participant_supervisor")
 
     def has_add_permission(self, request):
         return False

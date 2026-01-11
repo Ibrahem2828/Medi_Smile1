@@ -1,188 +1,283 @@
 {
   "service": {
     "name": "MediSmile Messaging",
-    "version": "2.0.0",
+    "version": "3.0.0",
     "base_url": "/api/messaging",
     "timezone": "UTC",
-    "languages": ["ar", "en"],
-    "principle": "Context-only messaging: no global chats."
+    "languages": ["en"],
+    "principle": "Context-only messaging scoped to a case or course."
   },
   "overview": {
-    "summary": "خدمة محادثات موجهة بالسياق (حالة طبية أو مادة تعليمية) تربط المريض/الطالب/المشرف ضمن نطاق الجامعة.",
+    "summary": "Messaging is available only within a valid case assignment (patient-student) or a shared course (student-supervisor).",
     "goals": [
-      "تسهيل التواصل السريري والتعليمـي داخل السياق الصحيح",
-      "منع التسريب بين الجامعات أو الحالات",
-      "دعم التدقيق والحوكمة",
-      "العمل مع WebSocket للأحداث الفورية"
+      "Provide secure, scoped communication tied to academic/clinical context.",
+      "Prevent global chat and enforce role-based access.",
+      "Ensure audit-ready records for messages.",
+      "Support REST and WebSocket channels."
     ],
     "non_goals": [
-      "لا محادثات عامة أو غرف مفتوحة",
-      "لا رسائل مجهولة",
-      "لا محتوى غير مرتبط بـ Case أو Material"
+      "Global/direct messaging outside case or course context.",
+      "Anonymous or public channels.",
+      "Message edits or deletions."
     ]
-  },
-  "principles": {
-    "context_driven": "كل رسالة مرتبطة بـ Case أو Material.",
-    "relation_based_access": "المشاركون فقط هم أصحاب العلاقة بالحالة أو المادة.",
-    "no_global_chat": "لا توجد قنوات عامة.",
-    "audit_ready": "تخزين سجل ميتاداتا كامل للأحداث."
   },
   "thread_types": {
     "case": {
-      "name": "Case Thread (Student-Patient-Supervisor)",
-      "created_when": "عند قبول الحالة وإتاحتها للتواصل السريري.",
-      "usage": ["استشارات مريض", "متابعة حالة", "تنسيق مواعيد"],
+      "name": "Case Thread (Patient <-> Student)",
+      "created_when": "A case is assigned to a student and is active (assigned/in_progress).",
+      "participants": ["patient", "assigned_student"],
+      "viewers": ["patient", "assigned_student", "case_supervisor", "university_admin", "tech_support"],
+      "can_send": ["patient", "assigned_student"],
       "constraints": [
-        "المشاركون: patient + assigned student + supervisor",
-        "Read-only للمشاركين غير المفوضين",
-        "يتبع حالة الحالة (يغلق عند case.closed)"
+        "Case must have patient and assigned student.",
+        "Case status must be ASSIGNED or IN_PROGRESS.",
+        "One room per case (idempotent create)."
       ]
     },
-    "material": {
-      "name": "Material Thread (Student-Supervisor)",
-      "created_when": "تكليف مادة أو مهمة تعليمية.",
-      "usage": ["نقاش المادة", "مراجعة المهام", "تغذية راجعة"],
+    "course": {
+      "name": "Course Thread (Student <-> Supervisor)",
+      "created_when": "A course is active and the student is enrolled; supervisor is assigned.",
+      "participants": ["enrolled_student", "course_supervisor"],
+      "viewers": ["enrolled_student", "course_supervisor", "university_admin", "tech_support"],
+      "can_send": ["enrolled_student", "course_supervisor"],
       "constraints": [
-        "المشاركون: student + supervisor",
-        "يغلق عند انتهاء التكليف"
+        "Course must be active and have a supervisor.",
+        "Student must be enrolled in the course.",
+        "One room per (course, student, supervisor) tuple (idempotent create)."
       ]
     }
   },
   "models": {
-    "Thread": {
+    "UserSummary": {
       "fields": {
         "id": "uuid",
-        "thread_type": "enum(case, material)",
+        "first_name": "string",
+        "last_name": "string"
+      }
+    },
+    "Room": {
+      "fields": {
+        "id": "uuid",
+        "thread_type": "enum(case, course)",
         "case_id": "uuid|null",
-        "material_id": "uuid|null",
-        "participants": "array<uuid>",
-        "is_closed": "boolean",
+        "course_id": "uuid|null",
+        "participant_patient": "UserSummary|null",
+        "participant_student": "UserSummary|null",
+        "participant_supervisor": "UserSummary|null",
         "created_at": "datetime",
-        "updated_at": "datetime"
+        "messages": "array<Message>"
       },
       "rules": [
-        "thread_type يحدد السياق والقيود",
-        "يجب وجود case_id أو material_id حسب النوع",
-        "participants مشتقة من سياق الحالة/المادة"
+        "case threads require case_id, patient, student; supervisor is not a chat participant.",
+        "course threads require course_id, student, supervisor; patient is not allowed.",
+        "messages are read-only and may be paginated depending on global DRF settings."
       ]
     },
     "Message": {
       "fields": {
         "id": "uuid",
-        "thread_id": "uuid",
-        "sender_id": "uuid",
+        "sender": "UserSummary",
         "content": "string (1..2000)",
-        "message_type": "enum(text, system)",
-        "is_read": "boolean",
-        "created_at": "datetime"
+        "sent_at": "datetime",
+        "is_system": "boolean"
       },
       "rules": [
-        "غير قابلة للتعديل بعد الإرسال",
-        "القراءة تسجل per-recipient",
-        "الرسائل النظامية يستخدمها الباك"
+        "Messages are immutable after creation.",
+        "Empty content is rejected.",
+        "Send is restricted by thread type and case/course state."
       ]
     }
   },
   "authorization": {
     "roles": ["patient", "student", "supervisor", "university_admin", "tech_support"],
-    "threads": {
+    "rooms": {
       "list": {
-        "patient": "case threads فقط",
-        "student": "case threads (assigned) + material threads",
-        "supervisor": "case threads (supervised) + material threads",
-        "university_admin": "ممنوع",
-        "tech_support": "قراءة تدقيقية عند الحاجة"
+        "patient": "rooms where participant_patient is the user",
+        "student": "rooms where participant_student is the user",
+        "supervisor": "case rooms where case.supervisor is the user or course rooms where participant_supervisor is the user",
+        "university_admin": "rooms scoped to the admin university",
+        "tech_support": "all rooms"
       },
-      "retrieve": "نفس قواعد list مع تحقق المشارك",
-      "create": "يُنشأ عبر الخدمات عند توفر سياق صالح (لا إنشاء حر)"
+      "create": {
+        "case": "patient or assigned student only",
+        "course": "enrolled student or course supervisor only"
+      }
     },
     "messages": {
+      "read": "room participants; scoped university admin; tech support",
       "send": {
-        "patient": "case thread فقط",
-        "student": "case/material حسب السياق",
-        "supervisor": "case/material حسب السياق",
-        "university_admin": "ممنوع",
-        "tech_support": "ممنوع"
-      },
-      "read": "المشارك فقط"
-    }
-  },
-  "lifecycle": {
-    "thread": {
-      "states": ["active", "closed"],
-      "transitions": [
-        "case -> closed عند إغلاق الحالة",
-        "material -> closed عند انتهاء التكليف",
-        "closed => يمنع الإرسال؛ القراءة مسموحة"
-      ]
+        "case": "patient or assigned student only",
+        "course": "student or supervisor only"
+      }
     }
   },
   "api": {
     "pagination": {
-      "style": "cursor",
-      "params": { "limit": "int (default 20, max 100)", "cursor": "string|null" }
+      "style": "drf-default",
+      "note": "Pagination depends on global REST framework settings."
     },
     "endpoints": [
       {
         "method": "GET",
         "path": "/threads/",
-        "description": "قائمة الخيوط ضمن نطاق المشارك.",
-        "query": { "thread_type": "case|material|null", "is_closed": "bool|null", "case_id": "uuid|null", "material_id": "uuid|null", "limit": "int", "cursor": "string|null" },
-        "response": { "status": 200, "schema": { "count": "int", "next_cursor": "string|null", "results": "array<Thread>" } },
-        "errors": [{ "status": 401, "code": "unauthorized" }]
-      },
-      {
-        "method": "GET",
-        "path": "/threads/{id}/",
-        "description": "تفاصيل خيط مع آخر الرسائل.",
-        "response": { "status": 200, "schema": { "thread": "Thread", "messages": { "count": "int", "next_cursor": "string|null", "results": "array<Message>" } } },
-        "errors": [{ "status": 401, "code": "unauthorized" }, { "status": 403, "code": "forbidden" }, { "status": 404, "code": "not_found" }]
-      },
-      {
-        "method": "POST",
-        "path": "/threads/{id}/messages/",
-        "description": "إرسال رسالة جديدة في خيط مفتوح.",
-        "body": { "content": "string (1..2000)", "message_type": "text|system (default text)" },
-        "response": { "status": 201, "schema": "Message" },
+        "description": "List accessible rooms.",
+        "response": {
+          "status": 200,
+          "schema": "array<Room> or paginated list"
+        },
         "errors": [
-          { "status": 400, "code": "validation_error" },
-          { "status": 401, "code": "unauthorized" },
-          { "status": 403, "code": "forbidden" },
-          { "status": 404, "code": "not_found" },
-          { "status": 409, "code": "thread_closed" }
+          {"status": 401, "code": "unauthorized"},
+          {"status": 403, "code": "forbidden"}
         ]
       },
       {
         "method": "POST",
-        "path": "/messages/{id}/read/",
-        "description": "تحديث حالة القراءة لرسالة.",
-        "body": { "is_read": "boolean (true)" },
-        "response": { "status": 200, "schema": { "id": "uuid", "is_read": "boolean", "read_at": "datetime" } },
-        "errors": [{ "status": 401, "code": "unauthorized" }, { "status": 403, "code": "forbidden" }, { "status": 404, "code": "not_found" }]
+        "path": "/threads/",
+        "description": "Create or get a room by context.",
+        "body": {
+          "thread_type": "case|course (default case)",
+          "case_id": "uuid (required for case)",
+          "course_id": "uuid (required for course)",
+          "student_id": "uuid (required for supervisors creating course threads)",
+          "case": "uuid (alias for case_id; optional)"
+        },
+        "response": {
+          "status": 201,
+          "schema": "Room"
+        },
+        "errors": [
+          {"status": 400, "code": "validation_error"},
+          {"status": 401, "code": "unauthorized"},
+          {"status": 403, "code": "forbidden"},
+          {"status": 404, "code": "not_found"}
+        ]
       },
       {
         "method": "GET",
-        "path": "/threads/{id}/messages/",
-        "description": "جلب رسائل الخيط مع ترقيم متقدم.",
-        "query": { "limit": "int", "cursor": "string|null" },
-        "response": { "status": 200, "schema": { "count": "int", "next_cursor": "string|null", "results": "array<Message>" } },
-        "errors": [{ "status": 401, "code": "unauthorized" }, { "status": 403, "code": "forbidden" }, { "status": 404, "code": "not_found" }]
+        "path": "/threads/{room_id}/",
+        "description": "Retrieve a room by id.",
+        "response": {
+          "status": 200,
+          "schema": "Room"
+        },
+        "errors": [
+          {"status": 401, "code": "unauthorized"},
+          {"status": 403, "code": "forbidden"},
+          {"status": 404, "code": "not_found"}
+        ]
+      },
+      {
+        "method": "GET",
+        "path": "/threads/{room_id}/messages/",
+        "description": "List messages in a room.",
+        "response": {
+          "status": 200,
+          "schema": "array<Message> or paginated list"
+        },
+        "errors": [
+          {"status": 401, "code": "unauthorized"},
+          {"status": 403, "code": "forbidden"},
+          {"status": 404, "code": "not_found"}
+        ]
+      },
+      {
+        "method": "POST",
+        "path": "/threads/{room_id}/messages/",
+        "description": "Send a message in a room.",
+        "body": {"content": "string (1..2000)"},
+        "response": {
+          "status": 201,
+          "schema": "Message"
+        },
+        "errors": [
+          {"status": 400, "code": "validation_error"},
+          {"status": 401, "code": "unauthorized"},
+          {"status": 403, "code": "forbidden"},
+          {"status": 404, "code": "not_found"}
+        ]
+      },
+      {
+        "method": "GET",
+        "path": "/rooms/",
+        "description": "Create room using rooms endpoint (alias of POST /threads/).",
+        "response": {
+          "status": 405,
+          "schema": "Method not allowed"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/rooms/",
+        "description": "Create or get a room by context (alias of POST /threads/).",
+        "body": "same as POST /threads/",
+        "response": {
+          "status": 201,
+          "schema": "Room"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/rooms/{room_id}/",
+        "description": "Retrieve a room by id (alias of GET /threads/{room_id}/).",
+        "response": {
+          "status": 200,
+          "schema": "Room"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/rooms/{room_id}/messages/",
+        "description": "List messages (alias of GET /threads/{room_id}/messages/).",
+        "response": {
+          "status": 200,
+          "schema": "array<Message> or paginated list"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/rooms/{room_id}/messages/",
+        "description": "Send message (alias of POST /threads/{room_id}/messages/).",
+        "body": {"content": "string (1..2000)"},
+        "response": {
+          "status": 201,
+          "schema": "Message"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/messages/{message_id}/",
+        "description": "Retrieve a single message.",
+        "response": {
+          "status": 200,
+          "schema": "Message"
+        },
+        "errors": [
+          {"status": 401, "code": "unauthorized"},
+          {"status": 403, "code": "forbidden"},
+          {"status": 404, "code": "not_found"}
+        ]
       }
     ],
     "websocket": {
-      "path": "ws/chat/<thread_id>/",
-      "events": ["message.created", "message.read", "thread.closed"]
+      "path": "ws/chat/{room_id}/",
+      "events": ["message.created"],
+      "send_payload": {"content": "string"},
+      "receive_payload": {
+        "id": "uuid",
+        "sender": "string (email)",
+        "content": "string",
+        "sent_at": "datetime"
+      }
     },
     "no_delete_endpoints": true
   },
-  "notifications": {
-    "events": [
-      "message.created -> notification to other participants",
-      "system.message -> high priority"
-    ]
-  },
   "audit": {
-    "records": ["thread.created", "message.sent", "message.read", "unauthorized.send_attempt", "unauthorized.thread_access"],
+    "events": [
+      "messaging.room.created",
+      "messaging.room.retrieved",
+      "messaging.message.sent",
+      "messaging.message.sent.ws"
+    ],
     "content_in_audit": false,
     "metadata_only": true
   },
@@ -190,17 +285,5 @@
     "content_length": "1..2000",
     "thread_open_required": true,
     "participant_only": true
-  },
-  "indexes": {
-    "messages": ["thread_id", "created_at"],
-    "threads": ["thread_type", "case_id", "material_id", "is_closed"]
-  },
-  "filters": ["thread_type", "is_closed", "case_id", "material_id", "date_range"],
-  "tests": [
-    "participant access",
-    "thread scope per role/university",
-    "thread closure lock",
-    "pagination cursors",
-    "unauthorized send/read attempts"
-  ]
+  }
 }

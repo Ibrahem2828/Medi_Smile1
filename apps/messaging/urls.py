@@ -2,7 +2,7 @@
 from django.urls import path
 
 from .views import (
-    RoomListView,
+    ThreadListCreateView,
     RoomRetrieveView,
     RoomCreateView,
     MessageListCreateView,
@@ -15,7 +15,7 @@ urlpatterns = [
     # =====================================================
     path(
         "threads/",
-        RoomListView.as_view(),
+        ThreadListCreateView.as_view(),
         name="messaging-room-list",
     ),
     path(
