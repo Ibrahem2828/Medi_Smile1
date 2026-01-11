@@ -277,7 +277,7 @@ class CaseHistory(models.Model):
         ]
 
     def save(self, *args, **kwargs):
-        if self.pk:
+        if not self._state.adding:
             raise ValidationError(_("Case history records are immutable."))
         return super().save(*args, **kwargs)
 

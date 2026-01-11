@@ -233,7 +233,11 @@ class AIProposalIngestView(generics.CreateAPIView):
             self.perform_create(serializer)
         except ValidationError as exc:
             return Response(
-                {"status": "error", "message": "Invalid request", "errors": exc.message_dict},
+                {
+                    "status": "error",
+                    "message": "Invalid request",
+                    "errors": getattr(exc, "message_dict", None) or getattr(exc, "messages", None) or str(exc),
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
         except Exception as exc:
@@ -344,7 +348,14 @@ class AIProposalDecisionView(APIView):
                 proposal.save(update_fields=["status", "converted_case", "updated_at"])
             return Response({"status": "success", "message": "Case created from proposal.", "data": {"case_id": str(case.id)}})
         except ValidationError as exc:
-            return Response({"status": "error", "message": "Invalid data", "errors": exc.message_dict}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid data",
+                    "errors": getattr(exc, "message_dict", None) or getattr(exc, "messages", None) or str(exc),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         except Exception as exc:
             logger.exception("AI proposal acceptance failed", exc_info=exc)
             return Response(
