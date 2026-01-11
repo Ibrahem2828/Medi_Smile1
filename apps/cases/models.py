@@ -369,9 +369,10 @@ class CaseAssignmentRequest(models.Model):
         if self.case.university_id and not student_university_id:
             raise ValidationError(_("Student must be linked to a university to request this case."))
 
-        # Allowed states for requesting assignment
-        if self.case.status not in {Case.Status.ACCEPTED, Case.Status.NEEDS_ASSIGNMENT_APPROVAL}:
-            raise ValidationError(_("Case is not accepting assignment requests."))
+        # Allowed states for requesting assignment (only enforce for pending/new requests)
+        if self._state.adding or self.status == CaseAssignmentRequest.Status.PENDING:
+            if self.case.status not in {Case.Status.ACCEPTED, Case.Status.NEEDS_ASSIGNMENT_APPROVAL}:
+                raise ValidationError(_("Case is not accepting assignment requests."))
 
         if not self.case.university_id:
             raise ValidationError(_("Case must be linked to a university before assignment."))
