@@ -38,7 +38,7 @@ from .permissions import (
     CanCreateSession,
     CanReviewSession,
 )
-from .services import create_case_from_proposal
+from .services import create_case_from_proposal, request_case_assignment
 from django.core.exceptions import ValidationError
 import logging
 import traceback
@@ -159,11 +159,28 @@ class CaseAssignSupervisorView(generics.UpdateAPIView):
 # Assignment Requests
 # ============================================================
 class CaseAssignmentRequestCreateView(generics.CreateAPIView):
-    serializer_class = CaseAssignmentRequestSerializer
+    serializer_class = StudentAssignmentRequestSerializer
     permission_classes = [IsAuthenticatedAndActive, CanRequestAssignment]
 
-    def perform_create(self, serializer):
-        serializer.save(student=self.request.user)
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            req = request_case_assignment(
+                student=request.user,
+                case_id=self.kwargs["pk"],
+                message=serializer.validated_data.get("message"),
+            )
+        except ValidationError as exc:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid data",
+                    "errors": getattr(exc, "message_dict", None) or getattr(exc, "messages", None) or str(exc),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({"status": "success", "message": "Assignment requested.", "data": {"request_id": str(req.id)}})
 
 
 class CaseAssignmentRequestDecisionView(generics.UpdateAPIView):
@@ -437,36 +454,26 @@ class StudentAvailableCasesView(generics.ListAPIView):
 
 
 class StudentRequestAssignmentView(APIView):
-    permission_classes = [IsAuthenticatedAndActive]
+    permission_classes = [IsAuthenticatedAndActive, CanRequestAssignment]
 
-    @transaction.atomic
     def post(self, request, case_id):
         serializer = StudentAssignmentRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = request.user
-        if getattr(getattr(user, "role", None), "name", None) != Role.STUDENT:
-            return Response({"status": "error", "message": "Only students allowed."}, status=status.HTTP_403_FORBIDDEN)
-        stu_univ = getattr(getattr(user, "studentprofile_profile", None), "university_id", None)
-        case = Case.objects.select_for_update().filter(id=case_id, university_id=stu_univ).first()
-        if not case or case.status != Case.Status.ACCEPTED:
-            return Response({"status": "error", "message": "Case not available for assignment."}, status=status.HTTP_400_BAD_REQUEST)
-
-        existing = CaseAssignmentRequest.objects.filter(case=case, student=user, status=CaseAssignmentRequest.Status.PENDING).first()
-        if existing:
-            return Response({"status": "error", "message": "Request already pending."}, status=status.HTTP_400_BAD_REQUEST)
-
-        req = CaseAssignmentRequest.objects.create(
-            case=case,
-            student=user,
-            message=serializer.validated_data.get("message"),
-        )
-        req.apply_to_case()
-        CaseHistory.objects.create(
-            case=case,
-            action=CaseHistory.Action.ASSIGNMENT_REQUESTED,
-            description="Student requested assignment.",
-            performed_by=user,
-        )
+        try:
+            req = request_case_assignment(
+                student=request.user,
+                case_id=case_id,
+                message=serializer.validated_data.get("message"),
+            )
+        except ValidationError as exc:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid data",
+                    "errors": getattr(exc, "message_dict", None) or getattr(exc, "messages", None) or str(exc),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         return Response({"status": "success", "message": "Assignment requested.", "data": {"request_id": str(req.id)}})
 
 

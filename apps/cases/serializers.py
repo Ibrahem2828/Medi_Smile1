@@ -311,6 +311,12 @@ class CaseStatusUpdateSerializer(serializers.ModelSerializer):
         if "university" in validated_data:
             instance.university = validated_data.get("university")
 
+        if "status" in validated_data:
+            if instance.status == Case.Status.ACCEPTED and not instance.student_id:
+                instance.is_public = True
+            else:
+                instance.is_public = False
+
         instance.save()
 
         CaseHistory.objects.create(

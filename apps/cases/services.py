@@ -1,12 +1,13 @@
 # apps/cases/services.py
 from django.utils import timezone
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.db import transaction
 from django.contrib.contenttypes.models import ContentType
 
 from apps.audit.services import log_audit_event
 from apps.accounts.models import Role, User
 from apps.notifications.models import Notification
-from .models import Case, CaseHistory, AIProposedCase
+from .models import Case, CaseHistory, CaseAssignmentRequest, AIProposedCase
 
 
 def _notify_users_about_case(*, recipients, notification_type, title, message, case, priority=Notification.Priority.NORMAL, sender=None, payload=None):
@@ -102,6 +103,33 @@ def complete_case(*, supervisor, case: Case):
     )
 
     return case
+
+
+@transaction.atomic
+def request_case_assignment(*, student: User, case_id, message: str | None = None) -> CaseAssignmentRequest:
+    if getattr(getattr(student, "role", None), "name", None) != Role.STUDENT:
+        raise PermissionDenied("Only students can request case assignment.")
+
+    student_university_id = getattr(getattr(student, "studentprofile_profile", None), "university_id", None)
+    case = Case.objects.select_for_update().filter(id=case_id, university_id=student_university_id).first()
+    if not case or case.status != Case.Status.ACCEPTED or not case.is_public:
+        raise ValidationError({"case": "Case not available for assignment."})
+
+    existing = CaseAssignmentRequest.objects.filter(case=case, student=student).first()
+    if existing:
+        raise ValidationError({"case": "Assignment request already exists."})
+
+    req = CaseAssignmentRequest.objects.create(case=case, student=student, message=message)
+    req.apply_to_case()
+
+    CaseHistory.objects.create(
+        case=case,
+        action=CaseHistory.Action.ASSIGNMENT_REQUESTED,
+        description="Student requested assignment.",
+        performed_by=student,
+    )
+
+    return req
 
 
 # ============================================================
