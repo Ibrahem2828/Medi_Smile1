@@ -20,6 +20,16 @@ def is_case_supervisor(user, case: Case) -> bool:
     return case.supervisor_id == user.id
 
 
+def is_public_case_for_student(user, case: Case) -> bool:
+    student_university_id = getattr(getattr(user, "studentprofile_profile", None), "university_id", None)
+    return (
+        case.is_public
+        and case.status == Case.Status.ACCEPTED
+        and student_university_id
+        and case.university_id == student_university_id
+    )
+
+
 def is_same_university(user, case: Case) -> bool:
     """
     Check if user belongs to the same university as the case.
@@ -62,7 +72,7 @@ class CanViewCase(BasePermission):
     """
     Read access rules:
     - Patient: only his own case
-    - Student: only assigned cases
+    - Student: assigned cases or public accepted cases in their university
     - Supervisor: only supervised cases
     - University Admin: cases of his university
     - IT Support: full read
@@ -78,7 +88,7 @@ class CanViewCase(BasePermission):
             return is_case_owner(user, obj)
 
         if user.role.name == Role.STUDENT:
-            return is_case_student(user, obj)
+            return is_case_student(user, obj) or is_public_case_for_student(user, obj)
 
         if user.role.name == Role.SUPERVISOR:
             return is_case_supervisor(user, obj)
