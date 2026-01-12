@@ -400,7 +400,20 @@ class SupervisorNewCasesView(generics.ListAPIView):
         if getattr(getattr(user, "role", None), "name", None) != Role.SUPERVISOR:
             return Case.objects.none()
         sup_univ = getattr(getattr(user, "supervisorprofile_profile", None), "university_id", None)
-        return Case.objects.filter(status=Case.Status.NEW, university_id=sup_univ)
+        if not sup_univ:
+            return Case.objects.none()
+        return (
+            Case.objects
+            .filter(status=Case.Status.NEW)
+            .filter(
+                models.Q(university_id=sup_univ)
+                | models.Q(
+                    university_id__isnull=True,
+                    patient__patientprofile_profile__university_id=sup_univ,
+                )
+            )
+            .distinct()
+        )
 
 
 class SupervisorCaseDecisionView(APIView):
@@ -411,7 +424,20 @@ class SupervisorCaseDecisionView(APIView):
         if getattr(getattr(user, "role", None), "name", None) != Role.SUPERVISOR:
             return Response({"status": "error", "message": "Only supervisors allowed."}, status=status.HTTP_403_FORBIDDEN)
         sup_univ = getattr(getattr(user, "supervisorprofile_profile", None), "university_id", None)
-        case = Case.objects.filter(id=case_id, status=Case.Status.NEW, university_id=sup_univ).first()
+        if not sup_univ:
+            return Response({"status": "error", "message": "Supervisor university not set."}, status=status.HTTP_403_FORBIDDEN)
+        case = (
+            Case.objects
+            .filter(id=case_id, status=Case.Status.NEW)
+            .filter(
+                models.Q(university_id=sup_univ)
+                | models.Q(
+                    university_id__isnull=True,
+                    patient__patientprofile_profile__university_id=sup_univ,
+                )
+            )
+            .first()
+        )
         if not case:
             return Response({"status": "error", "message": "Case not found or not eligible."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -420,6 +446,8 @@ class SupervisorCaseDecisionView(APIView):
         decision = serializer.validated_data["decision"]
 
         if decision == "accept":
+            if not case.university_id:
+                case.university_id = sup_univ
             case.status = Case.Status.ACCEPTED
             case.is_public = True
         else:
