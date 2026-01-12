@@ -71,8 +71,13 @@ def create_evaluation(*, actor, data: dict) -> Evaluation:
         if case.student_id != actor.id:
             raise PermissionDenied("You can only evaluate your own cases.")
     elif role_name == Role.SUPERVISOR:
-        if target_type != EvaluationTargetType.STUDENT:
-            raise PermissionDenied("Supervisors can only evaluate students.")
+        if target_type not in {
+            EvaluationTargetType.STUDENT,
+            EvaluationTargetType.CASE,
+            EvaluationTargetType.SESSION,
+            EvaluationTargetType.APPOINTMENT,
+        }:
+            raise PermissionDenied("Supervisors can only evaluate students, cases, sessions, or appointments.")
     elif role_name == Role.UNIVERSITY_ADMIN:
         if target_type not in {EvaluationTargetType.STUDENT, EvaluationTargetType.SUPERVISOR}:
             raise PermissionDenied("University admins can only evaluate students or supervisors.")
@@ -116,6 +121,21 @@ def create_evaluation(*, actor, data: dict) -> Evaluation:
 
     if not target_id:
         raise DjangoValidationError({"target_id": "Target id is required."})
+
+    if role_name == Role.SUPERVISOR and target_type in {
+        EvaluationTargetType.CASE,
+        EvaluationTargetType.SESSION,
+        EvaluationTargetType.APPOINTMENT,
+    }:
+        supervisor_id = None
+        if session and session.supervisor_id:
+            supervisor_id = session.supervisor_id
+        if not supervisor_id and appointment and appointment.supervisor_id:
+            supervisor_id = appointment.supervisor_id
+        if not supervisor_id and case and case.supervisor_id:
+            supervisor_id = case.supervisor_id
+        if supervisor_id != actor.id:
+            raise PermissionDenied("You can only evaluate cases, sessions, or appointments you supervise.")
 
     # University scope
     university_id = None
