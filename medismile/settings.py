@@ -201,6 +201,7 @@ REST_FRAMEWORK = {
         "ai-review": "30/hour",
         "ai-health": "120/hour",
         "ai-my-analysis": "30/hour",
+        "messaging": "60/minute",
     },
 }
 

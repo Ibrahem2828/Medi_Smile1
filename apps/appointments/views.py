@@ -107,7 +107,7 @@ class AppointmentListCreateView(generics.ListCreateAPIView):
         return AppointmentSerializer
 
     def perform_create(self, serializer):
-        serializer.save(context={"request": self.request})
+        serializer.save()
 
     def get_permissions(self):
         base = [IsAuthenticatedAndActive()]
