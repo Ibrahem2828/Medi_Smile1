@@ -17,10 +17,14 @@ def is_case_participant(user, case: Case) -> bool:
     - Student assigned to the case
     - Supervisor of the case (read only)
     """
+    if not case:
+        return False
     return user in {case.patient, case.student, case.supervisor}
 
 
 def is_course_participant(user, course: Course) -> bool:
+    if not course:
+        return False
     if user == course.supervisor:
         return True
     return course.students.filter(id=user.id).exists()
@@ -30,6 +34,8 @@ def is_university_admin_for_case(user, case: Case) -> bool:
     """
     University Admin can read data scoped to their university only.
     """
+    if not case:
+        return False
     try:
         profile = user.universityadminprofile_profile
     except Exception:
@@ -54,6 +60,8 @@ def is_case_chat_open(case: Case) -> bool:
     """
     State guard: chat is allowed only while the case is active with an assigned student.
     """
+    if not case:
+        return False
     return case.status in {
         Case.Status.ASSIGNED,
         Case.Status.IN_PROGRESS,
@@ -136,7 +144,7 @@ class CanCreateRoom(BasePermission):
     """
 
     def has_permission(self, request, view):
-        role = getattr(request.user, "role_name", None)
+        role = getattr(request.user, "role_name", None) or getattr(getattr(request.user, "role", None), "name", None)
         return role in {Role.PATIENT, Role.STUDENT, Role.SUPERVISOR}
 
 

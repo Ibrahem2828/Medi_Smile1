@@ -80,20 +80,21 @@ class CanViewCase(BasePermission):
 
     def has_object_permission(self, request, view, obj: Case):
         user = request.user
+        role_name = getattr(getattr(user, "role", None), "name", None)
 
-        if user.role.name == Role.TECH_SUPPORT:
+        if role_name == Role.TECH_SUPPORT:
             return True
 
-        if user.role.name == Role.PATIENT:
+        if role_name == Role.PATIENT:
             return is_case_owner(user, obj)
 
-        if user.role.name == Role.STUDENT:
+        if role_name == Role.STUDENT:
             return is_case_student(user, obj) or is_public_case_for_student(user, obj)
 
-        if user.role.name == Role.SUPERVISOR:
+        if role_name == Role.SUPERVISOR:
             return is_case_supervisor(user, obj)
 
-        if user.role.name == Role.UNIVERSITY_ADMIN:
+        if role_name == Role.UNIVERSITY_ADMIN:
             return is_same_university(user, obj)
 
         return False
@@ -111,11 +112,12 @@ class CanUpdateCase(BasePermission):
 
     def has_object_permission(self, request, view, obj: Case):
         user = request.user
+        role_name = getattr(getattr(user, "role", None), "name", None)
 
         if obj.status == Case.Status.CLOSED:
             return False
 
-        if user.role.name == Role.SUPERVISOR:
+        if role_name == Role.SUPERVISOR:
             return is_case_supervisor(user, obj)
 
         return False
@@ -189,7 +191,7 @@ class CanRequestAssignment(BasePermission):
     def has_permission(self, request, view):
         return (
             request.user.is_authenticated
-            and request.user.role.name == Role.STUDENT
+            and getattr(getattr(request.user, "role", None), "name", None) == Role.STUDENT
         )
 
 
@@ -204,7 +206,7 @@ class CanCreateSession(BasePermission):
     def has_permission(self, request, view):
         return (
             request.user.is_authenticated
-            and request.user.role.name == Role.STUDENT
+            and getattr(getattr(request.user, "role", None), "name", None) == Role.STUDENT
         )
 
 
@@ -216,6 +218,6 @@ class CanReviewSession(BasePermission):
     def has_object_permission(self, request, view, obj: CaseSession):
         return (
             request.user.is_authenticated
-            and request.user.role.name == Role.SUPERVISOR
+            and getattr(getattr(request.user, "role", None), "name", None) == Role.SUPERVISOR
             and obj.supervisor_id == request.user.id
         )
