@@ -32,6 +32,8 @@
       "description": "Official medical case after patient acceptance.",
       "fields": {
         "id": "uuid",
+        "title": "string",
+        "description": "string",
         "patient": "uuid",
         "university": "uuid|null",
         "assigned_student": "uuid|null",
@@ -153,7 +155,17 @@
       }
     },
     "cases": {
-      "GET /api/cases/": { "role": "authenticated", "filters": ["role", "university scope"], "note": "Read-only listing." },
+      "POST /api/cases/": {
+        "role": "patient",
+        "body": {
+          "university_id": "uuid",
+          "title": "string",
+          "description": "string",
+          "priority": "low|medium|high|urgent?"
+        },
+        "response": { "status": "success", "data": { "id": "uuid" } }
+      },
+      "GET /api/cases/": { "role": "authenticated", "filters": ["role", "university scope"], "note": "List cases." },
       "GET /api/cases/<id>/": { "role": "authenticated+scoped" },
       "PATCH /api/cases/<id>/status/": {
         "role": "supervisor|tech_support|university_admin (scoped)",

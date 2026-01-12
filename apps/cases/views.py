@@ -14,6 +14,7 @@ from apps.accounts.permissions import IsAuthenticatedAndActive
 from .models import Case, CaseAssignmentRequest, CaseHistory, CaseSession, AIAnalysisSession, AIProposedCase
 from .serializers import (
     CaseSerializer,
+    CaseCreateSerializer,
     CaseUpdateSerializer,
     CaseStatusUpdateSerializer,
     CaseAssignSupervisorSerializer,
@@ -35,10 +36,11 @@ from .permissions import (
     CanManageCaseStatus,
     CanAssignSupervisor,
     CanRequestAssignment,
+    CanCreateCase,
     CanCreateSession,
     CanReviewSession,
 )
-from .services import create_case_from_proposal, request_case_assignment
+from .services import create_case, create_case_from_proposal, request_case_assignment
 from django.core.exceptions import ValidationError
 import logging
 import traceback
@@ -79,13 +81,13 @@ def _sanitize_ai_raw_proposal(raw_proposal, *, patient):
 # ============================================================
 # Case List & Create
 # ============================================================
-class CaseListCreateView(generics.ListAPIView):
+class CaseListCreateView(generics.ListCreateAPIView):
     """
-    Read-only listing of cases. Creation is driven exclusively by AI proposal acceptance.
+    List cases and allow patients to create a case directly.
     """
 
-    permission_classes = [IsAuthenticatedAndActive]
-    http_method_names = ["get"]
+    permission_classes = [IsAuthenticatedAndActive, CanCreateCase]
+    http_method_names = ["get", "post"]
 
     def get_queryset(self):
         user = self.request.user
@@ -111,7 +113,33 @@ class CaseListCreateView(generics.ListAPIView):
         return Case.objects.none()
 
     def get_serializer_class(self):
+        if self.request.method == "POST":
+            return CaseCreateSerializer
         return CaseSerializer
+
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [IsAuthenticatedAndActive(), CanCreateCase()]
+        return [IsAuthenticatedAndActive()]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            case = create_case(patient=request.user, data=serializer.validated_data)
+        except ValidationError as exc:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid data",
+                    "errors": getattr(exc, "message_dict", None) or getattr(exc, "messages", None) or str(exc),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(
+            {"status": "success", "data": CaseSerializer(case).data},
+            status=status.HTTP_201_CREATED,
+        )
 
 
 # ============================================================

@@ -38,12 +38,16 @@ def _ensure_patient_can_create_case(patient: User):
 
 def create_case(*, patient, data: dict) -> Case:
     _ensure_patient_can_create_case(patient)
-    case = Case.objects.create(
-        patient=patient,
-        university=data["university"],
-        description=data.get("description", ""),
-        priority=data.get("priority"),
-    )
+    payload = {
+        "patient": patient,
+        "university": data["university"],
+        "title": data["title"],
+        "description": data["description"],
+    }
+    priority = data.get("priority")
+    if priority:
+        payload["priority"] = priority
+    case = Case.objects.create(**payload)
 
     log_audit_event(
         user=patient,

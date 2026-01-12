@@ -65,7 +65,10 @@ class CanCreateCase(BasePermission):
     """
 
     def has_permission(self, request, view):
-        return request.user.is_authenticated
+        return (
+            request.user.is_authenticated
+            and request.user.role.name == Role.PATIENT
+        )
 
 
 class CanViewCase(BasePermission):

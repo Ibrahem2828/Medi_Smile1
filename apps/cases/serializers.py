@@ -4,6 +4,7 @@ from django.utils.translation import gettext_lazy as _
 from django.db import transaction
 
 from apps.accounts.models import User, Role
+from apps.universities.models import University
 from medismile.utils.auth import resolve_request_user
 
 from .models import Case, CaseHistory, CaseAssignmentRequest, CaseSession, AIAnalysisSession, AIProposedCase
@@ -225,6 +226,30 @@ class CaseSerializer(serializers.ModelSerializer):
             "sessions",
         )
         read_only_fields = fields
+
+
+# ============================================================
+# Case Create
+# ============================================================
+class CaseCreateSerializer(serializers.Serializer):
+    university_id = serializers.UUIDField()
+    title = serializers.CharField()
+    description = serializers.CharField()
+    priority = serializers.ChoiceField(choices=Case.Priority.choices, required=False)
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        user = resolve_request_user(request)
+
+        if not user or getattr(getattr(user, "role", None), "name", None) != Role.PATIENT:
+            raise serializers.ValidationError(_("Only patients can create cases."))
+
+        university = University.objects.filter(id=attrs["university_id"], is_active=True).first()
+        if not university:
+            raise serializers.ValidationError({"university_id": _("University not found or inactive.")})
+
+        attrs["university"] = university
+        return attrs
 
 
 # ============================================================
