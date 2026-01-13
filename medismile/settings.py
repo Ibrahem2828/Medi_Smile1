@@ -179,6 +179,30 @@ WHITENOISE_AUTOREFRESH = DEBUG
 WHITENOISE_USE_FINDERS = True
 
 # ============================================================
+# Reports PDF Rendering
+# ============================================================
+_reports_font_dir = BASE_DIR / "static" / "fonts"
+_reports_cairo = _reports_font_dir / "Cairo-Regular.ttf"
+_reports_cairo_bold = _reports_font_dir / "Cairo-Bold.ttf"
+_reports_tahoma = _reports_font_dir / "tahoma.ttf"
+_reports_tahoma_bold = _reports_font_dir / "tahomabd.ttf"
+
+REPORTS_PDF_FONT_PATH = os.getenv(
+    "REPORTS_PDF_FONT_PATH",
+    str(_reports_cairo if _reports_cairo.exists() else _reports_tahoma),
+)
+REPORTS_PDF_BOLD_FONT_PATH = os.getenv(
+    "REPORTS_PDF_BOLD_FONT_PATH",
+    str(_reports_cairo_bold if _reports_cairo_bold.exists() else _reports_tahoma_bold),
+)
+REPORTS_MEDISMILE_LOGO = os.getenv("REPORTS_MEDISMILE_LOGO", "")
+
+if not REPORTS_MEDISMILE_LOGO:
+    REPORTS_MEDISMILE_LOGO = str(
+        BASE_DIR / "static" / "rest_framework" / "img" / "Medismile.jpg"
+    )
+
+# ============================================================
 # REST Framework
 # ============================================================
 REST_FRAMEWORK = {

@@ -107,7 +107,7 @@
       "method": "POST",
       "path": "/api/reports/{id}/export/",
       "roles": ["university_admin"],
-      "request": {"format": "pdf|excel"},
+      "request": {"format": "pdf|excel|csv"},
       "responses": {
         "200": {"status": "success", "data": {"file_url": "/media/exports/report_<uuid>.pdf"}}
       }

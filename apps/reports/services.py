@@ -1,15 +1,18 @@
 # apps/reports/services.py
 import csv
 import json
-from io import StringIO
+import re
+from datetime import date
+from io import StringIO, BytesIO
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from django.utils import timezone
 
-from apps.accounts.models import Role, User, StudentProfile
+from apps.accounts.models import Role, User, StudentProfile, SupervisorProfile, PatientProfile
 from apps.audit.services import log_audit_event
 from apps.notifications.audit_bridge import notify_on_audit_event
 from apps.cases.models import Case
@@ -324,6 +327,118 @@ def reject_report(*, supervisor, report: Report, review_notes: str) -> Report:
     return report
 
 
+_ARABIC_RE = re.compile(r"[\u0600-\u06FF]")
+
+
+def _safe_text(value) -> str:
+    if value is None or value == "":
+        return "-"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def _format_date(value) -> str:
+    if not value:
+        return "-"
+    try:
+        if hasattr(value, "tzinfo") and value.tzinfo:
+            value = timezone.localtime(value)
+        return value.strftime("%Y-%m-%d")
+    except Exception:
+        return str(value)
+
+
+def _calc_age(dob) -> str:
+    if not dob:
+        return "-"
+    if isinstance(dob, date):
+        today = timezone.localdate()
+        years = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+        return str(years)
+    return "-"
+
+
+def _get_profile(model, user):
+    if not user:
+        return None
+    return model.objects.filter(user=user).first()
+
+
+def _safe_get_user(user_id):
+    if not user_id:
+        return None
+    try:
+        return User.objects.filter(id=user_id).first()
+    except Exception:
+        return None
+
+
+def _extract_value(keys, *sources):
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for key in keys:
+            value = source.get(key)
+            if value is not None and value != "":
+                return value
+    return None
+
+
+def _extract_report_items(report: Report):
+    content = report.content if isinstance(report.content, dict) else {}
+    snapshot = report.snapshot_data if isinstance(report.snapshot_data, dict) else {}
+    for key in ("cases", "students", "supervisors", "items"):
+        items = content.get(key) or snapshot.get(key)
+        if isinstance(items, list) and items:
+            return key, items
+    return None, []
+
+
+def _resolve_case(report: Report, item):
+    case_id = None
+    if isinstance(item, dict):
+        case_id = item.get("case_id") or item.get("id")
+    if not case_id and report.target_type == Report.TargetType.CASE:
+        case_id = report.target_id
+    if not case_id and report.case_id:
+        case_id = report.case_id
+    if case_id:
+        return Case.objects.select_related("student", "supervisor", "patient", "university").filter(id=case_id).first()
+    return None
+
+
+def _resolve_student(report: Report, case, item):
+    student_id = _extract_value(("student_id",), item)
+    if student_id:
+        return _safe_get_user(student_id)
+    if case and case.student_id:
+        return case.student
+    if report.student_id:
+        return report.student
+    return None
+
+
+def _resolve_supervisor(report: Report, case, item):
+    supervisor_id = _extract_value(("supervisor_id",), item)
+    if supervisor_id:
+        return _safe_get_user(supervisor_id)
+    if case and case.supervisor_id:
+        return case.supervisor
+    if report.supervisor_id:
+        return report.supervisor
+    return None
+
+
+def _resolve_patient(case, item):
+    patient_id = _extract_value(("patient_id",), item)
+    if patient_id:
+        return _safe_get_user(patient_id)
+    if case and case.patient_id:
+        return case.patient
+    return None
+
+
 def _render_report_text(report: Report) -> str:
     payload = {
         "id": str(report.id),
@@ -341,44 +456,400 @@ def _render_report_text(report: Report) -> str:
 
 
 def _generate_pdf_bytes(report: Report) -> bytes:
-    # Minimal PDF generation without external dependencies.
-    text = _render_report_text(report).replace("(", "\\(").replace(")", "\\)")
-    lines = text.splitlines() or ["Report"]
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import ParagraphStyle
+        from reportlab.lib.units import mm
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+    except Exception as exc:
+        raise ValidationError({"format": "PDF export requires reportlab."}) from exc
 
-    content_lines = ["BT", "/F1 12 Tf", "72 720 Td"]
-    for idx, line in enumerate(lines):
-        if idx > 0:
-            content_lines.append("0 -14 Td")
-        content_lines.append(f"({line}) Tj")
-    content_lines.append("ET")
-    content_stream = "\n".join(content_lines).encode("utf-8")
+    try:
+        import arabic_reshaper
+        from bidi.algorithm import get_display
+        arabic_tools = True
+    except Exception:
+        arabic_tools = False
 
-    objects = []
-    objects.append(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n")
-    objects.append(b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n")
-    objects.append(
-        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n"
+    content = report.content if isinstance(report.content, dict) else {}
+    snapshot = report.snapshot_data if isinstance(report.snapshot_data, dict) else {}
+
+    def _rtl(text: str) -> str:
+        text = _safe_text(text)
+        if arabic_tools and _ARABIC_RE.search(text):
+            text = get_display(arabic_reshaper.reshape(text))
+        return escape(text)
+
+    def _resolve_path(path):
+        if not path:
+            return None
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            base_dir = getattr(settings, "BASE_DIR", None)
+            if base_dir:
+                candidate = Path(base_dir) / candidate
+        return candidate if candidate.exists() else None
+
+    def _register_fonts():
+        font_name = "Helvetica"
+        font_bold = "Helvetica-Bold"
+        font_path = _resolve_path(getattr(settings, "REPORTS_PDF_FONT_PATH", None))
+        bold_path = _resolve_path(getattr(settings, "REPORTS_PDF_BOLD_FONT_PATH", None))
+        if font_path:
+            pdfmetrics.registerFont(TTFont("ReportFont", str(font_path)))
+            font_name = "ReportFont"
+            font_bold = "ReportFont"
+        if bold_path:
+            pdfmetrics.registerFont(TTFont("ReportFontBold", str(bold_path)))
+            font_bold = "ReportFontBold"
+        return font_name, font_bold
+
+    font_name, font_bold = _register_fonts()
+
+    primary = colors.HexColor("#0B3C5D")
+    light_gray = colors.HexColor("#E5E7EB")
+    grid = colors.HexColor("#CBD5E1")
+
+    title_style = ParagraphStyle(
+        "Title",
+        fontName=font_bold,
+        fontSize=14,
+        leading=18,
+        alignment=2,
+        textColor=primary,
     )
-    objects.append(
-        b"4 0 obj\n<< /Length " + str(len(content_stream)).encode("ascii") + b" >>\nstream\n" + content_stream + b"\nendstream\nendobj\n"
+    label_style = ParagraphStyle(
+        "Label",
+        fontName=font_bold,
+        fontSize=11,
+        leading=14,
+        alignment=2,
+        textColor=primary,
     )
-    objects.append(b"5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n")
+    value_style = ParagraphStyle(
+        "Value",
+        fontName=font_name,
+        fontSize=11,
+        leading=14,
+        alignment=2,
+    )
+    small_style = ParagraphStyle(
+        "Small",
+        fontName=font_name,
+        fontSize=9,
+        leading=12,
+        alignment=2,
+    )
 
-    xref_positions = []
-    pdf = b"%PDF-1.4\n"
-    for obj in objects:
-        xref_positions.append(len(pdf))
-        pdf += obj
+    def _kv_row(label, value):
+        return [
+            Paragraph(_rtl(value), value_style),
+            Paragraph(_rtl(label), label_style),
+        ]
 
-    xref_start = len(pdf)
-    pdf += b"xref\n0 %d\n" % (len(objects) + 1)
-    pdf += b"0000000000 65535 f \n"
-    for pos in xref_positions:
-        pdf += f"{pos:010d} 00000 n \n".encode("ascii")
+    def _make_table(rows, doc_width):
+        table = Table(rows, colWidths=[doc_width * 0.6, doc_width * 0.4])
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (1, 0), (1, -1), light_gray),
+                    ("TEXTCOLOR", (1, 0), (1, -1), primary),
+                    ("GRID", (0, 0), (-1, -1), 0.5, grid),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 6),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ]
+            )
+        )
+        return table
 
-    pdf += b"trailer\n<< /Size %d /Root 1 0 R >>\n" % (len(objects) + 1)
-    pdf += b"startxref\n" + str(xref_start).encode("ascii") + b"\n%%EOF"
-    return pdf
+    def _get_display_title():
+        titles = {
+            Report.ReportType.CLINICAL_CASE: "تقرير حالة طالب",
+            Report.ReportType.SUPERVISOR_CASE_EVALUATION: "تقرير حالة مشرف",
+            Report.ReportType.STUDENT_PERFORMANCE: "تقرير أداء طالب",
+            Report.ReportType.COURSE_PERFORMANCE: "تقرير أداء مقرر",
+            Report.ReportType.UNIVERSITY_STUDENTS: "تقرير طلبة الجامعة",
+            Report.ReportType.UNIVERSITY_SUPERVISORS: "تقرير مشرفي الجامعة",
+            Report.ReportType.UNIVERSITY_ARCHIVE: "تقرير أرشيف الجامعة",
+        }
+        return report.title or titles.get(report.report_type, "تقرير MediSmile")
+
+    def _resolve_logo_paths():
+        university_logo = None
+        uni = report.university
+        if uni and getattr(uni, "logo", None):
+            try:
+                candidate = Path(uni.logo.path)
+                if candidate.exists():
+                    university_logo = str(candidate)
+            except Exception:
+                university_logo = None
+
+        medismile_logo = _resolve_path(getattr(settings, "REPORTS_MEDISMILE_LOGO", None))
+        return university_logo, str(medismile_logo) if medismile_logo else None
+
+    def _draw_header_footer(canvas, doc):
+        canvas.saveState()
+        width, height = A4
+        uni_logo, ms_logo = _resolve_logo_paths()
+        logo_size = 18 * mm
+        header_top = height - 15 * mm
+        if uni_logo:
+            canvas.drawImage(
+                uni_logo,
+                doc.leftMargin,
+                header_top - logo_size,
+                width=logo_size,
+                height=logo_size,
+                preserveAspectRatio=True,
+                mask="auto",
+            )
+        if ms_logo:
+            canvas.drawImage(
+                ms_logo,
+                width - doc.rightMargin - logo_size,
+                header_top - logo_size,
+                width=logo_size,
+                height=logo_size,
+                preserveAspectRatio=True,
+                mask="auto",
+            )
+
+        university_name = report.university.name if report.university_id else ""
+        faculty_name = _extract_value(("faculty_name", "college"), content, snapshot)
+        department_name = _extract_value(("department", "department_name"), content, snapshot)
+        title = _get_display_title()
+
+        center_y = height - 22 * mm
+        canvas.setFont(font_bold, 12)
+        for line in [university_name, faculty_name, department_name, title]:
+            if not line:
+                continue
+            canvas.drawCentredString(width / 2, center_y, _rtl(line))
+            center_y -= 5 * mm
+
+        canvas.setStrokeColor(primary)
+        canvas.setLineWidth(0.5)
+        canvas.line(doc.leftMargin, height - 42 * mm, width - doc.rightMargin, height - 42 * mm)
+
+        academic_year = _extract_value(("academic_year",), content, snapshot)
+        if not academic_year:
+            year = timezone.now().year
+            academic_year = f"{year}/{year + 1}"
+
+        footer_y = 12 * mm
+        canvas.setStrokeColor(grid)
+        canvas.setLineWidth(0.3)
+        canvas.line(doc.leftMargin, footer_y + 8, width - doc.rightMargin, footer_y + 8)
+        canvas.setFont(font_name, 9)
+        canvas.drawString(doc.leftMargin, footer_y, "MediSmile")
+        canvas.drawCentredString(width / 2, footer_y, _rtl(academic_year))
+        canvas.drawRightString(width - doc.rightMargin, footer_y, _rtl(f"صفحة {canvas.getPageNumber()}"))
+        canvas.setFont(font_name, 8)
+        footer_statement = f"هذا التقرير أُعد لأغراض أكاديمية من الجامعة {university_name}"
+        canvas.drawCentredString(width / 2, footer_y - 10, _rtl(footer_statement))
+        canvas.restoreState()
+
+    def _extract_ratings(item):
+        case_rating = _extract_value(("case_rating", "case_score", "case_evaluation"), item, content, snapshot)
+        student_rating = _extract_value(("student_rating", "student_score", "student_evaluation"), item, content, snapshot)
+        supervisor_rating = _extract_value(("supervisor_rating", "supervisor_score", "supervisor_evaluation"), item, content, snapshot)
+        if case_rating is None:
+            case_rating = report.score
+        return case_rating, student_rating, supervisor_rating
+
+    def _build_student_case_rows(case, student_profile, item):
+        student_name = _extract_value(("student_name", "student_full_name"), item, content, snapshot)
+        if not student_name and case and case.student_id:
+            student_name = case.student.get_full_name() or case.student.username
+        if not student_name and report.student_id:
+            student_name = report.student.get_full_name() or report.student.username
+
+        rows = [
+            _kv_row("اسم الطالب", student_name),
+            _kv_row("الرقم الجامعي", getattr(student_profile, "student_id", None)),
+            _kv_row("التخصص", getattr(student_profile, "specialization", None)),
+            _kv_row("المرحلة الدراسية", getattr(student_profile, "year_of_study", None)),
+            _kv_row("عنوان الحالة", _extract_value(("case_title", "title"), item) or getattr(case, "title", None) or report.title),
+            _kv_row("وصف الحالة", _extract_value(("case_description", "description"), item, content, snapshot) or getattr(case, "description", None) or report.description),
+            _kv_row("الإجراءات المتخذة", _extract_value(("actions_taken", "procedures", "actions"), item, content, snapshot)),
+            _kv_row("تاريخ الإدخال", _format_date(getattr(case, "created_at", None) or report.created_at)),
+            _kv_row("ملاحظات المشرف", _extract_value(("supervisor_notes", "notes"), item, content, snapshot) or report.review_notes),
+        ]
+
+        case_rating, student_rating, supervisor_rating = _extract_ratings(item)
+        rows.extend(
+            [
+                _kv_row("تقييم الحالة", case_rating),
+                _kv_row("تقييم الطالب", student_rating),
+                _kv_row("تقييم المشرف", supervisor_rating),
+            ]
+        )
+        return rows
+
+    def _build_supervisor_case_rows(supervisor_profile, item):
+        supervisor_name = _extract_value(("supervisor_name", "supervisor_full_name"), item, content, snapshot)
+        supervisor = _resolve_supervisor(report, None, item)
+        if not supervisor_name and supervisor:
+            supervisor_name = supervisor.get_full_name() or supervisor.username
+
+        rows = [
+            _kv_row("اسم المشرف", supervisor_name),
+            _kv_row("الدرجة العلمية", getattr(supervisor_profile, "position", None)),
+            _kv_row("القسم", getattr(supervisor_profile, "department", None)),
+            _kv_row("نوع الحالة", _extract_value(("case_type",), item, content, snapshot) or "أكاديمية"),
+            _kv_row("تفاصيل الحالة", _extract_value(("case_details", "details"), item, content, snapshot) or report.description),
+            _kv_row("التوصيات", _extract_value(("recommendations",), item, content, snapshot) or report.review_notes),
+            _kv_row("تاريخ التقرير", _format_date(report.created_at)),
+        ]
+        case_rating, student_rating, supervisor_rating = _extract_ratings(item)
+        rows.extend(
+            [
+                _kv_row("تقييم الحالة", case_rating),
+                _kv_row("تقييم الطالب", student_rating),
+                _kv_row("تقييم المشرف", supervisor_rating),
+            ]
+        )
+        return rows
+
+    def _build_patient_case_rows(case, patient_profile, item):
+        patient_name = _extract_value(("patient_name",), item, content, snapshot)
+        mask_name = _extract_value(("mask_patient_name", "patient_name_masked", "anonymize_patient"), item, content, snapshot)
+        if mask_name:
+            patient_name = "مخفي"
+        if not patient_name and case and case.patient_id:
+            patient = case.patient
+            patient_name = patient.get_full_name() or patient.username
+
+        rows = [
+            _kv_row("رقم الحالة", getattr(case, "id", None) or report.target_id),
+            _kv_row("اسم المريض", patient_name),
+            _kv_row("العمر", _calc_age(getattr(patient_profile, "date_of_birth", None))),
+            _kv_row("الجنس", getattr(patient_profile, "gender", None)),
+            _kv_row("التشخيص", _extract_value(("diagnosis",), item, content, snapshot) or getattr(case, "title", None)),
+            _kv_row("الخطة العلاجية", _extract_value(("treatment_plan",), item, content, snapshot)),
+            _kv_row("المتابعة", _extract_value(("follow_up", "followup"), item, content, snapshot)),
+            _kv_row("ملاحظات طبية", _extract_value(("medical_notes", "notes"), item, content, snapshot) or report.description),
+            _kv_row("تاريخ التقرير", _format_date(report.created_at)),
+        ]
+        case_rating, student_rating, supervisor_rating = _extract_ratings(item)
+        rows.extend(
+            [
+                _kv_row("تقييم الحالة", case_rating),
+                _kv_row("تقييم الطالب", student_rating),
+                _kv_row("تقييم المشرف", supervisor_rating),
+            ]
+        )
+        return rows
+
+    def _build_student_performance_rows(student_profile, item):
+        student_name = _extract_value(("student_name", "student_full_name"), item, content, snapshot)
+        student = _resolve_student(report, None, item)
+        if not student_name and student:
+            student_name = student.get_full_name() or student.username
+
+        rows = [
+            _kv_row("اسم الطالب", student_name),
+            _kv_row("الرقم الجامعي", getattr(student_profile, "student_id", None)),
+            _kv_row("التخصص", getattr(student_profile, "specialization", None)),
+            _kv_row("المرحلة الدراسية", getattr(student_profile, "year_of_study", None)),
+            _kv_row("عدد الحالات", _extract_value(("cases_count", "total_cases"), item, content, snapshot)),
+            _kv_row("متوسط تقييم الحالات", _extract_value(("case_avg", "cases_avg"), item, content, snapshot)),
+            _kv_row("متوسط تقييم الطالب", _extract_value(("student_avg", "student_rating"), item, content, snapshot)),
+            _kv_row("ملاحظات المشرف", _extract_value(("notes", "supervisor_notes"), item, content, snapshot) or report.review_notes),
+        ]
+        return rows
+
+    def _build_generic_rows():
+        return [
+            _kv_row("محتوى التقرير", _render_report_text(report)),
+        ]
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=22 * mm,
+        rightMargin=22 * mm,
+        topMargin=48 * mm,
+        bottomMargin=28 * mm,
+    )
+
+    story = []
+    items_key, items = _extract_report_items(report)
+    total_items = len(items) if items else 1
+
+    def _append_section(title, rows, is_last):
+        story.append(Paragraph(_rtl(title), title_style))
+        story.append(Spacer(1, 8))
+        story.append(_make_table(rows, doc.width))
+        if not is_last:
+            story.append(PageBreak())
+
+    if items:
+        for idx, item in enumerate(items):
+            case = _resolve_case(report, item)
+            student = _resolve_student(report, case, item)
+            supervisor = _resolve_supervisor(report, case, item)
+            patient = _resolve_patient(case, item)
+            student_profile = _get_profile(StudentProfile, student)
+            supervisor_profile = _get_profile(SupervisorProfile, supervisor)
+            patient_profile = _get_profile(PatientProfile, patient)
+
+            if items_key == "students":
+                rows = _build_student_performance_rows(student_profile, item)
+                title = f"تقرير أداء طالب - {idx + 1}"
+            elif items_key == "supervisors":
+                rows = _build_supervisor_case_rows(supervisor_profile, item)
+                title = f"تقرير حالة مشرف - {idx + 1}"
+            else:
+                if report.report_type == Report.ReportType.CLINICAL_CASE:
+                    rows = _build_student_case_rows(case, student_profile, item)
+                    title = f"تقرير حالة طالب - {idx + 1}"
+                elif report.report_type == Report.ReportType.SUPERVISOR_CASE_EVALUATION:
+                    rows = _build_supervisor_case_rows(supervisor_profile, item)
+                    title = f"تقرير حالة مشرف - {idx + 1}"
+                else:
+                    rows = _build_patient_case_rows(case, patient_profile, item)
+                    title = f"تقرير حالة مريض - {idx + 1}"
+
+            _append_section(title, rows, idx == total_items - 1)
+    else:
+        case = _resolve_case(report, None)
+        student = _resolve_student(report, case, None)
+        supervisor = _resolve_supervisor(report, case, None)
+        patient = _resolve_patient(case, None)
+        student_profile = _get_profile(StudentProfile, student)
+        supervisor_profile = _get_profile(SupervisorProfile, supervisor)
+        patient_profile = _get_profile(PatientProfile, patient)
+
+        if report.report_type == Report.ReportType.CLINICAL_CASE:
+            rows = _build_student_case_rows(case, student_profile, None)
+            title = "تقرير حالة طالب"
+        elif report.report_type == Report.ReportType.SUPERVISOR_CASE_EVALUATION:
+            rows = _build_supervisor_case_rows(supervisor_profile, None)
+            title = "تقرير حالة مشرف"
+        elif report.target_type == Report.TargetType.CASE:
+            rows = _build_patient_case_rows(case, patient_profile, None)
+            title = "تقرير حالة مريض"
+        elif report.target_type == Report.TargetType.STUDENT:
+            rows = _build_student_performance_rows(student_profile, None)
+            title = "تقرير أداء طالب"
+        else:
+            rows = _build_generic_rows()
+            title = _get_display_title()
+
+        _append_section(title, rows, True)
+
+    doc.build(story, onFirstPage=_draw_header_footer, onLaterPages=_draw_header_footer)
+    return buffer.getvalue()
 
 
 def export_report(*, actor, report: Report, fmt: str) -> str:
