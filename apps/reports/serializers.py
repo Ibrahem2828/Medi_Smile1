@@ -119,4 +119,4 @@ class ReportRejectSerializer(serializers.Serializer):
 
 
 class ReportExportSerializer(serializers.Serializer):
-    format = serializers.ChoiceField(choices=[("pdf", "PDF"), ("csv", "CSV")])
+    format = serializers.ChoiceField(choices=[("pdf", "PDF"), ("excel", "Excel"), ("csv", "CSV")])

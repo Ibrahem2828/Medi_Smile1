@@ -389,6 +389,12 @@ def export_report(*, actor, report: Report, fmt: str) -> str:
     if admin_university_id and report.university_id != admin_university_id:
         raise PermissionDenied("You cannot export reports outside your university.")
 
+    fmt = (fmt or "").lower()
+    if fmt == "excel":
+        fmt = "csv"
+    if fmt not in {"csv", "pdf"}:
+        raise ValidationError({"format": "Invalid export format. Use pdf, excel, or csv."})
+
     exports_dir = Path(settings.MEDIA_ROOT) / "exports"
     exports_dir.mkdir(parents=True, exist_ok=True)
 

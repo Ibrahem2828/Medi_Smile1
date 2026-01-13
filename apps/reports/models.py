@@ -335,6 +335,7 @@ class Report(models.Model):
         """
         Reports are immutable after approval/lock EXCEPT:
         - is_active
+        - file_url (export output)
         - review_notes / approved_by / approved_at / locked_at
         """
         if not self._state.adding:
@@ -408,6 +409,7 @@ class Report(models.Model):
 
                 allowed_mutable = {
                     "is_active",
+                    "file_url",
                     "review_notes",
                     "approved_by_id",
                     "approved_at",
