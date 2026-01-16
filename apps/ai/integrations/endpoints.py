@@ -62,7 +62,7 @@ def _build_configurations() -> AIEnginesConfig:
             key="vision",
             label="vision (YOLO)",
             setting_names=["AI_VISION_URL", "AI_YOLO_URL"],
-            default_path="analyze",
+            default_path="vision/analyze",
         ),
         _EndpointConfig(
             key="fusion",

@@ -1,0 +1,73 @@
+{
+  "space_name": "ibrahim28/medismile-vision-ai",
+  "base_url": "https://ibrahim28-medismile-vision-ai.hf.space",
+  "analyze_endpoint": {
+    "path": "/vision/analyze",
+    "method": "POST",
+    "content_type": "multipart/form-data",
+    "body": {
+      "image_file": "binary image file (png/jpg/jpeg)"
+    }
+  },
+  "expected_response": {
+    "schema_version": "1.x",
+    "analysis_mode": "tooth_level | image_fallback",
+    "decision_summary": {
+      "confirmed": "int",
+      "suspected": "int",
+      "abnormal_unspecified": "int",
+      "uncertain": "int",
+      "normal": "int"
+    },
+    "surface_summary": {
+      "enabled": "bool",
+      "evaluated_teeth": "int",
+      "label_counts": {
+        "gingivitis_like": "int",
+        "plaque_like": "int",
+        "healthy_like": "int",
+        "unclear_surface": "int"
+      }
+    },
+    "thresholds": "object (gate/lesion/assign/surface)",
+    "models": "object (teeth_detector/abnormal_gate/caries_specialist/surface_classifier/multiclass_suggester)",
+    "fdi_summary": "object (orientation/anchors/consistency/... )",
+    "teeth": [
+      {
+        "tooth_id": "FDI code",
+        "tooth_name": "Arabic name",
+        "bbox": "[x1,y1,x2,y2]",
+        "tooth_conf": "float",
+        "gate_pred": "normal|abnormal|unknown",
+        "gate_conf": "float",
+        "surface_assessment": {
+          "pred": "gingivitis_like|plaque_like|healthy_like|unclear_surface",
+          "conf": "float",
+          "status": "suspected|healthy_like|uncertain",
+          "note": "string"
+        },
+        "findings": [
+          {
+            "label": "caries|cavity|...",
+            "confidence": "float",
+            "bbox": "[x1,y1,x2,y2]"
+          }
+        ],
+        "fusion_status": "CONFIRMED|SUSPECTED|ABNORMAL_UNSPECIFIED|NORMAL|UNCERTAIN",
+        "combined_confidence": "float"
+      }
+    ],
+    "unassigned_lesions": [
+      {
+        "label": "string",
+        "confidence": "float",
+        "bbox": "[x1,y1,x2,y2]"
+      }
+    ]
+  },
+  "notes": [
+    "Use POST multipart with key 'image_file'.",
+    "Backend returns Arabic text; UI should render directly without decoding.",
+    "For local testing, use HOST=0.0.0.0 PORT=8090; in Space, base_url above is used."
+  ]
+}

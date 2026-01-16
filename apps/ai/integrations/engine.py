@@ -4,7 +4,9 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+from urllib.parse import urlparse
 
 import requests
 
@@ -44,6 +46,71 @@ class AIEnginesConfig:
     symptoms: AIEngineConfig
     vision: AIEngineConfig
     fusion: AIEngineConfig
+
+
+@dataclass(frozen=True)
+class _ImageUpload:
+    filename: str
+    content: bytes
+    content_type: str
+    source_url: str
+
+
+def _download_first_image(image_urls: List[str], timeout: int) -> _ImageUpload:
+    """
+    Download the first reachable image so we can forward it as multipart/form-data
+    to the vision model, which expects a binary file (see backend_endpoint.json).
+    """
+    errors: List[str] = []
+    for url in image_urls:
+        try:
+            response = requests.get(url, timeout=timeout)
+        except requests.RequestException as exc:
+            errors.append(f"{url}: {exc}")
+            continue
+
+        if response.status_code >= 400:
+            errors.append(f"{url}: HTTP {response.status_code}")
+            continue
+
+        filename = Path(urlparse(url).path).name or "image_upload"
+        content_type = (response.headers.get("content-type") or "").split(";")[0].strip() or "application/octet-stream"
+
+        return _ImageUpload(
+            filename=filename,
+            content=response.content,
+            content_type=content_type,
+            source_url=url,
+        )
+
+    raise AIEngineError(f"Vision model: unable to fetch image from provided URLs ({'; '.join(errors)})")
+
+
+def _post_multipart(
+    *,
+    config: AIEngineConfig,
+    path: Optional[str],
+    files: Dict[str, Any],
+    data: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    try:
+        full_url = config.build_url(path)
+        resp = requests.post(full_url, files=files, data=data or {}, timeout=config.timeout_seconds)
+    except requests.RequestException as exc:
+        raise AIEngineError(f"{config.base_url}: connection failed ({exc})") from exc
+
+    if resp.status_code >= 400:
+        raise AIEngineError(f"{full_url}: HTTP {resp.status_code} {resp.text}")
+
+    try:
+        payload = resp.json()
+    except ValueError as exc:
+        raise AIEngineError(f"{config.base_url}: invalid JSON response") from exc
+
+    if not isinstance(payload, dict):
+        raise AIEngineError(f"{config.base_url}: unexpected payload type")
+
+    return payload
 
 
 def _post_json(*, config: AIEngineConfig, path: Optional[str], payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -120,10 +187,18 @@ def call_vision_model(
     case_id: Optional[str] = None,
     audit_hook: AuditHook = None,
 ) -> Dict[str, Any]:
-    payload = {"image_urls": image_urls or [], "case_id": case_id}
+    if not image_urls:
+        raise AIEngineError("Vision model requires at least one image URL.")
+
+    upload = _download_first_image(image_urls, config.timeout_seconds)
     started = time.monotonic()
     try:
-        data = _post_json(config=config, path=None, payload=payload)
+        data = _post_multipart(
+            config=config,
+            path=None,
+            files={"image_file": (upload.filename, upload.content, upload.content_type)},
+            data={"case_id": case_id or ""},
+        )
         _safe_audit(
             audit_hook,
             "ai.call.vision.success",
@@ -133,6 +208,7 @@ def call_vision_model(
                 "duration_ms": int((time.monotonic() - started) * 1000),
                 "case_id": case_id,
                 "images_count": len(image_urls or []),
+                "image_source": upload.source_url,
             },
         )
         return data
@@ -146,6 +222,7 @@ def call_vision_model(
                 "duration_ms": int((time.monotonic() - started) * 1000),
                 "case_id": case_id,
                 "images_count": len(image_urls or []),
+                "image_source": upload.source_url,
                 "error": str(exc),
             },
         )
