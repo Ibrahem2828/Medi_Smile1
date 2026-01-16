@@ -90,40 +90,52 @@ class CaseListCreateView(generics.ListCreateAPIView):
     http_method_names = ["get", "post"]
 
     def get_queryset(self):
-        user = self.request.user
-        role_name = getattr(getattr(user, "role", None), "name", None)
-        if not role_name:
-            logger.warning("cases.list: user %s has no role; returning empty queryset", getattr(user, "id", None))
-            return Case.objects.none()
-
-        if role_name == Role.TECH_SUPPORT:
-            return Case.objects.all()
-
-        if role_name == Role.PATIENT:
-            return Case.objects.filter(patient=user)
-
-        if role_name == Role.STUDENT:
-            student_university_id = getattr(getattr(user, "studentprofile_profile", None), "university_id", None)
-            return Case.objects.filter(
-                models.Q(student=user) | models.Q(is_public=True, university_id=student_university_id)
-            )
-
-        if role_name == Role.SUPERVISOR:
-            return Case.objects.filter(supervisor=user)
-
-        if role_name == Role.UNIVERSITY_ADMIN:
-            admin_profile = getattr(user, "universityadminprofile_profile", None)
-            if not admin_profile or not admin_profile.university_id:
-                # Missing profile/university should not crash; return no cases instead of 500/502.
-                logger.warning(
-                    "cases.list: university admin missing profile/university (user=%s, profile=%s)",
-                    getattr(user, "id", None),
-                    bool(admin_profile),
-                )
+        try:
+            user = self.request.user
+            role_name = getattr(getattr(user, "role", None), "name", None)
+            if not role_name:
+                logger.warning("cases.list: user %s has no role; returning empty queryset", getattr(user, "id", None))
                 return Case.objects.none()
-            return Case.objects.filter(university_id=admin_profile.university_id)
 
-        return Case.objects.none()
+            # Optional query param to scope cases by university (used by Admin / Tech Support)
+            requested_university_id = self.request.query_params.get("university_id")
+
+            if role_name == Role.TECH_SUPPORT:
+                qs = Case.objects.all()
+                if requested_university_id:
+                    qs = qs.filter(university_id=requested_university_id)
+                return qs
+
+            if role_name == Role.PATIENT:
+                return Case.objects.filter(patient=user)
+
+            if role_name == Role.STUDENT:
+                student_university_id = getattr(getattr(user, "studentprofile_profile", None), "university_id", None)
+                return Case.objects.filter(
+                    models.Q(student=user) | models.Q(is_public=True, university_id=student_university_id)
+                )
+
+            if role_name == Role.SUPERVISOR:
+                return Case.objects.filter(supervisor=user)
+
+            if role_name == Role.UNIVERSITY_ADMIN:
+                admin_profile = getattr(user, "universityadminprofile_profile", None)
+                admin_univ_id = getattr(admin_profile, "university_id", None)
+                university_id = requested_university_id or admin_univ_id
+                if not university_id:
+                    # Missing profile/university should not crash; return no cases instead of 500/502.
+                    logger.warning(
+                        "cases.list: university admin missing profile/university (user=%s, profile=%s)",
+                        getattr(user, "id", None),
+                        bool(admin_profile),
+                    )
+                    return Case.objects.none()
+                return Case.objects.filter(university_id=university_id)
+
+            return Case.objects.none()
+        except Exception:
+            logger.exception("cases.list: unexpected failure (user=%s)", getattr(getattr(self, "request", None), "user", None))
+            return Case.objects.none()
 
     def get_serializer_class(self):
         if self.request.method == "POST":
