@@ -108,7 +108,11 @@ class CaseListCreateView(generics.ListCreateAPIView):
             return Case.objects.filter(supervisor=user)
 
         if user.role.name == Role.UNIVERSITY_ADMIN:
-            return Case.objects.filter(university=user.universityadminprofile_profile.university)
+            admin_profile = getattr(user, "universityadminprofile_profile", None)
+            if not admin_profile or not admin_profile.university_id:
+                # Missing profile/university should not crash; return no cases instead of 500/502.
+                return Case.objects.none()
+            return Case.objects.filter(university_id=admin_profile.university_id)
 
         return Case.objects.none()
 
