@@ -91,26 +91,35 @@ class CaseListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         user = self.request.user
+        role_name = getattr(getattr(user, "role", None), "name", None)
+        if not role_name:
+            logger.warning("cases.list: user %s has no role; returning empty queryset", getattr(user, "id", None))
+            return Case.objects.none()
 
-        if user.role.name == Role.TECH_SUPPORT:
+        if role_name == Role.TECH_SUPPORT:
             return Case.objects.all()
 
-        if user.role.name == Role.PATIENT:
+        if role_name == Role.PATIENT:
             return Case.objects.filter(patient=user)
 
-        if user.role.name == Role.STUDENT:
+        if role_name == Role.STUDENT:
             student_university_id = getattr(getattr(user, "studentprofile_profile", None), "university_id", None)
             return Case.objects.filter(
                 models.Q(student=user) | models.Q(is_public=True, university_id=student_university_id)
             )
 
-        if user.role.name == Role.SUPERVISOR:
+        if role_name == Role.SUPERVISOR:
             return Case.objects.filter(supervisor=user)
 
-        if user.role.name == Role.UNIVERSITY_ADMIN:
+        if role_name == Role.UNIVERSITY_ADMIN:
             admin_profile = getattr(user, "universityadminprofile_profile", None)
             if not admin_profile or not admin_profile.university_id:
                 # Missing profile/university should not crash; return no cases instead of 500/502.
+                logger.warning(
+                    "cases.list: university admin missing profile/university (user=%s, profile=%s)",
+                    getattr(user, "id", None),
+                    bool(admin_profile),
+                )
                 return Case.objects.none()
             return Case.objects.filter(university_id=admin_profile.university_id)
 
