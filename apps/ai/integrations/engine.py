@@ -38,7 +38,16 @@ class AIEngineConfig:
         normalized_path = path_fragment.lstrip("/")
         if base.endswith(f"/{normalized_path}"):
             return base
-        return f"{base}/{normalized_path}"
+
+        base_segments = [segment for segment in urlparse(base).path.split("/") if segment]
+        path_segments = [segment for segment in normalized_path.split("/") if segment]
+        overlap = 0
+        for size in range(1, min(len(base_segments), len(path_segments)) + 1):
+            if base_segments[-size:] == path_segments[:size]:
+                overlap = size
+
+        remaining_path = "/".join(path_segments[overlap:])
+        return base if not remaining_path else f"{base}/{remaining_path}"
 
 
 @dataclass(frozen=True)

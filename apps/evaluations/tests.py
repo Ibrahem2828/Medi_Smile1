@@ -29,6 +29,7 @@ class EvaluationAPITestCase(APITestCase):
 
         self.student = User.objects.create_user(
             username="student",
+            email="student@example.test",
             password="pass",
             role=self.student_role,
         )
@@ -36,6 +37,7 @@ class EvaluationAPITestCase(APITestCase):
 
         self.supervisor = User.objects.create_user(
             username="supervisor",
+            email="supervisor@example.test",
             password="pass",
             role=self.supervisor_role,
         )
@@ -43,6 +45,7 @@ class EvaluationAPITestCase(APITestCase):
 
         self.admin = User.objects.create_user(
             username="admin",
+            email="admin@example.test",
             password="pass",
             role=self.admin_role,
         )
@@ -50,10 +53,13 @@ class EvaluationAPITestCase(APITestCase):
 
         self.patient = User.objects.create_user(
             username="patient",
+            email="patient@example.test",
             password="pass",
             role=self.patient_role,
         )
-        PatientProfile.objects.create(user=self.patient, university=self.university)
+        patient_profile = PatientProfile.objects.get(user=self.patient)
+        patient_profile.university = self.university
+        patient_profile.save(update_fields=["university"])
 
         self.case = Case.objects.create(
             title="Case",
@@ -62,6 +68,7 @@ class EvaluationAPITestCase(APITestCase):
             student=self.student,
             supervisor=self.supervisor,
             university=self.university,
+            status=Case.Status.ASSIGNED,
         )
 
         self.appointment = Appointment.objects.create(
@@ -70,7 +77,7 @@ class EvaluationAPITestCase(APITestCase):
             student=self.student,
             supervisor=self.supervisor,
             created_by=self.student,
-            appointment_date=timezone.now(),
+            scheduled_at=timezone.now(),
         )
 
     def test_patient_can_create_appointment_evaluation(self):

@@ -107,6 +107,7 @@ class ContentCreateSerializer(serializers.ModelSerializer):
             "is_public",
             "is_featured",
         ]
+        extra_kwargs = {"description": {"required": False}}
 
     def validate(self, attrs):
         content_value = attrs.pop("content", None)

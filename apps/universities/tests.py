@@ -9,6 +9,14 @@ from apps.universities.models import University
 
 class UniversitiesBaseTestCase(APITestCase):
     @classmethod
+    def _create_user_with_university(cls, *, email, username, password, role, university):
+        user = User(email=email, username=username, role=role)
+        user._desired_university_id = university.id
+        user.set_password(password)
+        user.save()
+        return user
+
+    @classmethod
     def setUpTestData(cls):
         cls.tech_role = Role.objects.create(name=Role.TECH_SUPPORT)
         cls.admin_role = Role.objects.create(name=Role.UNIVERSITY_ADMIN)
@@ -27,11 +35,12 @@ class UniversitiesBaseTestCase(APITestCase):
             country="Test Country",
         )
 
-        cls.admin_user = User.objects.create_user(
+        cls.admin_user = cls._create_user_with_university(
             email="admin@test.com",
             username="admin",
             password="Admin12345!",
             role=cls.admin_role,
+            university=cls.university,
         )
 
         # Attach admin to university via profile

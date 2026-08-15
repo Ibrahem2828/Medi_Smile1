@@ -9,6 +9,14 @@ from apps.audit.models import AuditLog, AuditAction
 
 
 class AuditLogAPITestCase(APITestCase):
+    @staticmethod
+    def _create_user_with_university(*, role, university, **fields):
+        user = User(role=role, **fields)
+        user._desired_university_id = university.id
+        user.set_password(fields.pop("password"))
+        user.save()
+        return user
+
     def setUp(self):
         # Roles (avoid duplicates if seeded)
         self.university_admin_role, _ = Role.objects.get_or_create(name=Role.UNIVERSITY_ADMIN)
@@ -17,7 +25,7 @@ class AuditLogAPITestCase(APITestCase):
 
         self.university = University.objects.create(name="Audit Test University")
 
-        self.university_admin = User.objects.create_user(
+        self.university_admin = self._create_user_with_university(
             email="admin@test.com",
             username="admin",
             password="password123",
@@ -32,7 +40,7 @@ class AuditLogAPITestCase(APITestCase):
             role=self.tech_support_role,
         )
 
-        self.student = User.objects.create_user(
+        self.student = self._create_user_with_university(
             email="student@test.com",
             username="student",
             password="password123",

@@ -102,10 +102,11 @@ def _ticket_queryset_for_user(user):
         uni_ids = _get_user_university_ids(user)
 
         qs = qs.filter(
+            Q(created_by__patientprofile_profile__university_id__in=uni_ids)
+            |
             Q(created_by__studentprofile_profile__university_id__in=uni_ids)
             | Q(created_by__supervisorprofile_profile__university_id__in=uni_ids)
             | Q(created_by__universityadminprofile_profile__university_id__in=uni_ids)
-            | Q(created_by__universities__id__in=uni_ids)
         ).distinct()
         return qs
 

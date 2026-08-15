@@ -1,5 +1,6 @@
 # apps/messaging/consumers.py
 import json
+import logging
 
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
@@ -16,6 +17,7 @@ from .permissions import (
 )
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 class ChatConsumer(AsyncWebsocketConsumer):
@@ -48,37 +50,62 @@ class ChatConsumer(AsyncWebsocketConsumer):
         await self.accept()
 
     async def disconnect(self, close_code):
-        await self.channel_layer.group_discard(
-            self.room_group_name,
-            self.channel_name,
-        )
-
-    async def receive(self, text_data):
-        data = json.loads(text_data)
-        content = data.get("content")
-
-        if not content:
+        room_group_name = getattr(self, "room_group_name", None)
+        if not room_group_name:
             return
 
-        can_send = await self.user_can_send_message()
+        try:
+            await self.channel_layer.group_discard(room_group_name, self.channel_name)
+        except Exception:
+            logger.exception("WebSocket group discard failed")
+
+    async def receive(self, text_data):
+        try:
+            data = json.loads(text_data)
+        except (TypeError, json.JSONDecodeError):
+            logger.warning("Rejected malformed WebSocket message")
+            return
+
+        if not isinstance(data, dict):
+            logger.warning("Rejected non-object WebSocket message")
+            return
+
+        content = data.get("content")
+
+        if not isinstance(content, str) or not content.strip():
+            return
+
+        try:
+            can_send = await self.user_can_send_message()
+        except Exception:
+            logger.exception("WebSocket message authorization failed")
+            return
+
         if not can_send:
             await self._log_ws_event("messaging.ws.send_denied", "User not allowed to send message")
             return
 
-        message = await self.create_message(content)
+        try:
+            message = await self.create_message(content)
+        except Exception:
+            logger.exception("WebSocket message creation failed")
+            return
 
-        await self.channel_layer.group_send(
-            self.room_group_name,
-            {
-                "type": "chat_message",
-                "message": {
-                    "id": str(message.id),
-                    "sender": self.user.email,
-                    "content": message.content,
-                    "sent_at": message.sent_at.isoformat(),
+        try:
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {
+                    "type": "chat_message",
+                    "message": {
+                        "id": str(message.id),
+                        "sender": self.user.email,
+                        "content": message.content,
+                        "sent_at": message.sent_at.isoformat(),
+                    },
                 },
-            },
-        )
+            )
+        except Exception:
+            logger.exception("WebSocket message broadcast failed")
 
     async def chat_message(self, event):
         await self.send(text_data=json.dumps(event["message"]))
@@ -183,11 +210,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
         except Exception:
             room = None
             university = None
-        log_audit_event(
-            user=self.user if getattr(self.user, "is_authenticated", False) else None,
-            university=university,
-            action=action,
-            description=description,
-            content_object=room,
-            metadata={"room_id": self.room_id},
-        )
+        try:
+            log_audit_event(
+                user=self.user if getattr(self.user, "is_authenticated", False) else None,
+                university=university,
+                action=action,
+                description=description,
+                content_object=room,
+                metadata={"room_id": self.room_id},
+            )
+        except Exception:
+            logger.exception("WebSocket audit logging failed")

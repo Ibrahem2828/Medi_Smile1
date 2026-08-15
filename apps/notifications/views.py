@@ -25,8 +25,8 @@ class NotificationListView(generics.ListAPIView):
     permission_classes = [MatrixPermission]
     permission_resource = "notifications.notification"
     permission_action = "view"
-    permission_ownership_checker = lambda user, obj: is_notification_recipient(user, obj)  # type: ignore
-    permission_scope_checker = lambda user, obj: is_same_university(user, obj)  # type: ignore
+    permission_ownership_checker = staticmethod(is_notification_recipient)
+    permission_scope_checker = staticmethod(is_same_university)
 
     def get_queryset(self):
         user = self.request.user
@@ -71,14 +71,11 @@ class NotificationDetailUpdateView(generics.RetrieveUpdateAPIView):
     permission_classes = [MatrixPermission]
     permission_resource = "notifications.notification"
     permission_action = "update"
-    permission_ownership_checker = lambda user, obj: is_notification_recipient(user, obj)  # type: ignore
-    permission_scope_checker = lambda user, obj: is_same_university(user, obj)  # type: ignore
+    permission_ownership_checker = staticmethod(is_notification_recipient)
+    permission_scope_checker = staticmethod(is_same_university)
 
     def get_object(self):
-        obj = super().get_object()
-        self.check_object_permissions(self.request, obj)
-
-        return obj
+        return super().get_object()
 
     def update(self, request, *args, **kwargs):
         response = super().update(request, *args, **kwargs)

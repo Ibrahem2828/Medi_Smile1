@@ -124,6 +124,10 @@ def ensure_profile_exists(sender, instance: User, **kwargs):
     if not profile_model:
         return
 
+    if role_name in {Role.STUDENT, Role.SUPERVISOR, Role.UNIVERSITY_ADMIN}:
+        if not getattr(instance, "_desired_university_id", None):
+            return
+
     try:
         profile_model.objects.get_or_create(user=instance)
     except ValidationError as exc:

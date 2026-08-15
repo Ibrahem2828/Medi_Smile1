@@ -3,6 +3,7 @@ import logging
 from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.permissions import SAFE_METHODS
 from rest_framework import serializers as drf_serializers
 
 from apps.accounts.models import Role
@@ -82,8 +83,12 @@ class AttachmentListCreateView(generics.ListCreateAPIView):
         return AttachmentSerializer
 
     def perform_create(self, serializer):
-        # DRF passes context (including request) during serializer init; avoid extra kwargs that break create().
-        serializer.save(context=self.get_serializer_context())
+        serializer.save()
+
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [IsAuthenticatedAndActive(), CanCreateAttachment()]
+        return [IsAuthenticatedAndActive()]
 
     def create(self, request, *args, **kwargs):
         try:
@@ -99,9 +104,9 @@ class AttachmentListCreateView(generics.ListCreateAPIView):
                 {
                     "status": "error",
                     "message": "حدث خطأ غير متوقع. يرجى المحاولة لاحقًا.",
-                    "errors": str(exc),
+                    "errors": None,
                 },
-                status=status.HTTP_400_BAD_REQUEST,
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
 
@@ -131,3 +136,12 @@ class AttachmentDetailView(generics.RetrieveDestroyAPIView):
     ]
 
     serializer_class = AttachmentSerializer
+
+    def get_permissions(self):
+        if self.request.method in SAFE_METHODS:
+            return [IsAuthenticatedAndActive(), CanViewAttachment()]
+        return [
+            IsAuthenticatedAndActive(),
+            CanViewAttachment(),
+            CanDeleteAttachment(),
+        ]

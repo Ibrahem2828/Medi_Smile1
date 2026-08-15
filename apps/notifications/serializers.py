@@ -175,9 +175,19 @@ class NotificationCreateSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         sender = resolve_request_user(request) if request else None
         if sender is None and sender_id:
-            sender = User.objects.get(id=sender_id)
+            try:
+                sender = User.objects.get(id=sender_id)
+            except User.DoesNotExist as exc:
+                raise serializers.ValidationError(
+                    {"sender_id": _("Invalid sender id.")}
+                ) from exc
 
-        recipient = User.objects.get(id=recipient_id)
+        try:
+            recipient = User.objects.get(id=recipient_id)
+        except User.DoesNotExist as exc:
+            raise serializers.ValidationError(
+                {"recipient_id": _("Invalid recipient id.")}
+            ) from exc
 
         notification = Notification(
             sender=sender,
@@ -187,11 +197,21 @@ class NotificationCreateSerializer(serializers.ModelSerializer):
 
         # Legacy appointment
         if appointment_id:
-            notification.appointment = Appointment.objects.get(id=appointment_id)
+            try:
+                notification.appointment = Appointment.objects.get(id=appointment_id)
+            except Appointment.DoesNotExist as exc:
+                raise serializers.ValidationError(
+                    {"appointment_id": _("Invalid appointment id.")}
+                ) from exc
 
         # Generic target
         if target_type and target_id:
-            content_type = ContentType.objects.get(model=target_type.lower())
+            try:
+                content_type = ContentType.objects.get(model=target_type.lower())
+            except ContentType.DoesNotExist as exc:
+                raise serializers.ValidationError(
+                    {"target_type": _("Invalid target type.")}
+                ) from exc
             notification.target_content_type = content_type
             notification.target_object_id = target_id
 

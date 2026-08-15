@@ -23,6 +23,7 @@ class CommunityAPITests(APITestCase):
 
         self.student = User.objects.create_user(
             username="student",
+            email="student@example.test",
             password="pass",
             role=student_role,
         )
@@ -30,12 +31,14 @@ class CommunityAPITests(APITestCase):
 
         self.patient = User.objects.create_user(
             username="patient",
+            email="patient@example.test",
             password="pass",
             role=patient_role,
         )
 
         self.supervisor = User.objects.create_user(
             username="supervisor",
+            email="supervisor@example.test",
             password="pass",
             role=supervisor_role,
         )
@@ -63,7 +66,7 @@ class CommunityAPITests(APITestCase):
         res = self.client.get(url)
 
         self.assertEqual(res.status_code, status.HTTP_200_OK)
-        self.assertEqual(res.data["stars"], 5)
+        self.assertEqual(res.data["data"]["stars"], 5)
 
     # ---------------------------------------------------------
     # Content Flow

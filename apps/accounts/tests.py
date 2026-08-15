@@ -23,6 +23,12 @@ class AccountsBaseTestCase(APITestCase):
         cls.patient_password = "Patient123!"
         cls.student_password = "Student123!"
 
+        cls.university = University.objects.create(
+            name="Accounts Test University",
+            city="City",
+            country="Country",
+        )
+
         cls.patient_user = User.objects.create_user(
             email="patient@test.com",
             username="patient1",
@@ -30,12 +36,14 @@ class AccountsBaseTestCase(APITestCase):
             role=cls.patient_role,
         )
 
-        cls.student_user = User.objects.create_user(
+        cls.student_user = User(
             email="student@test.com",
             username="student1",
-            password=cls.student_password,
             role=cls.student_role,
         )
+        cls.student_user._desired_university_id = cls.university.id
+        cls.student_user.set_password(cls.student_password)
+        cls.student_user.save()
 
 
 # ============================================================
@@ -49,7 +57,7 @@ class LoginTests(AccountsBaseTestCase):
             {"email": "patient@test.com", "password": self.patient_password},
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["role"], Role.PATIENT)
+        self.assertEqual(response.data["user"]["role"], Role.PATIENT)
 
     def test_patient_login_from_wrong_portal_fails(self):
         """
@@ -69,7 +77,7 @@ class LoginTests(AccountsBaseTestCase):
             {"email": "student@test.com", "password": self.student_password},
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["role"], Role.STUDENT)
+        self.assertEqual(response.data["user"]["role"], Role.STUDENT)
 
 
 # ============================================================
@@ -112,6 +120,19 @@ class SelfProfileAccessTests(AccountsBaseTestCase):
             response.status_code,
             (status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND),
         )
+
+    def test_missing_profile_returns_not_found(self):
+        orphan_student = User.objects.create_user(
+            email="orphan-student@test.com",
+            username="orphan_student",
+            password="Student123!",
+            role=self.student_role,
+        )
+        self.client.force_authenticate(orphan_student)
+
+        response = self.client.get(reverse("me-student"))
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
 
 # ============================================================
@@ -159,16 +180,14 @@ class CreationAndMeScopeTests(APITestCase):
         )
 
         # Users
-        self.university_admin = User.objects.create_user(
+        self.university_admin = User(
             email="admin@scope.test",
             username="admin_scope",
-            password="Admin123!",
             role=self.university_admin_role,
         )
-        # attach university to admin profile
-        profile = self.university_admin.universityadminprofile_profile
-        profile.university = self.university
-        profile.save(update_fields=["university"])
+        self.university_admin._desired_university_id = self.university.id
+        self.university_admin.set_password("Admin123!")
+        self.university_admin.save()
 
         self.patient = User.objects.create_user(
             email="patient@scope.test",

@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.exceptions import PermissionDenied
 from rest_framework_simplejwt.tokens import RefreshToken
+from django.http import Http404
 
 from apps.audit.services import log_audit_event
 from .models import (
@@ -329,39 +330,41 @@ class UniversityAdminSupervisorDetailView(_UniversityScopeMixin, generics.Retrie
 class _BaseMeView(generics.RetrieveUpdateAPIView):
     permission_classes = [IsAuthenticatedAndActive, IsSelfOnly]
 
+    def _get_profile_or_404(self, profile_model, *related_fields):
+        try:
+            return profile_model.objects.select_related(*related_fields).get(
+                user=self.request.user
+            )
+        except profile_model.DoesNotExist as exc:
+            raise Http404("Profile not found.") from exc
+
 
 class PatientMeView(_BaseMeView):
     serializer_class = PatientProfileSerializer
 
     def get_object(self):
-        return PatientProfile.objects.select_related("user", "university").get(user=self.request.user)
+        return self._get_profile_or_404(PatientProfile, "user", "university")
 
 
 class StudentMeView(_BaseMeView):
     serializer_class = StudentProfileSerializer
 
     def get_object(self):
-        return StudentProfile.objects.select_related("user", "university").get(
-            user=self.request.user
-        )
+        return self._get_profile_or_404(StudentProfile, "user", "university")
 
 
 class SupervisorMeView(_BaseMeView):
     serializer_class = SupervisorProfileSerializer
 
     def get_object(self):
-        return SupervisorProfile.objects.select_related("user", "university").get(
-            user=self.request.user
-        )
+        return self._get_profile_or_404(SupervisorProfile, "user", "university")
 
 
 class UniversityAdminMeView(_BaseMeView):
     serializer_class = UniversityAdminProfileSerializer
 
     def get_object(self):
-        return UniversityAdminProfile.objects.select_related("user", "university").get(
-            user=self.request.user
-        )
+        return self._get_profile_or_404(UniversityAdminProfile, "user", "university")
 
 
 # ============================================================
@@ -390,9 +393,7 @@ class TechSupportMeView(_BaseMeView):
     serializer_class = TechSupportProfileSerializer
 
     def get_object(self):
-        return TechSupportProfile.objects.select_related("user").get(
-            user=self.request.user
-        )
+        return self._get_profile_or_404(TechSupportProfile, "user")
 
 
 # ============================================================

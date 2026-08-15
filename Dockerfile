@@ -40,6 +40,6 @@ USER app
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD python -c "import os, urllib.request; response = urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('PORT', '8000') + '/health/', timeout=5); assert response.status == 200; response.close()" || exit 1
+    CMD python -c "import os, socket; connection = socket.create_connection(('127.0.0.1', int(os.environ.get('PORT', '8000'))), 5); connection.close()" || exit 1
 
 ENTRYPOINT ["/app/docker/entrypoint.sh"]

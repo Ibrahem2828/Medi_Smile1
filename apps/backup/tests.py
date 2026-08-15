@@ -13,22 +13,26 @@ from apps.audit.models import AuditLog
 class BackupAPITest(APITestCase):
 
     def setUp(self):
+        tech_role, _ = Role.objects.get_or_create(name=Role.TECH_SUPPORT)
+        student_role, _ = Role.objects.get_or_create(name=Role.STUDENT)
         self.tech = User.objects.create_user(
             username="tech",
+            email="tech@example.test",
             password="pass",
-            role=Role.objects.get(name=Role.TECH_SUPPORT),
+            role=tech_role,
         )
 
         self.student = User.objects.create_user(
             username="student",
+            email="student@example.test",
             password="pass",
-            role=Role.objects.get(name=Role.STUDENT),
+            role=student_role,
         )
 
     def test_tech_support_can_create_backup(self):
         self.client.force_authenticate(self.tech)
 
-        url = reverse("backup:backup-create")
+        url = reverse("backup-run-backup")
         payload = {
             "backup_type": "database",
             "description": "Daily DB backup",
@@ -58,7 +62,7 @@ class BackupAPITest(APITestCase):
     def test_non_tech_user_cannot_create_backup(self):
         self.client.force_authenticate(self.student)
 
-        url = reverse("backup:backup-create")
+        url = reverse("backup-run-backup")
         response = self.client.post(url, {"backup_type": "database"})
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
@@ -71,7 +75,7 @@ class BackupAPITest(APITestCase):
         )
 
         self.client.force_authenticate(self.student)
-        url = reverse("backup:backup-restore", args=[backup.id])
+        url = reverse("backup-restore", args=[backup.id])
 
         response = self.client.post(url, {"restore_type": "database"})
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)

@@ -14,6 +14,14 @@ from apps.attachments.models import Attachment
 
 class AttachmentsBaseTestCase(APITestCase):
     @classmethod
+    def _create_user_with_university(cls, *, email, username, password, role, university):
+        user = User(email=email, username=username, role=role)
+        user._desired_university_id = university.id
+        user.set_password(password)
+        user.save()
+        return user
+
+    @classmethod
     def setUpTestData(cls):
         # Roles
         cls.patient_role = Role.objects.create(name=Role.PATIENT)
@@ -37,25 +45,28 @@ class AttachmentsBaseTestCase(APITestCase):
             role=cls.patient_role,
         )
 
-        cls.student = User.objects.create_user(
+        cls.student = cls._create_user_with_university(
             email="student@attach.test",
             username="student_attach",
             password="Student123!",
             role=cls.student_role,
+            university=cls.university,
         )
 
-        cls.supervisor = User.objects.create_user(
+        cls.supervisor = cls._create_user_with_university(
             email="supervisor@attach.test",
             username="supervisor_attach",
             password="Supervisor123!",
             role=cls.supervisor_role,
+            university=cls.university,
         )
 
-        cls.admin = User.objects.create_user(
+        cls.admin = cls._create_user_with_university(
             email="admin@attach.test",
             username="admin_attach",
             password="Admin123!",
             role=cls.admin_role,
+            university=cls.university,
         )
         cls.admin.universityadminprofile_profile.university = cls.university
         cls.admin.universityadminprofile_profile.save()
@@ -86,7 +97,7 @@ class AttachmentsBaseTestCase(APITestCase):
             student=cls.student,
             supervisor=cls.supervisor,
             created_by=cls.student,
-            appointment_date=timezone.now() + timezone.timedelta(days=1),
+            scheduled_at=timezone.now() + timezone.timedelta(days=1),
         )
 
 

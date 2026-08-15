@@ -12,6 +12,14 @@ from apps.appointments.models import Appointment
 
 class AppointmentsBaseTestCase(APITestCase):
     @classmethod
+    def _create_user_with_university(cls, *, email, username, password, role, university):
+        user = User(email=email, username=username, role=role)
+        user._desired_university_id = university.id
+        user.set_password(password)
+        user.save()
+        return user
+
+    @classmethod
     def setUpTestData(cls):
         # Roles
         cls.patient_role = Role.objects.create(name=Role.PATIENT)
@@ -35,25 +43,28 @@ class AppointmentsBaseTestCase(APITestCase):
             role=cls.patient_role,
         )
 
-        cls.student = User.objects.create_user(
+        cls.student = cls._create_user_with_university(
             email="student@appt.test",
             username="student_appt",
             password="Student123!",
             role=cls.student_role,
+            university=cls.university,
         )
 
-        cls.supervisor = User.objects.create_user(
+        cls.supervisor = cls._create_user_with_university(
             email="supervisor@appt.test",
             username="supervisor_appt",
             password="Supervisor123!",
             role=cls.supervisor_role,
+            university=cls.university,
         )
 
-        cls.admin = User.objects.create_user(
+        cls.admin = cls._create_user_with_university(
             email="admin@appt.test",
             username="admin_appt",
             password="Admin123!",
             role=cls.admin_role,
+            university=cls.university,
         )
         cls.admin.universityadminprofile_profile.university = cls.university
         cls.admin.universityadminprofile_profile.save()

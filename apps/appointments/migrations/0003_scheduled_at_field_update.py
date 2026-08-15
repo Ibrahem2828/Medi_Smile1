@@ -11,11 +11,19 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RemoveIndex(
+            model_name='appointment',
+            name='idx_appt_date',
+        ),
         # Align DB schema with current model: rename old column and add missing fields
         migrations.RenameField(
             model_name='appointment',
             old_name='appointment_date',
             new_name='scheduled_at',
+        ),
+        migrations.AddIndex(
+            model_name='appointment',
+            index=models.Index(fields=['scheduled_at'], name='idx_appt_date'),
         ),
         migrations.AddField(
             model_name='appointment',

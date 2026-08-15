@@ -4,7 +4,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 from django.contrib.auth import get_user_model
 
-from apps.accounts.models import Role
+from apps.accounts.models import PatientProfile, Role
 from apps.universities.models import University  # يفترض موجود
 from .models import SupportTicket, SupportTicketResponse
 
@@ -12,6 +12,20 @@ User = get_user_model()
 
 
 class SupportAppTests(APITestCase):
+    @staticmethod
+    def _create_user(*, role, university=None, **fields):
+        user = User(role=role, **fields)
+        password = fields.pop("password")
+        if university is not None:
+            user._desired_university_id = university.id
+        user.set_password(password)
+        user.save()
+        if university is not None and role.name == Role.PATIENT:
+            profile = PatientProfile.objects.get(user=user)
+            profile.university = university
+            profile.save(update_fields=["university"])
+        return user
+
     def setUp(self):
         # Roles (يفترض Role model موجود ومعبأ مسبقاً في مشروعك)
         # إذا كان Role عبارة عن TextChoices فقط، تجاهل هذا الجزء
@@ -19,47 +33,33 @@ class SupportAppTests(APITestCase):
         self.uni1 = University.objects.create(name="Uni 1")
         self.uni2 = University.objects.create(name="Uni 2")
 
-        self.tech = User.objects.create_user(
+        tech_role, _ = Role.objects.get_or_create(name=Role.TECH_SUPPORT)
+        admin_role, _ = Role.objects.get_or_create(name=Role.UNIVERSITY_ADMIN)
+        patient_role, _ = Role.objects.get_or_create(name=Role.PATIENT)
+
+        self.tech = self._create_user(
             username="tech",
             email="tech@example.com",
-            password="Pass12345!",
+            password="Pass12345!", role=tech_role,
         )
-        self.tech.role = Role.objects.get(name=Role.TECH_SUPPORT) if hasattr(Role, "objects") else self.tech.role
-        if hasattr(self.tech, "save"):
-            self.tech.save()
 
-        self.admin1 = User.objects.create_user(
+        self.admin1 = self._create_user(
             username="admin1",
             email="admin1@example.com",
-            password="Pass12345!",
+            password="Pass12345!", role=admin_role, university=self.uni1,
         )
-        if hasattr(self.admin1, "role"):
-            self.admin1.role = Role.objects.get(name=Role.UNIVERSITY_ADMIN) if hasattr(Role, "objects") else self.admin1.role
-        if hasattr(self.admin1, "university_id"):
-            self.admin1.university = self.uni1
-        self.admin1.save()
 
-        self.patient1 = User.objects.create_user(
+        self.patient1 = self._create_user(
             username="p1",
             email="p1@example.com",
-            password="Pass12345!",
+            password="Pass12345!", role=patient_role, university=self.uni1,
         )
-        if hasattr(self.patient1, "role"):
-            self.patient1.role = Role.objects.get(name=Role.PATIENT) if hasattr(Role, "objects") else self.patient1.role
-        if hasattr(self.patient1, "university_id"):
-            self.patient1.university = self.uni1
-        self.patient1.save()
 
-        self.patient2 = User.objects.create_user(
+        self.patient2 = self._create_user(
             username="p2",
             email="p2@example.com",
-            password="Pass12345!",
+            password="Pass12345!", role=patient_role, university=self.uni2,
         )
-        if hasattr(self.patient2, "role"):
-            self.patient2.role = Role.objects.get(name=Role.PATIENT) if hasattr(Role, "objects") else self.patient2.role
-        if hasattr(self.patient2, "university_id"):
-            self.patient2.university = self.uni2
-        self.patient2.save()
 
     def _login(self, user):
         self.client.force_authenticate(user=user)

@@ -13,14 +13,30 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 load_dotenv()  # تحميل متغيرات البيئة عند العمل محليًا
 
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-secret-key")
-DEBUG = os.getenv("DEBUG", "True") == "True"
-EXPOSE_ERROR_DETAILS = os.getenv("EXPOSE_ERROR_DETAILS", str(DEBUG)) == "True"
+def _env_bool(name: str, default: bool = False) -> bool:
+    return os.getenv(name, str(default)).strip().lower() == "true"
 
-ALLOWED_HOSTS = os.getenv(
-    "ALLOWED_HOSTS",
-    "*,medismile1-production.up.railway.app"
-).split(",")
+
+def _env_list(name: str) -> list[str]:
+    return [item.strip() for item in os.getenv(name, "").split(",") if item.strip()]
+
+
+DEBUG = _env_bool("DEBUG")
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY")
+
+if not SECRET_KEY:
+    if not DEBUG:
+        raise ImproperlyConfigured("DJANGO_SECRET_KEY must be configured when DEBUG=False.")
+    SECRET_KEY = "dev-secret-key"
+
+EXPOSE_ERROR_DETAILS = DEBUG and _env_bool("EXPOSE_ERROR_DETAILS")
+
+ALLOWED_HOSTS = _env_list("ALLOWED_HOSTS")
+if not ALLOWED_HOSTS:
+    if DEBUG:
+        ALLOWED_HOSTS = ["localhost", "127.0.0.1", "[::1]"]
+    else:
+        raise ImproperlyConfigured("ALLOWED_HOSTS must be configured when DEBUG=False.")
 
 # ============================================================
 # Applications
@@ -101,16 +117,19 @@ AUTH_USER_MODEL = "accounts.User"
 # ============================================================
 # Channels (WebSocket)
 # ============================================================
+redis_url = os.getenv("REDIS_URL")
+redis_hosts = [redis_url] if redis_url else [
+    (
+        os.getenv("REDIS_HOST", "127.0.0.1"),
+        int(os.getenv("REDIS_PORT", "6379")),
+    )
+]
+
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [
-                (
-                    os.getenv("REDIS_HOST", "127.0.0.1"),
-                    int(os.getenv("REDIS_PORT", 6379)),
-                )
-            ],
+            "hosts": redis_hosts,
         },
     },
 }
@@ -270,21 +289,33 @@ if not DEBUG:
 # ============================================================
 # CORS
 # ============================================================
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOWED_ORIGINS = _env_list("CORS_ALLOWED_ORIGINS")
+CORS_ALLOW_ALL_ORIGINS = DEBUG and not CORS_ALLOWED_ORIGINS
+
+if not DEBUG and not CORS_ALLOWED_ORIGINS:
+    raise ImproperlyConfigured(
+        "CORS_ALLOWED_ORIGINS must be configured when DEBUG=False."
+    )
 
 # ============================================================
 # CSRF / Security (Production)
 # ============================================================
-CSRF_TRUSTED_ORIGINS = [
-    origin.strip()
-    for origin in os.getenv(
-        "CSRF_TRUSTED_ORIGINS",
-        "https://medismile1-production.up.railway.app",
-    ).split(",")
-    if origin.strip()
-]
+CSRF_TRUSTED_ORIGINS = _env_list("CSRF_TRUSTED_ORIGINS")
+if not DEBUG and not CSRF_TRUSTED_ORIGINS:
+    raise ImproperlyConfigured(
+        "CSRF_TRUSTED_ORIGINS must be configured when DEBUG=False."
+    )
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+SECURE_SSL_REDIRECT = _env_bool("SECURE_SSL_REDIRECT", default=not DEBUG)
+SESSION_COOKIE_SECURE = _env_bool("SESSION_COOKIE_SECURE", default=not DEBUG)
+CSRF_COOKIE_SECURE = _env_bool("CSRF_COOKIE_SECURE", default=not DEBUG)
+SECURE_HSTS_SECONDS = int(
+    os.getenv("SECURE_HSTS_SECONDS", "31536000" if not DEBUG else "0")
+)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = _env_bool(
+    "SECURE_HSTS_INCLUDE_SUBDOMAINS", default=not DEBUG
+)
 
 # ============================================================
 # Logging
@@ -313,8 +344,12 @@ LOGGING = {
 # ============================================================
 # Celery
 # ============================================================
-CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://127.0.0.1:6379/0")
-CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://127.0.0.1:6379/0")
+CELERY_BROKER_URL = os.getenv(
+    "CELERY_BROKER_URL", redis_url or "redis://127.0.0.1:6379/0"
+)
+CELERY_RESULT_BACKEND = os.getenv(
+    "CELERY_RESULT_BACKEND", redis_url or "redis://127.0.0.1:6379/0"
+)
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"

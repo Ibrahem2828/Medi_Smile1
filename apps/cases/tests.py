@@ -10,6 +10,14 @@ from apps.cases.models import Case
 
 class CasesBaseTestCase(APITestCase):
     @classmethod
+    def _create_user_with_university(cls, *, email, username, password, role, university):
+        user = User(email=email, username=username, role=role)
+        user._desired_university_id = university.id
+        user.set_password(password)
+        user.save()
+        return user
+
+    @classmethod
     def setUpTestData(cls):
         # Roles
         cls.patient_role = Role.objects.create(name=Role.PATIENT)
@@ -33,25 +41,28 @@ class CasesBaseTestCase(APITestCase):
             role=cls.patient_role,
         )
 
-        cls.student = User.objects.create_user(
+        cls.student = cls._create_user_with_university(
             email="student@test.com",
             username="student",
             password="Student123!",
             role=cls.student_role,
+            university=cls.university,
         )
 
-        cls.supervisor = User.objects.create_user(
+        cls.supervisor = cls._create_user_with_university(
             email="supervisor@test.com",
             username="supervisor",
             password="Supervisor123!",
             role=cls.supervisor_role,
+            university=cls.university,
         )
 
-        cls.admin = User.objects.create_user(
+        cls.admin = cls._create_user_with_university(
             email="admin@test.com",
             username="admin",
             password="Admin123!",
             role=cls.admin_role,
+            university=cls.university,
         )
         cls.admin.universityadminprofile_profile.university = cls.university
         cls.admin.universityadminprofile_profile.save()
@@ -79,6 +90,7 @@ class CaseCreationTests(CasesBaseTestCase):
                 "title": "Tooth Pain",
                 "description": "Severe pain in molar",
                 "priority": "high",
+                "university_id": str(self.university.id),
             },
         )
 
@@ -99,6 +111,7 @@ class CaseCreationTests(CasesBaseTestCase):
             {
                 "title": "Case 2",
                 "description": "Another problem",
+                "university_id": str(self.university.id),
             },
         )
 

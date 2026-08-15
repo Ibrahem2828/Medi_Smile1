@@ -2,6 +2,7 @@
 from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.permissions import SAFE_METHODS
 from rest_framework.views import APIView
 
 from apps.accounts.models import Role
@@ -148,6 +149,15 @@ class AppointmentDetailView(generics.RetrieveUpdateAPIView):
         CanViewAppointment,
         CanUpdateAppointment,
     ]
+
+    def get_permissions(self):
+        if self.request.method in SAFE_METHODS:
+            return [IsAuthenticatedAndActive(), CanViewAppointment()]
+        return [
+            IsAuthenticatedAndActive(),
+            CanViewAppointment(),
+            CanUpdateAppointment(),
+        ]
 
     def get_serializer_class(self):
         """

@@ -169,6 +169,8 @@ class MessageTests(MessagingBaseTestCase):
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_cannot_send_when_case_closed(self):
+        self.case.status = Case.Status.IN_PROGRESS
+        self.case.save(update_fields=["status"])
         self.case.status = Case.Status.COMPLETED
         self.case.save(update_fields=["status"])
 
