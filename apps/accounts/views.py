@@ -150,14 +150,14 @@ class UniversityAdminCreateView(generics.CreateAPIView):
                 log_audit_event(
                     user=request.user,
                     action="accounts.university_admin.create.failed",
-                    description=str(exc),
+                    description="University admin creation failed.",
                 )
             except Exception:
                 pass
             return Response(
                 {
                     "detail": "Failed to create university admin.",
-                    "error": str(exc),
+                    "error": "Failed to create university admin.",
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )

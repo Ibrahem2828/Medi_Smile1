@@ -101,7 +101,7 @@ class EvaluationViewSet(viewsets.GenericViewSet):
             logger.exception("Evaluations list failed", exc_info=exc)
             return self._error_response(
                 message="Unexpected error. See errors for details.",
-                errors=str(exc) or repr(exc),
+                errors=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -127,7 +127,7 @@ class EvaluationViewSet(viewsets.GenericViewSet):
             logger.exception("Evaluations retrieve failed", exc_info=exc)
             return self._error_response(
                 message="Unexpected error. See errors for details.",
-                errors=str(exc) or repr(exc),
+                errors=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -160,7 +160,7 @@ class EvaluationViewSet(viewsets.GenericViewSet):
             logger.exception("Evaluations create failed", exc_info=exc)
             return self._error_response(
                 message="Unexpected error. See errors for details.",
-                errors=str(exc) or repr(exc),
+                errors=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -205,7 +205,7 @@ class EvaluationViewSet(viewsets.GenericViewSet):
             logger.exception("Evaluations adjust failed", exc_info=exc)
             return self._error_response(
                 message="Unexpected error. See errors for details.",
-                errors=str(exc) or repr(exc),
+                errors=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -235,7 +235,7 @@ class EvaluationViewSet(viewsets.GenericViewSet):
             logger.exception("Evaluations finalize failed", exc_info=exc)
             return self._error_response(
                 message="Unexpected error. See errors for details.",
-                errors=str(exc) or repr(exc),
+                errors=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -288,6 +288,6 @@ def student_rating_view(request, student_id):
     except Exception as exc:
         logger.exception("Student rating failed", exc_info=exc)
         return Response(
-            {"status": "error", "message": "Unexpected error. See errors for details.", "errors": str(exc) or repr(exc)},
+            {"status": "error", "message": "Unexpected error. See errors for details.", "errors": None},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )

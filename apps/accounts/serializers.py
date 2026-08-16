@@ -1,3 +1,5 @@
+import logging
+
 from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.db import transaction
@@ -16,6 +18,7 @@ from .models import (
 )
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 # ============================================================
 # LOGIN SERIALIZERS
@@ -132,7 +135,7 @@ class BaseUserCreateSerializer(serializers.ModelSerializer):
             return user
         except IntegrityError as exc:
             raise serializers.ValidationError(
-                {"detail": "User with same email or username already exists.", "error": str(exc)}
+                {"detail": "User with same email or username already exists.", "error": "Duplicate user."}
             )
 
 
@@ -201,10 +204,11 @@ class StudentCreateSerializer(BaseUserCreateSerializer):
             return user
         except IntegrityError as exc:
             raise serializers.ValidationError(
-                {"detail": "User with same email or username already exists.", "error": str(exc)}
+                {"detail": "User with same email or username already exists.", "error": "Duplicate user."}
             )
         except Exception as exc:
-            raise serializers.ValidationError({"detail": "Failed to create student.", "error": str(exc)})
+            logger.exception("Student creation failed")
+            raise serializers.ValidationError({"detail": "Failed to create student.", "error": "Student creation failed."})
 
 
 class SupervisorCreateSerializer(BaseUserCreateSerializer):
@@ -263,10 +267,11 @@ class SupervisorCreateSerializer(BaseUserCreateSerializer):
             return user
         except IntegrityError as exc:
             raise serializers.ValidationError(
-                {"detail": "User with same email or username already exists.", "error": str(exc)}
+                {"detail": "User with same email or username already exists.", "error": "Duplicate user."}
             )
         except Exception as exc:
-            raise serializers.ValidationError({"detail": "Failed to create supervisor.", "error": str(exc)})
+            logger.exception("Supervisor creation failed")
+            raise serializers.ValidationError({"detail": "Failed to create supervisor.", "error": "Supervisor creation failed."})
 
 
 class UniversityAdminCreateSerializer(BaseUserCreateSerializer):
@@ -319,10 +324,11 @@ class UniversityAdminCreateSerializer(BaseUserCreateSerializer):
             return user
         except IntegrityError as exc:
             raise serializers.ValidationError(
-                {"detail": "User with same email or username already exists.", "error": str(exc)}
+                {"detail": "User with same email or username already exists.", "error": "Duplicate user."}
             )
         except Exception as exc:
-            raise serializers.ValidationError({"detail": "Failed to create university admin.", "error": str(exc)})
+            logger.exception("University admin creation failed")
+            raise serializers.ValidationError({"detail": "Failed to create university admin.", "error": "University admin creation failed."})
 
 
 class TechSupportCreateSerializer(BaseUserCreateSerializer):

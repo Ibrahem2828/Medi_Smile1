@@ -318,7 +318,7 @@ class AIProposalIngestView(generics.CreateAPIView):
             )
         except Exception as exc:
             logger.exception("AI proposal ingest failed", exc_info=exc)
-            errors = str(exc) or repr(exc)
+            errors = None
             if getattr(settings, "EXPOSE_ERROR_DETAILS", False):
                 errors = {
                     "type": exc.__class__.__name__,
@@ -435,7 +435,7 @@ class AIProposalDecisionView(APIView):
         except Exception as exc:
             logger.exception("AI proposal acceptance failed", exc_info=exc)
             return Response(
-                {"status": "error", "message": "حدث خطأ غير متوقع. يرجى المحاولة لاحقًا.", "errors": str(exc)},
+                {"status": "error", "message": "حدث خطأ غير متوقع. يرجى المحاولة لاحقًا.", "errors": None},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

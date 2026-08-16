@@ -246,13 +246,19 @@ class CourseListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated, IsUniversityAdmin]
 
     def _format_exception(self, exc):
+        if isinstance(exc, (DjangoValidationError, serializers.ValidationError)):
+            return (
+                getattr(exc, "message_dict", None)
+                or getattr(exc, "detail", None)
+                or getattr(exc, "messages", None)
+            )
         if getattr(settings, "EXPOSE_ERROR_DETAILS", False):
             return {
                 "type": exc.__class__.__name__,
                 "message": str(exc),
                 "traceback": traceback.format_exc(),
             }
-        return str(exc) or repr(exc)
+        return None
 
     def _error_response(self, *, message, errors=None, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR):
         return Response({"status": "error", "message": message, "errors": errors}, status=status_code)
@@ -395,7 +401,7 @@ class StudentUniversitySelectionView(generics.GenericAPIView):
             logger.exception("Patient university GET db error", exc_info=exc)
             return self._error_response(
                 message="Database schema error. Please run migrations.",
-                errors=str(exc) or repr(exc),
+                errors=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
         except PermissionDenied as exc:
@@ -414,7 +420,7 @@ class StudentUniversitySelectionView(generics.GenericAPIView):
             logger.exception("Patient university GET failed", exc_info=exc)
             return self._error_response(
                 message="Unexpected error. See errors for details.",
-                errors=str(exc) or repr(exc),
+                errors=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -450,7 +456,7 @@ class StudentUniversitySelectionView(generics.GenericAPIView):
             logger.exception("Patient university POST db error", exc_info=exc)
             return self._error_response(
                 message="Database schema error. Please run migrations.",
-                errors=str(exc) or repr(exc),
+                errors=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
         except PermissionDenied as exc:
@@ -469,6 +475,6 @@ class StudentUniversitySelectionView(generics.GenericAPIView):
             logger.exception("Patient university POST failed", exc_info=exc)
             return self._error_response(
                 message="Unexpected error. See errors for details.",
-                errors=str(exc) or repr(exc),
+                errors=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )

@@ -176,7 +176,7 @@ class SupportTicketListView(generics.ListCreateAPIView):
             logger.exception("Failed to create support ticket", exc_info=exc)
             return APIResponse.error(
                 _("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."),
-                errors=str(exc),
+                errors=None,
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -327,7 +327,7 @@ class SupportTicketResponseListView(generics.ListCreateAPIView):
             logger.exception("Failed to create support ticket response", exc_info=exc)
             return APIResponse.error(
                 _("حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."),
-                errors=str(exc),
+                errors=None,
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 

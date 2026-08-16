@@ -139,7 +139,7 @@ class ContentViewSet(viewsets.GenericViewSet):
             logger.exception("Community list failed", exc_info=exc)
             return self._error_response(
                 message="Unexpected error. See errors for details.",
-                errors=str(exc) or repr(exc),
+                errors=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -177,7 +177,7 @@ class ContentViewSet(viewsets.GenericViewSet):
             logger.exception("Community retrieve failed", exc_info=exc)
             return self._error_response(
                 message="Unexpected error. See errors for details.",
-                errors=str(exc) or repr(exc),
+                errors=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -211,7 +211,7 @@ class ContentViewSet(viewsets.GenericViewSet):
             logger.exception("Community create failed", exc_info=exc)
             return self._error_response(
                 message="Unexpected error. See errors for details.",
-                errors=str(exc) or repr(exc),
+                errors=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -251,7 +251,7 @@ class ContentViewSet(viewsets.GenericViewSet):
             logger.exception("Community update failed", exc_info=exc)
             return self._error_response(
                 message="Unexpected error. See errors for details.",
-                errors=str(exc) or repr(exc),
+                errors=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -276,7 +276,7 @@ class ContentViewSet(viewsets.GenericViewSet):
             logger.exception("Community delete failed", exc_info=exc)
             return self._error_response(
                 message="Unexpected error. See errors for details.",
-                errors=str(exc) or repr(exc),
+                errors=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -294,7 +294,7 @@ class ContentViewSet(viewsets.GenericViewSet):
             logger.exception("Community pending failed", exc_info=exc)
             return self._error_response(
                 message="Unexpected error. See errors for details.",
-                errors=str(exc) or repr(exc),
+                errors=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -335,7 +335,7 @@ class ContentViewSet(viewsets.GenericViewSet):
             logger.exception("Community approve failed", exc_info=exc)
             return self._error_response(
                 message="Unexpected error. See errors for details.",
-                errors=str(exc) or repr(exc),
+                errors=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -383,7 +383,7 @@ class ContentViewSet(viewsets.GenericViewSet):
             logger.exception("Community reject failed", exc_info=exc)
             return self._error_response(
                 message="Unexpected error. See errors for details.",
-                errors=str(exc) or repr(exc),
+                errors=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -421,7 +421,7 @@ class ContentViewSet(viewsets.GenericViewSet):
             logger.exception("Community like failed", exc_info=exc)
             return self._error_response(
                 message="Unexpected error. See errors for details.",
-                errors=str(exc) or repr(exc),
+                errors=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -466,7 +466,7 @@ class ContentViewSet(viewsets.GenericViewSet):
             logger.exception("Community comment failed", exc_info=exc)
             return self._error_response(
                 message="Unexpected error. See errors for details.",
-                errors=str(exc) or repr(exc),
+                errors=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -498,6 +498,6 @@ def student_public_rating_view(request, student_id):
     except Exception as exc:
         logger.exception("Student public rating failed", exc_info=exc)
         return Response(
-            {"status": "error", "message": "Unexpected error. See errors for details.", "errors": str(exc) or repr(exc)},
+            {"status": "error", "message": "Unexpected error. See errors for details.", "errors": None},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )

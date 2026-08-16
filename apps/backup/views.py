@@ -1,3 +1,5 @@
+import logging
+
 from rest_framework.viewsets import GenericViewSet
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -16,6 +18,8 @@ from .serializers import (
 )
 from .services import create_backup, restore_backup
 from .tasks import run_backup_task
+
+logger = logging.getLogger(__name__)
 
 
 class BackupViewSet(GenericViewSet):
@@ -65,15 +69,16 @@ class BackupViewSet(GenericViewSet):
                 description=serializer.validated_data.get("description"),
             )
         except Exception as exc:  # pragma: no cover - defensive guard
+            logger.exception("Backup creation failed")
             log_audit_event(
                 user=request.user,
                 action="backup.create.failed",
-                description=str(exc),
+                description="Backup creation failed.",
             )
             return Response(
                 {
                     "detail": "Backup request failed to start.",
-                    "error": str(exc),
+                    "error": "Backup request failed to start.",
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
@@ -82,10 +87,11 @@ class BackupViewSet(GenericViewSet):
         try:
             run_backup_task.delay(str(backup.id))
         except Exception as exc:  # pragma: no cover - defensive guard
+            logger.exception("Backup task dispatch failed")
             log_audit_event(
                 user=request.user,
                 action="backup.task.dispatch_failed",
-                description=str(exc),
+                description="Backup task dispatch failed.",
                 content_object=backup,
             )
 
