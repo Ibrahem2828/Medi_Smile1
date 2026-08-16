@@ -1,3 +1,0 @@
-"""
-Migrations for reports app.
-"""
