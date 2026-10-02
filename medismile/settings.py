@@ -377,6 +377,8 @@ if not DEBUG and not CSRF_TRUSTED_ORIGINS:
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_SSL_REDIRECT = _env_bool("SECURE_SSL_REDIRECT", default=not DEBUG)
+# Container/orchestrator health probes call the app over plain HTTP on localhost.
+SECURE_REDIRECT_EXEMPT = [r"^health/$", r"^readyz/$"]
 SESSION_COOKIE_SECURE = _env_bool("SESSION_COOKIE_SECURE", default=not DEBUG)
 CSRF_COOKIE_SECURE = _env_bool("CSRF_COOKIE_SECURE", default=not DEBUG)
 SECURE_HSTS_SECONDS = int(
