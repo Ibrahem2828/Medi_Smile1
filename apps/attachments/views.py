@@ -1,10 +1,13 @@
 # apps/attachments/views.py
 import logging
+from django.http import FileResponse, Http404
 from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import SAFE_METHODS
 from rest_framework import serializers as drf_serializers
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema
 
 from apps.accounts.models import Role
 
@@ -13,6 +16,7 @@ from .serializers import (
     AttachmentSerializer,
     AttachmentCreateSerializer,
 )
+from .storage_backends import get_storage_backend
 from .permissions import (
     IsAuthenticatedAndActive,
     CanViewAttachment,
@@ -145,3 +149,30 @@ class AttachmentDetailView(generics.RetrieveDestroyAPIView):
             CanViewAttachment(),
             CanDeleteAttachment(),
         ]
+
+
+class AttachmentFileView(generics.RetrieveAPIView):
+    """Serve an attachment only after applying the normal object permission."""
+
+    queryset = Attachment.objects.select_related(
+        "case", "appointment", "uploaded_by", "case__university"
+    )
+    permission_classes = [IsAuthenticatedAndActive, CanViewAttachment]
+
+    @extend_schema(responses={200: OpenApiTypes.BINARY}, tags=["attachments"])
+    def get(self, request, *args, **kwargs):
+        attachment = self.get_object()
+        self.check_object_permissions(request, attachment)
+        if not attachment.file:
+            raise Http404
+        storage = get_storage_backend()
+        try:
+            file_handle = storage.open(attachment.file.name, "rb")
+        except Exception as exc:
+            logger.warning("Attachment file unavailable: %s", attachment.id, exc_info=exc)
+            raise Http404 from exc
+        response = FileResponse(file_handle, content_type=attachment.mime_type)
+        response["Content-Disposition"] = f'attachment; filename="{attachment.original_filename}"'
+        response["Cache-Control"] = "private, no-store"
+        response["X-Content-Type-Options"] = "nosniff"
+        return response

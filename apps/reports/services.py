@@ -17,6 +17,7 @@ from apps.audit.services import log_audit_event
 from apps.notifications.audit_bridge import notify_on_audit_event
 from apps.cases.models import Case
 from apps.universities.models import University, Course
+from medismile.utils.scoping import get_user_university_id
 
 from .models import Report
 from .selectors import _resolve_university_id
@@ -78,6 +79,95 @@ def _get_target_context(target_type: str, target_id):
     raise ValidationError({"target_type": "Invalid target type."})
 
 
+def _server_snapshot(context: dict) -> dict:
+    """Build the small, immutable part of a report snapshot from DB records.
+
+    Report JSON is authored by a user and is therefore presentation data only.
+    It must never become an authority for resolving a patient, case or staff
+    record during a later export.  The target and university below are written
+    by the server so they can be checked again when the report is exported.
+    """
+    target = context["target"]
+    return {
+        "snapshot_version": 1,
+        "created_at": timezone.now().isoformat(),
+        "target": {
+            "id": str(target.id),
+            "type": target.__class__.__name__.lower(),
+        },
+        "university_id": str(context["university"].id),
+        "case_id": str(context["case_id"]) if context.get("case_id") else None,
+        "student_id": str(context["student"].id) if context.get("student") else None,
+        "supervisor_id": str(context["supervisor"].id) if context.get("supervisor") else None,
+    }
+
+
+def _scoped_user(user_id, *, university_id, role_name: str | None = None):
+    """Resolve a user only when their profile belongs to the report university."""
+    if not user_id:
+        return None
+    query = User.objects.select_related("role").filter(id=user_id)
+    if role_name:
+        query = query.filter(role__name=role_name)
+    user = query.first()
+    if not user or get_user_university_id(user) != university_id:
+        return None
+    return user
+
+
+def _assert_payload_references_are_scoped(payload, *, university_id, list_context: str | None = None):
+    """Reject IDs in report payloads that could resolve outside this university.
+
+    This is deliberately strict for the identifiers understood by the PDF
+    renderer.  Arbitrary display text remains allowed, but a client cannot
+    sneak a foreign record into a nested ``cases``/``students`` list and make
+    the export resolve it later.
+    """
+    if isinstance(payload, list):
+        for item in payload:
+            _assert_payload_references_are_scoped(item, university_id=university_id, list_context=list_context)
+        return
+    if not isinstance(payload, dict):
+        return
+
+    context = list_context
+    for key, value in payload.items():
+        if key in {"cases", "students", "supervisors", "patients", "items"} and isinstance(value, list):
+            for item in value:
+                _assert_payload_references_are_scoped(item, university_id=university_id, list_context=key)
+            continue
+
+        if key in {"case_id"} or (key == "id" and context == "cases"):
+            if value and not Case.objects.filter(id=value, university_id=university_id).exists():
+                raise ValidationError({key: "Referenced case is outside the report university."})
+        elif key in {"student_id"} or (key == "id" and context == "students"):
+            if value and not _scoped_user(value, university_id=university_id, role_name=Role.STUDENT):
+                raise ValidationError({key: "Referenced student is outside the report university."})
+        elif key in {"supervisor_id"} or (key == "id" and context == "supervisors"):
+            if value and not _scoped_user(value, university_id=university_id, role_name=Role.SUPERVISOR):
+                raise ValidationError({key: "Referenced supervisor is outside the report university."})
+        elif key == "patient_id" or (key == "id" and context == "patients"):
+            if value and not _scoped_user(value, university_id=university_id, role_name=Role.PATIENT):
+                raise ValidationError({key: "Referenced patient is outside the report university."})
+        elif isinstance(value, (dict, list)):
+            _assert_payload_references_are_scoped(value, university_id=university_id, list_context=context)
+
+
+def _assert_report_target_is_scoped(report: Report) -> None:
+    """Fail closed for legacy/corrupt reports before rendering any medical data."""
+    try:
+        context = _get_target_context(report.target_type, report.target_id)
+    except ValidationError as exc:
+        raise PermissionDenied("Report target is no longer available.") from exc
+    if context["university"].id != report.university_id:
+        raise PermissionDenied("Report target is outside the report university.")
+    snapshot = report.snapshot_data if isinstance(report.snapshot_data, dict) else {}
+    if snapshot.get("university_id") and str(report.university_id) != str(snapshot["university_id"]):
+        raise PermissionDenied("Report snapshot does not match the report university.")
+    _assert_payload_references_are_scoped(report.content, university_id=report.university_id)
+    _assert_payload_references_are_scoped(report.snapshot_data, university_id=report.university_id)
+
+
 def create_report(*, actor, data: dict) -> Report:
     role_name = getattr(getattr(actor, "role", None), "name", None)
     if role_name not in {Role.STUDENT, Role.SUPERVISOR, Role.UNIVERSITY_ADMIN}:
@@ -92,6 +182,10 @@ def create_report(*, actor, data: dict) -> Report:
 
     if not university:
         raise ValidationError({"target_id": "Target is not linked to a university."})
+
+    _assert_payload_references_are_scoped(data.get("content"), university_id=university.id)
+    # ``snapshot_data`` is intentionally not accepted from clients.  It is a
+    # server-authored integrity anchor, not a second untrusted content field.
 
     if role_name == Role.STUDENT:
         if report_type != Report.ReportType.CLINICAL_CASE:
@@ -148,7 +242,7 @@ def create_report(*, actor, data: dict) -> Report:
         description=data.get("description"),
         content=data.get("content"),
         attachments=data.get("attachments"),
-        snapshot_data=data.get("snapshot_data"),
+        snapshot_data=_server_snapshot(context),
         status=Report.Status.DRAFT,
     )
     try:
@@ -177,6 +271,9 @@ def update_report(*, actor, report: Report, data: dict) -> Report:
 
     if report.status not in {Report.Status.DRAFT, Report.Status.REJECTED}:
         raise PermissionDenied("Only draft/rejected reports can be updated.")
+
+    if "content" in data:
+        _assert_payload_references_are_scoped(data["content"], university_id=report.university_id)
 
     for field, value in data.items():
         setattr(report, field, value)
@@ -214,6 +311,8 @@ def submit_report(*, actor, report: Report) -> Report:
     if not report.content:
         raise ValidationError({"content": "Report content is required before submission."})
 
+    _assert_report_target_is_scoped(report)
+
     report.status = Report.Status.SUBMITTED
     report.submitted_at = timezone.now()
     report.save(update_fields=["status", "submitted_at", "updated_at"])
@@ -247,7 +346,7 @@ def approve_report(*, supervisor, report: Report, review_notes: str | None = Non
         raise PermissionDenied("Only submitted reports can be approved.")
 
     supervisor_university_id = _resolve_university_id(supervisor)
-    if supervisor_university_id and report.university_id != supervisor_university_id:
+    if not supervisor_university_id or report.university_id != supervisor_university_id:
         raise PermissionDenied("You cannot approve reports outside your university.")
 
     report.status = Report.Status.LOCKED
@@ -296,7 +395,7 @@ def reject_report(*, supervisor, report: Report, review_notes: str) -> Report:
         raise PermissionDenied("Only submitted reports can be rejected.")
 
     supervisor_university_id = _resolve_university_id(supervisor)
-    if supervisor_university_id and report.university_id != supervisor_university_id:
+    if not supervisor_university_id or report.university_id != supervisor_university_id:
         raise PermissionDenied("You cannot reject reports outside your university.")
 
     report.status = Report.Status.REJECTED
@@ -404,38 +503,44 @@ def _resolve_case(report: Report, item):
     if not case_id and report.case_id:
         case_id = report.case_id
     if case_id:
-        return Case.objects.select_related("student", "supervisor", "patient", "university").filter(id=case_id).first()
+        # Never resolve an identifier from report JSON without the report's
+        # university predicate.  UUIDs are identifiers, not authorisation.
+        return (
+            Case.objects.select_related("student", "supervisor", "patient", "university")
+            .filter(id=case_id, university_id=report.university_id)
+            .first()
+        )
     return None
 
 
 def _resolve_student(report: Report, case, item):
     student_id = _extract_value(("student_id",), item)
     if student_id:
-        return _safe_get_user(student_id)
+        return _scoped_user(student_id, university_id=report.university_id, role_name=Role.STUDENT)
     if case and case.student_id:
-        return case.student
+        return _scoped_user(case.student_id, university_id=report.university_id, role_name=Role.STUDENT)
     if report.student_id:
-        return report.student
+        return _scoped_user(report.student_id, university_id=report.university_id, role_name=Role.STUDENT)
     return None
 
 
 def _resolve_supervisor(report: Report, case, item):
     supervisor_id = _extract_value(("supervisor_id",), item)
     if supervisor_id:
-        return _safe_get_user(supervisor_id)
+        return _scoped_user(supervisor_id, university_id=report.university_id, role_name=Role.SUPERVISOR)
     if case and case.supervisor_id:
-        return case.supervisor
+        return _scoped_user(case.supervisor_id, university_id=report.university_id, role_name=Role.SUPERVISOR)
     if report.supervisor_id:
-        return report.supervisor
+        return _scoped_user(report.supervisor_id, university_id=report.university_id, role_name=Role.SUPERVISOR)
     return None
 
 
-def _resolve_patient(case, item):
+def _resolve_patient(report: Report, case, item):
     patient_id = _extract_value(("patient_id",), item)
     if patient_id:
-        return _safe_get_user(patient_id)
+        return _scoped_user(patient_id, university_id=report.university_id, role_name=Role.PATIENT)
     if case and case.patient_id:
-        return case.patient
+        return _scoped_user(case.patient_id, university_id=report.university_id, role_name=Role.PATIENT)
     return None
 
 
@@ -798,7 +903,7 @@ def _generate_pdf_bytes(report: Report) -> bytes:
             case = _resolve_case(report, item)
             student = _resolve_student(report, case, item)
             supervisor = _resolve_supervisor(report, case, item)
-            patient = _resolve_patient(case, item)
+            patient = _resolve_patient(report, case, item)
             student_profile = _get_profile(StudentProfile, student)
             supervisor_profile = _get_profile(SupervisorProfile, supervisor)
             patient_profile = _get_profile(PatientProfile, patient)
@@ -825,7 +930,7 @@ def _generate_pdf_bytes(report: Report) -> bytes:
         case = _resolve_case(report, None)
         student = _resolve_student(report, case, None)
         supervisor = _resolve_supervisor(report, case, None)
-        patient = _resolve_patient(case, None)
+        patient = _resolve_patient(report, case, None)
         student_profile = _get_profile(StudentProfile, student)
         supervisor_profile = _get_profile(SupervisorProfile, supervisor)
         patient_profile = _get_profile(PatientProfile, patient)
@@ -857,8 +962,13 @@ def export_report(*, actor, report: Report, fmt: str) -> str:
         raise PermissionDenied("Only University Admin can export reports.")
 
     admin_university_id = _resolve_university_id(actor)
-    if admin_university_id and report.university_id != admin_university_id:
+    if not admin_university_id or report.university_id != admin_university_id:
         raise PermissionDenied("You cannot export reports outside your university.")
+
+    # Re-run all scope checks immediately before each rendering. This protects
+    # legacy reports created before the validation above and guards against
+    # records that changed university after the report was drafted.
+    _assert_report_target_is_scoped(report)
 
     fmt = (fmt or "").lower()
     if fmt == "excel":
@@ -866,7 +976,7 @@ def export_report(*, actor, report: Report, fmt: str) -> str:
     if fmt not in {"csv", "pdf"}:
         raise ValidationError({"format": "Invalid export format. Use pdf, excel, or csv."})
 
-    exports_dir = Path(settings.MEDIA_ROOT) / "exports"
+    exports_dir = Path(settings.PRIVATE_MEDIA_ROOT) / "exports"
     exports_dir.mkdir(parents=True, exist_ok=True)
 
     if fmt == "csv":
@@ -881,7 +991,9 @@ def export_report(*, actor, report: Report, fmt: str) -> str:
         filename = exports_dir / f"report_{report.id}.pdf"
         filename.write_bytes(pdf_bytes)
 
-    report.file_url = f"/media/exports/{filename.name}"
+    # Medical exports are never published under /media/.  They are served by
+    # an authenticated, university-scoped endpoint.
+    report.file_url = f"/api/reports/{report.id}/export-file/"
     report.save(update_fields=["file_url", "updated_at"])
 
     log_audit_event(
@@ -894,3 +1006,13 @@ def export_report(*, actor, report: Report, fmt: str) -> str:
     )
 
     return report.file_url
+
+
+def get_export_file_path(report: Report) -> Path | None:
+    """Return a report export from private storage, never from a request path."""
+    exports_dir = Path(settings.PRIVATE_MEDIA_ROOT) / "exports"
+    for suffix in ("pdf", "csv"):
+        candidate = exports_dir / f"report_{report.id}.{suffix}"
+        if candidate.is_file():
+            return candidate
+    return None

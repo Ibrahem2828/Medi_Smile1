@@ -3,6 +3,8 @@ import logging
 
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied, ValidationError as DjangoValidationError
 from django.http import Http404
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema
 from rest_framework import serializers as drf_serializers, status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -240,6 +242,7 @@ class EvaluationViewSet(viewsets.GenericViewSet):
             )
 
 
+@extend_schema(responses={200: OpenApiTypes.OBJECT}, tags=["evaluations"])
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def student_rating_view(request, student_id):

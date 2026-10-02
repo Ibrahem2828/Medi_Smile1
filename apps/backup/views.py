@@ -16,7 +16,7 @@ from .serializers import (
     BackupCreateSerializer,
     BackupRestoreSerializer,
 )
-from .services import create_backup, restore_backup
+from .services import create_backup, mark_backup_failed, restore_backup
 from .tasks import run_backup_task
 
 logger = logging.getLogger(__name__)
@@ -83,16 +83,23 @@ class BackupViewSet(GenericViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        # Run async task (do not break API if Celery is down)
+        # A request is not accepted unless the worker actually accepted it.
+        # Leaving an ``in_progress`` backup after broker failure is misleading
+        # and used to be recorded as a successful initiation.
         try:
             run_backup_task.delay(str(backup.id))
         except Exception as exc:  # pragma: no cover - defensive guard
             logger.exception("Backup task dispatch failed")
+            mark_backup_failed(backup, "Backup worker dispatch failed.")
             log_audit_event(
                 user=request.user,
                 action="backup.task.dispatch_failed",
                 description="Backup task dispatch failed.",
                 content_object=backup,
+            )
+            return Response(
+                {"detail": "Backup worker is unavailable. No backup was started.", "backup_id": backup.id},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
         log_audit_event(
@@ -119,6 +126,9 @@ class BackupViewSet(GenericViewSet):
 
         serializer = BackupRestoreSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        requested_backup_id = serializer.validated_data.get("backup_id")
+        if requested_backup_id and requested_backup_id != backup.id:
+            return Response({"detail": "backup_id does not match the URL."}, status=status.HTTP_400_BAD_REQUEST)
 
         restore_backup(
             actor=request.user,

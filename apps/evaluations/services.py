@@ -150,11 +150,25 @@ def create_evaluation(*, actor, data: dict) -> Evaluation:
     if not university_id:
         raise DjangoValidationError("University could not be resolved for this evaluation.")
 
+    if role_name == Role.PATIENT and target_type == EvaluationTargetType.STUDENT:
+        # A patient may rate only a student who has actually treated one of
+        # their cases.  A patient profile can legitimately be created before
+        # a university is selected, so ownership of this treatment relation
+        # (rather than a nullable profile field) is the security boundary.
+        if not Case.objects.filter(patient=actor, student=student, university_id=university_id).exists():
+            raise PermissionDenied("You can only evaluate a student assigned to your case.")
+
     actor_university_id = _resolve_university_id(actor)
     if role_name in {Role.SUPERVISOR, Role.UNIVERSITY_ADMIN}:
-        if actor_university_id and actor_university_id != university_id:
+        # A missing profile is never a wildcard.  The old ``if university_id
+        # and ...`` pattern let an unscoped administrator evaluate another
+        # university's student.
+        if not actor_university_id or actor_university_id != university_id:
             raise PermissionDenied("Out of university scope.")
-    if role_name == Role.PATIENT and actor_university_id and actor_university_id != university_id:
+    elif role_name == Role.PATIENT and actor_university_id and actor_university_id != university_id:
+        # If the patient has selected a university, it too must match.  If it
+        # is null, the appointment/case ownership checks above still prevent
+        # a cross-university evaluation.
         raise PermissionDenied("Out of university scope.")
 
     if Evaluation.objects.filter(

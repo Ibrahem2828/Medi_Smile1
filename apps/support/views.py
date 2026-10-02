@@ -3,6 +3,8 @@ from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from django.utils.translation import gettext_lazy as _
 from django.utils import timezone
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
 from rest_framework import serializers as drf_serializers
 from rest_framework.pagination import PageNumberPagination
@@ -240,6 +242,7 @@ class SupportTicketDetailView(generics.RetrieveUpdateAPIView):
 class SupportTicketCloseView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(request=None, responses={200: OpenApiTypes.OBJECT}, tags=["support"])
     def post(self, request, ticket_id):
         try:
             user = resolve_request_user(request)
@@ -339,6 +342,7 @@ class SupportTicketResponseListView(generics.ListCreateAPIView):
 class SupportTicketStatsView(APIView):
     permission_classes = [IsAuthenticated, IsTechSupport]
 
+    @extend_schema(responses={200: OpenApiTypes.OBJECT}, tags=["support"])
     def get(self, request):
         try:
             stats = {

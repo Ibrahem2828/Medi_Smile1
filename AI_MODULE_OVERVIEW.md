@@ -28,7 +28,7 @@
   - `get_ai_diagnosis_queryset_for_user`: يعيد QuerySet مرشحًا حسب الدور والملكية والجامعة.
 
 ## 3) نقاط النهاية (apps/ai/urls.py → views.py)
-- `POST /api/ai/diagnose/` → `create_ai_diagnosis`  
+- `POST /api/ai/diagnose/` → `AIDiagnoseView`  
   - صلاحيات: `IsAuthenticated + CanRequestAIDiagnosis` + throttling.  
   - المدخلات: `symptoms_text`, `patient_id?`, `image_urls?[]`.  
   - المخرجات: diagnosis + `primary_suggestion`, `next_suggestion`, `all_suggestions`.
@@ -44,7 +44,7 @@
   - للمريض: يعيد أحدث تحليل مكتمل/مراجع مرتبط بآخر حالة، أو حالة “processing”.
 
 ## 4) دورة العمل
-1) **طلب التحليل**: المريض (أو المفوض) يرسل أعراض/صور → `create_ai_diagnosis` → استدعاء محركات النص/الرؤية/الدمج → تخزين `AIDiagnosis` بحالة `pending/completed/failed`.
+1) **طلب التحليل**: المريض (أو المفوض) يرسل أعراض/صور → `AIDiagnoseView` → استدعاء محركات النص/الرؤية/الدمج → تخزين `AIDiagnosis` بحالة `pending/completed/failed`.
 2) **عرض النتيجة**: قائمة/تفاصيل ضمن نطاق الصلاحيات.
 3) **مراجعة المشرف**: `review_ai_diagnosis_view` يعتمد/يرفض → الحالة `reviewed`.
 4) **التوريد للحالات**: النتائج تغذي `AIAnalysisSession` و `AIProposedCase` في قسم الحالات (انفصال تام: AI ≠ Case).

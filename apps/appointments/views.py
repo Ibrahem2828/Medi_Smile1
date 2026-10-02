@@ -5,7 +5,10 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import SAFE_METHODS
 from rest_framework.views import APIView
 
+from drf_spectacular.utils import extend_schema
+
 from apps.accounts.models import Role
+from medismile.openapi import DetailMessage, success_envelope
 from apps.cases.models import CaseHistory
 
 from .models import Appointment
@@ -23,6 +26,9 @@ from .permissions import (
     CanCreateAppointment,
     CanUpdateAppointment,
 )
+
+
+_AppointmentEnvelope = success_envelope("AppointmentEnvelope", AppointmentSerializer())
 
 
 # ============================================================
@@ -175,6 +181,7 @@ class AppointmentDetailView(generics.RetrieveUpdateAPIView):
 class AppointmentRescheduleView(APIView):
     permission_classes = [IsAuthenticatedAndActive]
 
+    @extend_schema(request=AppointmentRescheduleSerializer, responses={200: _AppointmentEnvelope, 400: DetailMessage, 403: DetailMessage, 404: DetailMessage}, tags=["appointments"])
     def post(self, request, pk):
         appointment = Appointment.objects.select_related("case", "patient", "student", "supervisor").filter(id=pk).first()
         if not appointment:
@@ -216,6 +223,7 @@ class AppointmentRescheduleView(APIView):
 class AppointmentCancelView(APIView):
     permission_classes = [IsAuthenticatedAndActive]
 
+    @extend_schema(request=AppointmentCancelSerializer, responses={200: _AppointmentEnvelope, 400: DetailMessage, 403: DetailMessage, 404: DetailMessage}, tags=["appointments"])
     def post(self, request, pk):
         appointment = Appointment.objects.select_related("case", "patient", "student", "supervisor").filter(id=pk).first()
         if not appointment:
@@ -253,6 +261,7 @@ class AppointmentCancelView(APIView):
 class AppointmentCompleteView(APIView):
     permission_classes = [IsAuthenticatedAndActive]
 
+    @extend_schema(request=AppointmentCompleteSerializer, responses={200: _AppointmentEnvelope, 400: DetailMessage, 403: DetailMessage, 404: DetailMessage}, tags=["appointments"])
     def post(self, request, pk):
         appointment = Appointment.objects.select_related("case", "patient", "student", "supervisor").filter(id=pk).first()
         if not appointment:

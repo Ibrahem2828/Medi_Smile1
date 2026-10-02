@@ -1,0 +1,115 @@
+{
+  "case_id": "c1",
+  "request_id": null,
+  "session_summary": {
+    "overall_decision": "high_match",
+    "overall_visual_risk": "low",
+    "overall_text_severity": "high",
+    "requires_supervisor_review": true,
+    "safety_flags": [
+      "high_severity_text"
+    ],
+    "quality": {
+      "image_quality": "good",
+      "quality_penalty": 0.0
+    }
+  },
+  "proposed_cases": [
+    {
+      "proposal_id": "c1-1",
+      "tooth_id": null,
+      "source": {
+        "vision": {
+          "tooth_confidence": 0.88,
+          "tooth_risk_level": "high",
+          "findings": [
+            {
+              "lesion_type": "caries_deep",
+              "lesion_percent": null,
+              "severity": "high",
+              "lesion_confidence": 0.88,
+              "lesion_bbox": null
+            }
+          ],
+          "tooth_bbox": null
+        },
+        "text": {
+          "primary_condition": "caries_deep",
+          "severity": "high",
+          "confidence_level": "high",
+          "suspected_conditions": [
+            {
+              "label": "caries_deep",
+              "confidence": 0.81
+            },
+            {
+              "label": "pulpitis_reversible",
+              "confidence": 0.6
+            }
+          ],
+          "normalized_text": "الم شديد بالضرس"
+        }
+      },
+      "fusion_decision": {
+        "decision_label": "high_match",
+        "final_diagnosis": "caries_deep",
+        "final_category": "caries",
+        "confidence_level": "high",
+        "match_score": 0.953,
+        "urgency_level": "high",
+        "requires_supervisor_review": true,
+        "safety_flags": [
+          "high_severity_text"
+        ],
+        "explanations": [
+          {
+            "type": "agreement",
+            "message": "Vision and text primary findings align."
+          }
+        ]
+      },
+      "medical_report": {
+        "summary": "بناءً على دمج مخرجات الصور والأعراض، القرار الحالي: high_match, بدرجة موثوقية high (score=0.95).",
+        "image_findings": "تحليل الصور يشير إلى: تسوس عميق (caries_deep).",
+        "symptom_analysis": "تحليل الأعراض يشير إلى: تسوس عميق (caries_deep).",
+        "recommendation": "يوصى بمراجعة طبيب الأسنان بشكل عاجل، مع تنبيه المشرف.",
+        "disclaimer": "هذا القرار مبدئي مبني على تحليل آلي للصور والأعراض ولا يغني عن الفحص السريري المباشر من طبيب مختص.",
+        "report_version": "v1-template",
+        "report_text": "بناءً على دمج مخرجات الصور والأعراض، القرار الحالي: high_match, بدرجة موثوقية high (score=0.95).\nتحليل الصور يشير إلى: تسوس عميق (caries_deep).\nتحليل الأعراض يشير إلى: تسوس عميق (caries_deep).\nالتبرير: تطابق واضح بين تحليل الصور (تسوس عميق (caries_deep)) والأعراض (تسوس عميق (caries_deep)).\nالتوصية: يوصى بمراجعة طبيب الأسنان بشكل عاجل، مع تنبيه المشرف.\nالاستعجال: high.\nالأمان الطبي: high_severity_text.\nهذا القرار مبدئي مبني على تحليل آلي للصور والأعراض ولا يغني عن الفحص السريري المباشر من طبيب مختص."
+      },
+      "metadata": {
+        "weights": {
+          "image_weight": 0.7,
+          "text_weight": 0.3
+        },
+        "score_breakdown": {
+          "label_match_score": 1.0,
+          "semantic_proximity_score": 1.0,
+          "confidence_score": 0.859,
+          "quality_penalty": 0.0,
+          "contradiction_penalty": 0.0
+        },
+        "model_versions": {
+          "vision_model": "yolov8m",
+          "text_model": "arabert_symptoms_v1",
+          "fusion_model": "v1-template"
+        },
+        "ontology_version": "1.0.0",
+        "relation": {
+          "image_concept": "caries_deep",
+          "text_concept": "caries_deep",
+          "level": "same",
+          "proximity": 1.0,
+          "rationale": "Identical concept."
+        }
+      }
+    }
+  ],
+  "unassigned_lesions": [],
+  "ui_hints": {
+    "default_flow": "sequential_review",
+    "next_action": "patient_review_required",
+    "ordering": "urgency_desc_then_match_score_desc",
+    "patient_decision_required": true
+  }
+}

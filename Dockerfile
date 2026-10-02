@@ -13,8 +13,7 @@ WORKDIR /app
 RUN python -m venv "$VIRTUAL_ENV"
 
 COPY requirements.txt ./
-RUN pip install --requirement requirements.txt \
-    && pip install "daphne==4.2.2"
+RUN pip install --requirement requirements.txt
 
 FROM python:3.12-slim-bookworm AS runtime
 
@@ -32,14 +31,14 @@ COPY --from=builder /opt/venv /opt/venv
 COPY --chown=app:app . /app
 
 RUN chmod 0555 /app/docker/entrypoint.sh \
-    && mkdir -p /app/staticfiles /app/media /app/backups \
-    && chown -R app:app /app/staticfiles /app/media /app/backups
+    && mkdir -p /app/staticfiles /app/media /app/private_media /app/backups \
+    && chown -R app:app /app/staticfiles /app/media /app/private_media /app/backups
 
 USER app
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD python -c "import os, socket; connection = socket.create_connection(('127.0.0.1', int(os.environ.get('PORT', '8000'))), 5); connection.close()" || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD python -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/readyz/' % os.environ.get('PORT', '8000'), timeout=5)" || exit 1
 
 ENTRYPOINT ["/app/docker/entrypoint.sh"]

@@ -35,6 +35,10 @@ class BaseStorageBackend(ABC):
     def url(self, name: str) -> str:
         raise NotImplementedError
 
+    @abstractmethod
+    def open(self, name: str, mode: str = "rb"):
+        raise NotImplementedError
+
 
 # ============================================================
 # Local Storage Backend
@@ -45,7 +49,7 @@ class LocalStorageBackend(BaseStorageBackend):
     """
 
     def __init__(self, base_location: str | None = None):
-        self.base_location = base_location or settings.MEDIA_ROOT
+        self.base_location = base_location or settings.PRIVATE_MEDIA_ROOT
         self.storage = FileSystemStorage(location=self.base_location)
 
     def save(self, name: str, content: BinaryIO) -> str:
@@ -61,6 +65,38 @@ class LocalStorageBackend(BaseStorageBackend):
     def url(self, name: str) -> str:
         return self.storage.url(name)
 
+    def open(self, name: str, mode: str = "rb"):
+        return self.storage.open(name, mode)
+
+
+class S3StorageBackend(BaseStorageBackend):
+    """Thin adapter around the configured S3 storage.
+
+    This must not inherit ``LocalStorageBackend``: doing so runs the local
+    constructor and silently replaces S3 with ``FileSystemStorage``.
+    """
+
+    def __init__(self):
+        from storages.backends.s3boto3 import S3Boto3Storage
+
+        self.storage = S3Boto3Storage()
+
+    def save(self, name: str, content: BinaryIO) -> str:
+        return self.storage.save(name, content)
+
+    def delete(self, name: str) -> None:
+        if self.storage.exists(name):
+            self.storage.delete(name)
+
+    def exists(self, name: str) -> bool:
+        return self.storage.exists(name)
+
+    def url(self, name: str) -> str:
+        return self.storage.url(name)
+
+    def open(self, name: str, mode: str = "rb"):
+        return self.storage.open(name, mode)
+
 
 # ============================================================
 # Storage Resolver
@@ -69,19 +105,14 @@ def get_storage_backend() -> BaseStorageBackend:
     """
     Resolve storage backend based on settings.
 
-    DEFAULT_FILE_STORAGE:
-    - S3 → cloud
-    - otherwise → local filesystem
+    Uses Django's current storage setting.  ``DEFAULT_FILE_STORAGE`` was
+    removed in Django 5.1, so reading it here would fail after the upgrade.
     """
-    if settings.DEFAULT_FILE_STORAGE.endswith("S3Boto3Storage"):
-        from storages.backends.s3boto3 import S3Boto3Storage
+    backend = settings.STORAGES.get("default", {}).get("BACKEND", "")
+    if backend.endswith("S3Boto3Storage"):
+        return S3StorageBackend()
 
-        class S3Backend(LocalStorageBackend):
-            storage = S3Boto3Storage()
-
-        return S3Backend()
-
-    return LocalStorageBackend()
+    return LocalStorageBackend(base_location=str(settings.PRIVATE_MEDIA_ROOT))
 
 
 # ============================================================

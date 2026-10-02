@@ -1,0 +1,39 @@
+name: medismile
+
+# Coolify production stack. Provision PostgreSQL and Redis as Coolify resources
+# and inject their internal URLs through the Coolify environment UI; do not add
+# an env_file or production secrets to this repository.
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      PORT: "8000"
+      COLLECT_STATIC: "true"
+      PRIVATE_MEDIA_ROOT: /app/private_media
+      BACKUP_DIRECTORY: /app/backups
+    expose:
+      - "8000"
+    volumes:
+      - private_media:/app/private_media
+      - backup_workdir:/app/backups
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["celery", "-A", "medismile", "worker", "--loglevel=INFO"]
+    environment:
+      COLLECT_STATIC: "false"
+      PRIVATE_MEDIA_ROOT: /app/private_media
+      BACKUP_DIRECTORY: /app/backups
+    volumes:
+      - private_media:/app/private_media
+      - backup_workdir:/app/backups
+    restart: unless-stopped
+
+volumes:
+  private_media:
+  backup_workdir:

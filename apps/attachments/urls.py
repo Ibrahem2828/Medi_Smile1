@@ -4,6 +4,7 @@ from django.urls import path
 from .views import (
     AttachmentListCreateView,
     AttachmentDetailView,
+    AttachmentFileView,
 )
 
 urlpatterns = [
@@ -14,6 +15,11 @@ urlpatterns = [
         "",
         AttachmentListCreateView.as_view(),
         name="attachment-list-create",
+    ),
+    path(
+        "<uuid:pk>/file/",
+        AttachmentFileView.as_view(),
+        name="attachment-file",
     ),
     path(
         "<uuid:pk>/",

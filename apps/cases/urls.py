@@ -11,6 +11,7 @@ from .views import (
     CaseSessionListView,
     CaseSessionCreateView,
     CaseSessionReviewView,
+    AICriticalCaseCreateView,
     AIProposalIngestView,
     AIProposalNextView,
     AIProposalDecisionView,
@@ -83,6 +84,11 @@ urlpatterns = [
     # =====================================================
     # AI Proposals (patient review)
     # =====================================================
+    path(
+        "ai/create/",
+        AICriticalCaseCreateView.as_view(),
+        name="ai-critical-case-create",
+    ),
     path(
         "ai/proposals/",
         AIProposalIngestView.as_view(),

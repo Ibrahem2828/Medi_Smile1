@@ -52,6 +52,8 @@ INSTALLED_APPS = [
 
     # Third-party
     "rest_framework",
+    "rest_framework_simplejwt.token_blacklist",
+    "drf_spectacular",
     "corsheaders",
     "channels",
     "apps.accounts.apps.AccountsConfig",
@@ -145,12 +147,18 @@ Strategy:
 
 database_url = os.getenv("DATABASE_URL")
 if database_url:
+    database_ssl_require = _env_bool(
+        "DATABASE_SSL_REQUIRE", default=not DEBUG
+    )
     # Production / Cloud (with optional sqlite override for local/test)
     DATABASES = {
         "default": dj_database_url.parse(
             database_url,
-            conn_max_age=600,
-            ssl_require=not database_url.startswith("sqlite"),
+            conn_max_age=int(os.getenv("DATABASE_CONN_MAX_AGE", "600")),
+            # Coolify services normally communicate on an isolated Docker
+            # network, where TLS is not terminated by PostgreSQL itself. A
+            # public/managed database should set DATABASE_SSL_REQUIRE=true.
+            ssl_require=(False if database_url.startswith("sqlite") else database_ssl_require),
         )
     }
 else:
@@ -165,6 +173,8 @@ else:
             "PORT": os.getenv("DB_PORT", "5432"),
         }
     }
+
+DATABASES["default"]["CONN_HEALTH_CHECKS"] = True
 
 # ============================================================
 # Password Validation
@@ -192,7 +202,26 @@ MEDIA_URL = "/media/"
 
 STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
+# ``MEDIA_ROOT`` is retained only for non-medical, explicitly public assets.
+# Uploaded clinical images, attachments and report exports use the private
+# storage configured below and must never be mounted by a reverse proxy.
 MEDIA_ROOT = BASE_DIR / "media"
+PRIVATE_MEDIA_ROOT = Path(os.getenv("PRIVATE_MEDIA_ROOT", str(BASE_DIR / "private_media")))
+
+_storage_backend = os.getenv(
+    "PRIVATE_FILE_STORAGE_BACKEND", "django.core.files.storage.FileSystemStorage"
+)
+STORAGES = {
+    "default": {
+        "BACKEND": _storage_backend,
+        "OPTIONS": (
+            {"location": PRIVATE_MEDIA_ROOT, "base_url": "/private-media/"}
+            if _storage_backend == "django.core.files.storage.FileSystemStorage"
+            else {}
+        ),
+    },
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
+}
 
 WHITENOISE_AUTOREFRESH = DEBUG
 WHITENOISE_USE_FINDERS = True
@@ -239,8 +268,13 @@ REST_FRAMEWORK = {
         "rest_framework.parsers.MultiPartParser",
     ],
     "EXCEPTION_HANDLER": "medismile.utils.exceptions.custom_exception_handler",
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_THROTTLE_RATES": {
+        "anon": "120/hour",
+        "user": "1200/hour",
+        "login": "10/minute",
         "ai-diagnose": "5/minute",
+        "ai-image-upload": "20/minute",
         "ai-review": "30/hour",
         "ai-health": "120/hour",
         "ai-my-analysis": "30/hour",
@@ -251,11 +285,38 @@ REST_FRAMEWORK = {
 
 
 # ============================================================
+# OpenAPI (drf-spectacular)
+# ============================================================
+# The committed spec at docs/api/openapi.yaml is generated from the code:
+#   python manage.py spectacular --file docs/api/openapi.yaml --validate
+# and medismile/test_openapi_contract.py fails if it drifts from the code.
+SPECTACULAR_SETTINGS = {
+    "TITLE": "MediSmile API",
+    "DESCRIPTION": (
+        "REST API of the MediSmile dental training & consultation platform. "
+        "All endpoints are under /api/ and authenticate with `Authorization: Bearer <JWT access token>` "
+        "obtained from /api/accounts/login/<role>/."
+    ),
+    "VERSION": "1.1.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "SCHEMA_PATH_PREFIX": r"/api/",
+    "COMPONENT_SPLIT_REQUEST": True,
+    "SORT_OPERATIONS": False,
+    "PREPROCESSING_HOOKS": ["medismile.openapi.exclude_slashless_aliases"],
+    # The schema itself is not secret, but keep the live endpoint staff-only
+    # in production; the committed YAML is the reference for clients.
+    "SERVE_PERMISSIONS": ["rest_framework.permissions.IsAdminUser"],
+}
+
+
+# ============================================================
 # Simple JWT
 # ============================================================
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(days=7),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
+    # Access tokens are intentionally short-lived.  The refresh token is
+    # rotated and blacklisted on use; logout blacklists it as well.
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=14),
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
     "UPDATE_LAST_LOGIN": True,
@@ -273,6 +334,14 @@ AI_VISION_URL = os.getenv("AI_VISION_URL", "")
 AI_FUSION_URL = os.getenv("AI_FUSION_URL", "")
 AI_ENGINE_BASE_URL = os.getenv("AI_ENGINE_BASE_URL", "")  # Only for local/dev if explicitly set
 AI_ENGINE_TIMEOUT = int(os.getenv("AI_ENGINE_TIMEOUT", "30"))
+
+# Patient image uploads for AI analysis (POST /api/ai/images/, /api/ai/diagnose/)
+AI_IMAGE_MAX_BYTES = int(os.getenv("AI_IMAGE_MAX_BYTES", str(10 * 1024 * 1024)))
+AI_IMAGE_MAX_PIXELS = int(os.getenv("AI_IMAGE_MAX_PIXELS", "40000000"))
+AI_IMAGE_MAX_SIDE = int(os.getenv("AI_IMAGE_MAX_SIDE", "2048"))
+# Legacy image_urls input: the backend fetches these URLs, so only explicitly
+# trusted HTTPS hosts are accepted (empty = URL input disabled; use uploads).
+AI_IMAGE_URL_ALLOWED_HOSTS = _env_list("AI_IMAGE_URL_ALLOWED_HOSTS")
 
 # Enforce explicit endpoints in non-debug environments to avoid localhost fallback.
 if not DEBUG:
@@ -316,6 +385,11 @@ SECURE_HSTS_SECONDS = int(
 SECURE_HSTS_INCLUDE_SUBDOMAINS = _env_bool(
     "SECURE_HSTS_INCLUDE_SUBDOMAINS", default=not DEBUG
 )
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "same-origin"
+X_FRAME_OPTIONS = "DENY"
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = True
 
 # ============================================================
 # Logging
@@ -359,6 +433,15 @@ CELERY_ENABLE_UTC = True
 # ============================================================
 # Backup
 # ============================================================
-BACKUP_DIRECTORY = str(BASE_DIR / "backups")
+BACKUP_DIRECTORY = os.getenv("BACKUP_DIRECTORY", str(BASE_DIR / "backups"))
 BACKUP_STORAGE_TYPE = os.getenv("BACKUP_STORAGE_TYPE", "local")  # local | s3
 BACKUP_RETENTION_DAYS = int(os.getenv("BACKUP_RETENTION_DAYS", "30"))
+# Restore is deliberately disabled by default.  A real restore is destructive
+# and must target a separate, explicitly configured recovery environment.
+BACKUP_RESTORE_ENABLED = _env_bool("BACKUP_RESTORE_ENABLED")
+BACKUP_RESTORE_DATABASE_URL = os.getenv("BACKUP_RESTORE_DATABASE_URL", "")
+BACKUP_RESTORE_MEDIA_ROOT = os.getenv("BACKUP_RESTORE_MEDIA_ROOT", "")
+
+# Attachment input policy. Content is verified from bytes, not the client MIME
+# header, before it is written to private storage.
+ATTACHMENT_MAX_BYTES = int(os.getenv("ATTACHMENT_MAX_BYTES", str(10 * 1024 * 1024)))

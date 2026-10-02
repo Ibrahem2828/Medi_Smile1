@@ -5,6 +5,8 @@ from django.db.models import Count, Q
 from django.db.models.functions import TruncDate
 from django.utils import timezone
 
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -80,6 +82,7 @@ class AuditLogListView(generics.ListAPIView):
         return qs.order_by("-created_at")
 
 
+@extend_schema(responses={200: OpenApiTypes.OBJECT}, tags=["audit"])
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, (IsUniversityAdmin | IsTechSupport)])
 def audit_statistics(request):

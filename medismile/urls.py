@@ -2,7 +2,9 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from django.db import DatabaseError, connections
 from django.http import JsonResponse
+from drf_spectacular.views import SpectacularAPIView
 
 from medismile.ui_views import ui_index, ui_contract
 
@@ -31,6 +33,27 @@ def health_check(request):
     })
 
 
+def readiness_check(request):
+    """Return ready only when this instance can serve database-backed APIs.
+
+    Keep this deliberately independent from AI model services: a slow model
+    must not make account, case, and appointment traffic look unavailable.
+    Coolify should use this endpoint as the application's health check.
+    """
+    try:
+        connection = connections["default"]
+        connection.ensure_connection()
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+    except DatabaseError:
+        return JsonResponse(
+            {"status": "unavailable", "service": "medismile-backend"},
+            status=503,
+        )
+    return JsonResponse({"status": "ready", "service": "medismile-backend"})
+
+
 # ============================================================
 # API Versioning
 # ============================================================
@@ -49,6 +72,8 @@ urlpatterns = [
     # System Endpoints
     # --------------------------------------------------------
     path("health/", health_check, name="health-check"),
+    path("readyz/", readiness_check, name="readiness-check"),
+    path("api/schema/", SpectacularAPIView.as_view(), name="api-schema"),
     path("ui/", ui_index, name="ui-index"),
     path("ui/contracts/<slug:contract>/", ui_contract, name="ui-contract"),
 

@@ -6,7 +6,7 @@ from django.utils import timezone
 
 from apps.accounts.models import Role
 from apps.audit.services import log_audit_event
-from apps.backup.engine import BackupEngine
+from apps.backup.engine import BackupEngine, BackupIntegrityError
 from apps.notifications.services import notify_user
 from .models import Backup
 
@@ -56,6 +56,17 @@ def create_backup(
 
 
 def mark_backup_completed(backup: Backup):
+    # Do not create a successful audit trail unless every requested artifact
+    # exists and has already passed the engine's integrity checks.
+    engine = BackupEngine()
+    if backup.backup_type in {Backup.BackupType.DATABASE, Backup.BackupType.FULL}:
+        if not backup.database_backup_path:
+            raise BackupIntegrityError("Database backup artifact is missing.")
+        engine.verify_database_backup(backup.database_backup_path)
+    if backup.backup_type in {Backup.BackupType.FILES, Backup.BackupType.FULL}:
+        if not backup.files_backup_path:
+            raise BackupIntegrityError("Files backup artifact is missing.")
+        engine.verify_files_backup(backup.files_backup_path)
     backup.status = Backup.Status.COMPLETED
     backup.completed_at = timezone.now()
     backup.save()
@@ -104,6 +115,9 @@ def restore_backup(*, actor, backup: Backup, restore_type: str):
 
     engine = BackupEngine()
 
+    if backup.status != Backup.Status.COMPLETED:
+        raise BackupIntegrityError("Only a completed, verified backup can be restored.")
+
     log_audit_event(
         user=actor,
         action="backup.restore.started",
@@ -112,11 +126,25 @@ def restore_backup(*, actor, backup: Backup, restore_type: str):
         metadata={"restore_type": restore_type},
     )
 
-    if restore_type in {"database", "full"}:
-        engine.restore_database(backup.database_backup_path)
+    try:
+        if restore_type in {"database", "full"}:
+            if not backup.database_backup_path:
+                raise BackupIntegrityError("Backup does not contain a database artifact.")
+            engine.restore_database(backup.database_backup_path)
 
-    if restore_type in {"files", "full"}:
-        engine.restore_files(backup.files_backup_path)
+        if restore_type in {"files", "full"}:
+            if not backup.files_backup_path:
+                raise BackupIntegrityError("Backup does not contain a files artifact.")
+            engine.restore_files(backup.files_backup_path)
+    except Exception as exc:
+        log_audit_event(
+            user=actor,
+            action="backup.restore.failed",
+            description="Backup restore failed",
+            content_object=backup,
+            metadata={"restore_type": restore_type, "error": str(exc)},
+        )
+        raise
 
     log_audit_event(
         user=actor,

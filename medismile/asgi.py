@@ -30,9 +30,11 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "medismile.settings")
 django_asgi_app = get_asgi_application()
 
 from channels.auth import AuthMiddlewareStack
+from channels.security.websocket import AllowedHostsOriginValidator
 from channels.routing import ProtocolTypeRouter, URLRouter
 
 import apps.messaging.routing
+from medismile.ws_auth import JWTAuthMiddleware
 
 
 # ============================================================
@@ -48,9 +50,11 @@ application = ProtocolTypeRouter(
         # -------------------------
         # WebSocket connections
         # -------------------------
-        "websocket": AuthMiddlewareStack(
-            URLRouter(
-                apps.messaging.routing.websocket_urlpatterns
+        "websocket": AllowedHostsOriginValidator(
+            AuthMiddlewareStack(
+                JWTAuthMiddleware(
+                    URLRouter(apps.messaging.routing.websocket_urlpatterns)
+                )
             )
         ),
     }

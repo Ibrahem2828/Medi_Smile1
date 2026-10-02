@@ -20,20 +20,31 @@ DIAGNOSIS_LABEL_MAP: Dict[str, str] = {
 
 # Normalization for choice-like fields. Keys are external labels, values are internal enums.
 CONFIDENCE_LEVEL_MAP: Dict[str, str] = {
+    "unknown": ConfidenceLevel.UNKNOWN,
     "low": ConfidenceLevel.LOW,
     "medium": ConfidenceLevel.MEDIUM,
     "high": ConfidenceLevel.HIGH,
 }
 
 SEVERITY_LEVEL_MAP: Dict[str, str] = {
+    "unknown": SeverityLevel.UNKNOWN,
     "low": SeverityLevel.LOW,
+    "mild": SeverityLevel.LOW,
     "moderate": SeverityLevel.MODERATE,
+    "medium": SeverityLevel.MODERATE,  # NLP / fusion vocabulary
     "high": SeverityLevel.HIGH,
+    "severe": SeverityLevel.HIGH,
 }
 
+# Engines speak different vocabularies: NLP returns "Urgent"/"Non-Urgent",
+# fusion returns low/medium/high urgency. Only "high" is urgent.
 URGENCY_LEVEL_MAP: Dict[str, str] = {
+    "unknown": UrgencyLevel.UNKNOWN,
     "non_urgent": UrgencyLevel.NON_URGENT,
     "urgent": UrgencyLevel.URGENT,
+    "high": UrgencyLevel.URGENT,
+    "medium": UrgencyLevel.NON_URGENT,
+    "low": UrgencyLevel.NON_URGENT,
 }
 
 
@@ -46,7 +57,8 @@ def normalize_diagnosis_label(label: str | None) -> str:
 def _normalize_choice(value: str | None, mapping: Dict[str, str], default: str) -> str:
     if not value:
         return default
-    return mapping.get(value, default)
+    key = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+    return mapping.get(key, default)
 
 
 def normalize_confidence(value: str | None, default: str) -> str:

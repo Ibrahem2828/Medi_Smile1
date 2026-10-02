@@ -18,6 +18,7 @@ logs/
 backups/
 staticfiles/
 media/
+private_media/
 *.zip
 *.rar
 *.docx

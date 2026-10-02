@@ -1,7 +1,10 @@
 # apps/reports/views.py
+from django.http import FileResponse, Http404
 from rest_framework import generics, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema
 
 from medismile.utils.auth import resolve_request_user
 from apps.accounts.models import User
@@ -17,7 +20,7 @@ from .serializers import (
     ReportRejectSerializer,
     ReportExportSerializer,
 )
-from .selectors import reports_queryset_for_user, reports_for_student, reports_for_university
+from .selectors import _resolve_university_id, reports_queryset_for_user, reports_for_student, reports_for_university
 from .services import (
     create_report,
     update_report,
@@ -25,6 +28,7 @@ from .services import (
     approve_report,
     reject_report,
     export_report,
+    get_export_file_path,
 )
 from .permissions import (
     CanViewReport,
@@ -156,6 +160,30 @@ class ReportExportView(generics.CreateAPIView):
 
         file_url = export_report(actor=actor, report=report, fmt=serializer.validated_data["format"])
         return Response({"status": "success", "data": {"file_url": file_url}}, status=status.HTTP_200_OK)
+
+
+class ReportExportFileView(generics.RetrieveAPIView):
+    """Download a generated report through an authenticated, scoped route."""
+
+    permission_classes = [IsAuthenticated, CanExportReport]
+    queryset = Report.objects.select_related("university")
+
+    @extend_schema(responses={200: OpenApiTypes.BINARY}, tags=["reports"])
+    def get(self, request, *args, **kwargs):
+        report = self.get_object()
+        actor = resolve_request_user(request)
+        actor_university_id = _resolve_university_id(actor)
+        if not actor_university_id or report.university_id != actor_university_id:
+            raise Http404
+        export_path = get_export_file_path(report)
+        if not export_path:
+            raise Http404
+        content_type = "application/pdf" if export_path.suffix == ".pdf" else "text/csv; charset=utf-8"
+        response = FileResponse(export_path.open("rb"), content_type=content_type)
+        response["Content-Disposition"] = f'attachment; filename="report_{report.id}{export_path.suffix}"'
+        response["Cache-Control"] = "private, no-store"
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
 
 
 class StudentReportsView(generics.ListAPIView):

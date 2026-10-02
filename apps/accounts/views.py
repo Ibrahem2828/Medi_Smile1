@@ -3,11 +3,15 @@ from rest_framework import generics, status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.exceptions import PermissionDenied
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.views import TokenBlacklistView, TokenRefreshView
 from django.http import Http404
+from drf_spectacular.utils import extend_schema
 
 from apps.audit.services import log_audit_event
+from medismile.openapi import DetailMessage, ErrorEnvelope, LoginResponse
 from .models import (
     Role,
     PatientProfile,
@@ -41,6 +45,7 @@ from .permissions import (
     CanCreateUniversityAdmin,
     CanCreateTechSupport,
 )
+from medismile.utils.throttling import LoginRateThrottle
 
 
 # ============================================================
@@ -48,6 +53,7 @@ from .permissions import (
 # ============================================================
 class BaseRoleLoginView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [LoginRateThrottle]
     role_name = None
 
     def _user_payload(self, user):
@@ -72,6 +78,12 @@ class BaseRoleLoginView(APIView):
             "access": str(refresh.access_token),
         }
 
+    @extend_schema(
+        request=RoleBasedLoginSerializer,
+        responses={200: LoginResponse, 400: ErrorEnvelope},
+        auth=[],
+        tags=["auth"],
+    )
     def post(self, request):
         serializer = RoleBasedLoginSerializer(
             data=request.data,
@@ -113,6 +125,22 @@ class UniversityAdminLoginView(BaseRoleLoginView):
 
 class TechSupportLoginView(BaseRoleLoginView):
     role_name = Role.TECH_SUPPORT
+
+
+class RefreshSessionView(TokenRefreshView):
+    """Rotate a refresh token using SimpleJWT's blacklist-enabled flow."""
+
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "login"
+
+
+class LogoutView(TokenBlacklistView):
+    """Invalidate a refresh token; access tokens remain short-lived."""
+
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "login"
 
 
 # ============================================================
@@ -402,6 +430,7 @@ class TechSupportMeView(_BaseMeView):
 class FCMTokenView(APIView):
     permission_classes = [IsAuthenticatedAndActive]
 
+    @extend_schema(request=FCMTokenSerializer, responses={200: DetailMessage}, tags=["accounts"])
     def post(self, request):
         serializer = FCMTokenSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -421,6 +450,7 @@ class FCMTokenView(APIView):
 
         return Response({"detail": "Token registered."}, status=status.HTTP_200_OK)
 
+    @extend_schema(request=None, responses={200: DetailMessage}, tags=["accounts"])
     def delete(self, request):
         request.user.fcm_token = None
         request.user.save(update_fields=["fcm_token", "updated_at"])

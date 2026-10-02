@@ -3,6 +3,8 @@ from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
 
+from drf_spectacular.utils import extend_schema
+
 from medismile.permissions import MatrixPermission
 from .models import Notification
 from .serializers import (
@@ -51,6 +53,18 @@ class NotificationCreateView(generics.CreateAPIView):
     permission_classes = [MatrixPermission]
     permission_resource = "notifications.notification"
     permission_action = "create"
+
+    @extend_schema(request=NotificationCreateSerializer, responses={201: NotificationSerializer})
+    def create(self, request, *args, **kwargs):
+        # Respond with the full read representation (including ``id``) so
+        # clients don't have to re-fetch the inbox to find what they created.
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        notification = serializer.save()
+        return Response(
+            NotificationSerializer(notification, context=self.get_serializer_context()).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
 # ============================================================

@@ -1,4 +1,5 @@
 # apps/attachments/tests.py
+from base64 import b64decode
 from django.urls import reverse
 from django.utils import timezone
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -109,9 +110,12 @@ class AttachmentUploadTests(AttachmentsBaseTestCase):
         self.client.login(email="student@attach.test", password="Student123!")
 
         file = SimpleUploadedFile(
-            "before.jpg",
-            b"file_content",
-            content_type="image/jpeg",
+            "before.png",
+            b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2"
+                "FzhVAAAAAElFTkSuQmCC"
+            ),
+            content_type="image/png",
         )
 
         url = reverse("attachment-list-create")

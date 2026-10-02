@@ -13,7 +13,9 @@ __pycache__/
 
 logs/
 backups/
+test-backup-runtime/
 media/
+private_media/
 staticfiles/
 
 .idea/

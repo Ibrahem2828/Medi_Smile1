@@ -22,6 +22,7 @@ def run_backup_task(self, backup_id: str):
             engine.backup_files(backup)
 
         backup.total_size = (backup.database_size or 0) + (backup.files_size or 0)
+        backup.save(update_fields=["total_size"])
         mark_backup_completed(backup)
 
         return {"success": True, "backup_id": str(backup.id)}

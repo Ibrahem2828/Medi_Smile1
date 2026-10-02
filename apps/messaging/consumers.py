@@ -1,6 +1,8 @@
 # apps/messaging/consumers.py
 import json
 import logging
+import time
+from collections import deque
 
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
@@ -25,10 +27,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
     WebSocket consumer for case-based chat.
     """
 
+    MAX_MESSAGE_BYTES = 4096
+    MAX_MESSAGES_PER_MINUTE = 30
+
     async def connect(self):
         self.room_id = self.scope["url_route"]["kwargs"]["room_id"]
         self.room_group_name = f"chat_{self.room_id}"
         self.user = self.scope["user"]
+        self._message_times = deque()
 
         if not self.user.is_authenticated:
             await self._log_ws_event("messaging.ws.denied", "Unauthenticated websocket access")
@@ -60,6 +66,16 @@ class ChatConsumer(AsyncWebsocketConsumer):
             logger.exception("WebSocket group discard failed")
 
     async def receive(self, text_data):
+        if not isinstance(text_data, str) or len(text_data.encode("utf-8")) > self.MAX_MESSAGE_BYTES:
+            await self.close(code=1009)
+            return
+        now = time.monotonic()
+        while self._message_times and self._message_times[0] <= now - 60:
+            self._message_times.popleft()
+        if len(self._message_times) >= self.MAX_MESSAGES_PER_MINUTE:
+            await self.close(code=1013)
+            return
+        self._message_times.append(now)
         try:
             data = json.loads(text_data)
         except (TypeError, json.JSONDecodeError):
@@ -161,7 +177,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
         except Room.DoesNotExist:
             return False
 
-        user = self.user
+        user = User.objects.select_related("role").filter(id=self.user.id, is_active=True).first()
+        if not user:
+            return False
         role = getattr(user, "role_name", None) or getattr(getattr(user, "role", None), "name", None)
 
         if not is_room_chat_open(room):

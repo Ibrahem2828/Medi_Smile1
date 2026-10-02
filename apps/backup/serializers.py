@@ -148,6 +148,7 @@ class BackupRestoreSerializer(serializers.Serializer):
     """
 
     backup_id = serializers.UUIDField(
+        required=False,
         label=_("Backup ID")
     )
 

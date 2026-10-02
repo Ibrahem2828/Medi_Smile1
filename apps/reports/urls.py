@@ -7,6 +7,7 @@ from .views import (
     ReportApproveView,
     ReportRejectView,
     ReportExportView,
+    ReportExportFileView,
     StudentReportsView,
     UniversityReportsView,
 )
@@ -21,6 +22,7 @@ urlpatterns = [
     path("<uuid:pk>/approve/", ReportApproveView.as_view(), name="report-approve"),
     path("<uuid:pk>/reject/", ReportRejectView.as_view(), name="report-reject"),
     path("<uuid:pk>/export/", ReportExportView.as_view(), name="report-export"),
+    path("<uuid:pk>/export-file/", ReportExportFileView.as_view(), name="report-export-file"),
 
     # Scoped
     path("students/<uuid:student_id>/", StudentReportsView.as_view(), name="student-reports"),

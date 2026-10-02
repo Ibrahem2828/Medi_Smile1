@@ -1,7 +1,12 @@
 # apps/attachments/serializers.py
 import logging
+import os
+
+from PIL import Image, UnidentifiedImageError
 from rest_framework import serializers
 from django.utils.translation import gettext_lazy as _
+from django.conf import settings
+from django.urls import reverse
 
 from medismile.utils.auth import resolve_request_user
 
@@ -42,11 +47,11 @@ class AttachmentSerializer(serializers.ModelSerializer):
         )
 
     def get_file_url(self, obj):
-        # Guard empty file to avoid storage errors
-        if not obj.file:
-            return None
-        storage = get_storage_backend()
-        return storage.url(obj.file.name)
+        # Medical attachments are downloaded through an authenticated endpoint,
+        # never through a storage URL or a public /media/ mount.
+        request = self.context.get("request")
+        path = reverse("attachment-file", kwargs={"pk": obj.pk})
+        return request.build_absolute_uri(path) if request else path
 
 
 class AttachmentCreateSerializer(serializers.Serializer):
@@ -55,6 +60,41 @@ class AttachmentCreateSerializer(serializers.Serializer):
     attachment_type = serializers.ChoiceField(
         choices=Attachment.AttachmentType.choices
     )
+
+    _IMAGE_MIME_BY_FORMAT = {
+        "JPEG": "image/jpeg",
+        "PNG": "image/png",
+        "WEBP": "image/webp",
+    }
+
+    def validate_file(self, value):
+        if value.size > settings.ATTACHMENT_MAX_BYTES:
+            raise serializers.ValidationError(
+                _("File is larger than the configured upload limit.")
+            )
+
+        # Browser-provided content_type is not evidence.  Read the magic bytes
+        # and verify images with Pillow before accepting them.
+        try:
+            value.seek(0)
+            image = Image.open(value)
+            image.verify()
+            mime_type = self._IMAGE_MIME_BY_FORMAT.get(image.format or "")
+        except (UnidentifiedImageError, OSError, ValueError, SyntaxError):
+            value.seek(0)
+            header = value.read(8)
+            mime_type = "application/pdf" if header.startswith(b"%PDF-") else None
+        finally:
+            value.seek(0)
+
+        if not mime_type:
+            raise serializers.ValidationError(
+                _("Only verified JPEG, PNG, WebP, or PDF files are allowed.")
+            )
+        # DRF calls this method before validate(); attach data via the upload
+        # object is unsafe, so stash it in serializer state for create().
+        self._verified_mime_type = mime_type
+        return value
 
     def validate(self, attrs):
         request = self.context.get("request")
@@ -100,13 +140,13 @@ class AttachmentCreateSerializer(serializers.Serializer):
                 case=validated_data["case"],
                 uploaded_by=validated_data["uploaded_by"],
                 file=path,
-                original_filename=file.name,
+                original_filename=os.path.basename(file.name)[:255],
                 file_size=file.size,
-                mime_type=getattr(file, "content_type", None),
+                mime_type=getattr(self, "_verified_mime_type", None),
                 attachment_type=validated_data["attachment_type"],
                 file_category=(
                     Attachment.FileCategory.IMAGE
-                    if getattr(file, "content_type", "") and file.content_type.startswith("image/")
+                    if getattr(self, "_verified_mime_type", "").startswith("image/")
                     else Attachment.FileCategory.DOCUMENT
                 ),
             )

@@ -58,37 +58,59 @@ class AIEnginesConfig:
 
 
 @dataclass(frozen=True)
-class _ImageUpload:
+class ImageInput:
+    """An image already held in memory (e.g. a validated patient upload)."""
+
     filename: str
     content: bytes
     content_type: str
     source_url: str
 
 
-def _download_first_image(image_urls: List[str], timeout: int) -> _ImageUpload:
+# Backwards-compatible alias for older imports.
+_ImageUpload = ImageInput
+
+# Hard cap on bytes read from a remote image URL (defence against huge bodies).
+_MAX_REMOTE_IMAGE_BYTES = 10 * 1024 * 1024
+
+
+def _download_first_image(image_urls: List[str], timeout: int) -> ImageInput:
     """
     Download the first reachable image so we can forward it as multipart/form-data
     to the vision model, which expects a binary file (see backend_endpoint.json).
+
+    URLs reach this point only after the request serializer checked them against
+    ``AI_IMAGE_URL_ALLOWED_HOSTS``; redirects are still refused so an allowed
+    host cannot bounce the request to an internal address, and the body size is
+    capped while streaming.
     """
     errors: List[str] = []
     for url in image_urls:
         try:
-            response = requests.get(url, timeout=timeout)
+            with requests.get(url, timeout=timeout, stream=True, allow_redirects=False) as response:
+                if response.status_code >= 300:
+                    errors.append(f"{url}: HTTP {response.status_code}")
+                    continue
+                chunks: List[bytes] = []
+                total = 0
+                for chunk in response.iter_content(chunk_size=64 * 1024):
+                    total += len(chunk)
+                    if total > _MAX_REMOTE_IMAGE_BYTES:
+                        raise AIEngineError(f"{url}: image exceeds {_MAX_REMOTE_IMAGE_BYTES} bytes")
+                    chunks.append(chunk)
+                content_type = (response.headers.get("content-type") or "").split(";")[0].strip()
         except requests.RequestException as exc:
             errors.append(f"{url}: {exc}")
             continue
-
-        if response.status_code >= 400:
-            errors.append(f"{url}: HTTP {response.status_code}")
+        except AIEngineError as exc:
+            errors.append(str(exc))
             continue
 
         filename = Path(urlparse(url).path).name or "image_upload"
-        content_type = (response.headers.get("content-type") or "").split(";")[0].strip() or "application/octet-stream"
-
-        return _ImageUpload(
+        return ImageInput(
             filename=filename,
-            content=response.content,
-            content_type=content_type,
+            content=b"".join(chunks),
+            content_type=content_type or "application/octet-stream",
             source_url=url,
         )
 
@@ -193,21 +215,42 @@ def call_vision_model(
     *,
     config: AIEngineConfig,
     image_urls: Optional[List[str]] = None,
+    images: Optional[List[ImageInput]] = None,
     case_id: Optional[str] = None,
     audit_hook: AuditHook = None,
 ) -> Dict[str, Any]:
-    if not image_urls:
-        raise AIEngineError("Vision model requires at least one image URL.")
+    """Analyze every supplied image and preserve the source of each result."""
+    if images:
+        uploads = list(images)
+    elif image_urls:
+        uploads = [_download_first_image([url], config.timeout_seconds) for url in image_urls]
+    else:
+        raise AIEngineError("Vision model requires at least one image.")
 
-    upload = _download_first_image(image_urls, config.timeout_seconds)
-    started = time.monotonic()
-    try:
-        data = _post_multipart(
-            config=config,
-            path=None,
-            files={"image_file": (upload.filename, upload.content, upload.content_type)},
-            data={"case_id": case_id or ""},
-        )
+    results: list[dict[str, Any]] = []
+    for upload in uploads:
+        started = time.monotonic()
+        try:
+            data = _post_multipart(
+                config=config,
+                path=None,
+                files={"image_file": (upload.filename, upload.content, upload.content_type)},
+                data={"case_id": case_id or ""},
+            )
+            results.append({"image_id": upload.source_url, "analysis": data})
+        except AIEngineError as exc:
+            _safe_audit(
+                audit_hook,
+                "ai.call.vision.error",
+                {
+                    "base_url": config.base_url, "endpoint": config.build_url(None),
+                    "duration_ms": int((time.monotonic() - started) * 1000),
+                    "case_id": case_id, "image_source": upload.source_url, "error": str(exc),
+                },
+            )
+            # A partial vision result is still useful as evidence, but its
+            # missing images are explicit in the payload and force review.
+            continue
         _safe_audit(
             audit_hook,
             "ai.call.vision.success",
@@ -216,26 +259,32 @@ def call_vision_model(
                 "endpoint": config.build_url(None),
                 "duration_ms": int((time.monotonic() - started) * 1000),
                 "case_id": case_id,
-                "images_count": len(image_urls or []),
+                "images_count": len(uploads),
                 "image_source": upload.source_url,
             },
         )
-        return data
-    except AIEngineError as exc:
-        _safe_audit(
-            audit_hook,
-            "ai.call.vision.error",
-            {
-                "base_url": config.base_url,
-                "endpoint": config.build_url(None),
-                "duration_ms": int((time.monotonic() - started) * 1000),
-                "case_id": case_id,
-                "images_count": len(image_urls or []),
-                "image_source": upload.source_url,
-                "error": str(exc),
-            },
-        )
-        raise
+
+    if not results:
+        raise AIEngineError("Vision model did not return a usable result for any image.")
+    if len(results) == 1 and len(uploads) == 1:
+        return results[0]["analysis"]
+
+    # Keep every finding attached to its image.  The flattened fields preserve
+    # backward compatibility for a fusion service that currently accepts one
+    # aggregate object, while ``image_results`` retains clinical traceability.
+    findings = []
+    for result in results:
+        analysis = result["analysis"]
+        for finding in analysis.get("detected_findings") or analysis.get("teeth") or []:
+            findings.append({"image_id": result["image_id"], "finding": finding})
+    first = results[0]["analysis"]
+    return {
+        "image_results": results,
+        "images_requested": len(uploads),
+        "images_analyzed": len(results),
+        "primary_finding": first.get("primary_finding"),
+        "detected_findings": findings,
+    }
 
 
 def call_fusion_model(
@@ -292,17 +341,47 @@ def call_fusion_model(
         raise
 
 
+def _has_text_evidence(payload: Dict[str, Any]) -> bool:
+    """Minimal semantic contract for the symptom service response."""
+    if not isinstance(payload, dict):
+        return False
+    primary = payload.get("primary_condition")
+    findings = payload.get("suspected_conditions")
+    return bool(
+        isinstance(primary, str) and primary.strip()
+        or isinstance(findings, list) and any(isinstance(item, (dict, str)) for item in findings)
+    )
+
+
+def _has_vision_evidence(payload: Dict[str, Any]) -> bool:
+    """Minimal semantic contract for the vision service response."""
+    if not isinstance(payload, dict):
+        return False
+    primary = payload.get("primary_finding")
+    findings = payload.get("detected_findings") or payload.get("teeth")
+    per_image = payload.get("image_results")
+    return bool(
+        isinstance(primary, str) and primary.strip()
+        or isinstance(findings, list) and len(findings)
+        or isinstance(per_image, list) and len(per_image)
+    )
+
+
 def analyze_case(
     *,
     configs: AIEnginesConfig,
     symptoms_text: str,
     image_urls: Optional[List[str]] = None,
+    images: Optional[List[ImageInput]] = None,
     case_id: Optional[str] = None,
     audit_hook: AuditHook = None,
 ) -> Dict[str, Any]:
     """
     Orchestrates the three external engines (symptoms NLP, vision, fusion) and
     returns a unified payload consumable by services.
+
+    ``images`` are validated in-memory uploads; ``image_urls`` is the legacy
+    (allow-listed) URL input. Either one enables the vision step.
 
     Flow:
     1) Text analysis (AraBERT) via POST /analyze-symptoms
@@ -319,72 +398,90 @@ def analyze_case(
         symptoms_payload = call_symptoms_model(
             config=configs.symptoms, symptoms_text=symptoms_text, case_id=case_id, audit_hook=audit_hook
         )
+        if not _has_text_evidence(symptoms_payload):
+            raise AIEngineError("Symptoms model returned a payload without clinical evidence.")
     except AIEngineError as exc:
         symptoms_error = exc
+        symptoms_payload = {}
 
     vision_payload: Dict[str, Any] = {}
-    if image_urls:
+    if images or image_urls:
         try:
             vision_payload = call_vision_model(
-                config=configs.vision, image_urls=image_urls, case_id=case_id, audit_hook=audit_hook
+                config=configs.vision,
+                image_urls=image_urls,
+                images=images,
+                case_id=case_id,
+                audit_hook=audit_hook,
             )
+            if not _has_vision_evidence(vision_payload):
+                raise AIEngineError("Vision model returned a payload without clinical evidence.")
         except AIEngineError as exc:
             vision_error = exc
+            vision_payload = {}
+    image_refs = [img.source_url for img in (images or [])] or list(image_urls or [])
 
     if not symptoms_payload and not vision_payload:
         raise symptoms_error or vision_error or AIEngineError("AI engines unavailable")
 
+    # The fusion engine needs BOTH modalities (its request schema requires
+    # image_analysis and text_analysis). With only one, skip it deliberately
+    # instead of provoking a 422 and reporting a spurious "fusion error".
     fusion_payload: Dict[str, Any] = {}
-    try:
-        fusion_payload = call_fusion_model(
-            config=configs.fusion,
-            symptoms_payload=symptoms_payload,
-            vision_payload=vision_payload,
-            symptoms_text=symptoms_text,
-            image_urls=image_urls,
-            case_id=case_id,
-            audit_hook=audit_hook,
-        )
-    except AIEngineError as exc:
-        fusion_error = exc
-        if symptoms_payload and not vision_payload:
-            fallback_mode = "text_only"
-        elif vision_payload and not symptoms_payload:
-            fallback_mode = "image_only"
-        else:
+    if symptoms_payload and vision_payload:
+        try:
+            fusion_payload = call_fusion_model(
+                config=configs.fusion,
+                symptoms_payload=symptoms_payload,
+                vision_payload=vision_payload,
+                symptoms_text=symptoms_text,
+                image_urls=image_refs,
+                case_id=case_id,
+                audit_hook=audit_hook,
+            )
+            parsed_fusion = parse_fusion_response(fusion_payload)
+            if not parsed_fusion.get("final_diagnosis"):
+                raise AIEngineError("Fusion model returned a payload without a valid proposal.")
+        except AIEngineError as exc:
+            fusion_error = exc
             fallback_mode = "partial"
+    elif symptoms_payload:
+        fallback_mode = "text_only"
+    else:
+        fallback_mode = "image_only"
+
+    fusion = parse_fusion_response(fusion_payload)
 
     normalized_text = (
         symptoms_payload.get("normalized_text")
         or symptoms_payload.get("normalized_symptoms")
         or symptoms_payload.get("clean_text")
     )
-    decision_label = (
-        fusion_payload.get("decision_label")
-        or fusion_payload.get("diagnosis_label")
-        or symptoms_payload.get("primary_condition")
-    )
+    # diagnosis_label = the clinical concept (ontology id from fusion, else the
+    # NLP/vision label). The fusion *decision* (high_match/…) is not a diagnosis
+    # and is kept separately as match_label.
     primary_diagnosis = (
-        fusion_payload.get("primary_diagnosis")
-        or decision_label
+        fusion.get("final_diagnosis")
         or symptoms_payload.get("primary_condition")
         or vision_payload.get("primary_finding")
     )
+    decision_label = primary_diagnosis
     detected_findings = (
-        fusion_payload.get("detected_findings")
-        or fusion_payload.get("findings")
-        or fusion_payload.get("all_findings")
+        fusion.get("proposed_cases")
         or vision_payload.get("detected_findings")
+        or vision_payload.get("teeth")
         or symptoms_payload.get("suspected_conditions")
     )
-    confidence = fusion_payload.get("confidence_level") or symptoms_payload.get("confidence_level")
+    confidence = fusion.get("confidence_level") or symptoms_payload.get("confidence_level")
     severity = (
-        fusion_payload.get("severity_level")
-        or fusion_payload.get("severity")
-        or symptoms_payload.get("severity_level")
+        symptoms_payload.get("severity_level")
         or symptoms_payload.get("severity")
     )
-    urgency = fusion_payload.get("urgency_level") or symptoms_payload.get("urgency_level")
+    urgency = (
+        fusion.get("urgency_level")
+        or symptoms_payload.get("urgency_level")
+        or symptoms_payload.get("urgency")
+    )
 
     metadata = {
         "text_analysis": symptoms_payload,
@@ -393,6 +490,8 @@ def analyze_case(
         if isinstance(fusion_payload.get("metadata"), dict)
         else fusion_payload,
         "normalized_text": normalized_text,
+        "match_label": fusion.get("decision_label"),
+        "requires_supervisor_review": fusion.get("requires_supervisor_review"),
         "raw_payloads": {
             "symptoms": symptoms_payload,
             "vision": vision_payload,
@@ -406,27 +505,77 @@ def analyze_case(
         },
     }
 
-    flags = fusion_payload.get("flags") or symptoms_payload.get("flags") or {}
-    if fusion_error:
-        flags = dict(flags or {})
-        flags["fusion_error"] = str(fusion_error)
+    flags = dict(symptoms_payload.get("flags") or {})
+    if fusion.get("safety_flags"):
+        flags["safety_flags"] = fusion["safety_flags"]
+    if fusion.get("requires_supervisor_review") is not None:
+        flags["requires_supervisor_review"] = fusion["requires_supervisor_review"]
+    if fallback_mode != "full":
         flags["fallback_mode"] = fallback_mode
+    if fusion_error:
+        flags["fusion_error"] = str(fusion_error)
 
     return {
         "primary_diagnosis": primary_diagnosis,
         "diagnosis_label": decision_label,
         "detected_findings": detected_findings,
-        "patient_explanation": fusion_payload.get("patient_explanation")
-        or fusion_payload.get("patient_message")
-        or symptoms_payload.get("patient_explanation"),
-        "report_text": fusion_payload.get("medical_report") or fusion_payload.get("report_text"),
-        "recommendations": fusion_payload.get("recommendations"),
+        "fusion_results": fusion.get("proposed_cases") or [],
+        "patient_explanation": fusion.get("summary") or symptoms_payload.get("patient_explanation"),
+        "report_text": fusion.get("report_text"),
+        "recommendations": fusion.get("recommendation"),
         "confidence_level": confidence,
         "severity_level": severity,
         "urgency_level": urgency,
-        "model_versions": fusion_payload.get("model_versions")
-        or symptoms_payload.get("model_versions")
-        or {"text_model": symptoms_payload.get("model")},
+        "model_versions": fusion.get("model_versions")
+        or {
+            "text_model": symptoms_payload.get("model_version") or symptoms_payload.get("model"),
+            "vision_model": vision_payload.get("model_version") or vision_payload.get("model"),
+        },
         "flags": flags,
         "metadata": metadata,
+    }
+
+
+def parse_fusion_response(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Flatten the fusion engine's ``AnalyzeCaseResponse`` into the fields the
+    backend stores. The engine returns::
+
+        {"session_summary": {...}, "proposed_cases": [
+            {"fusion_decision": {decision_label, final_diagnosis, confidence_level,
+                                 urgency_level, requires_supervisor_review, safety_flags},
+             "medical_report": {summary, recommendation, report_text, ...},
+             "metadata": {"model_versions": {...}, ...}}, ...]}
+
+    ``proposed_cases`` is already ordered by urgency then match score, so the
+    first one is the headline. Returns ``{}`` for an empty/foreign payload.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    proposals = [p for p in (payload.get("proposed_cases") or []) if isinstance(p, dict)]
+    summary = payload.get("session_summary") if isinstance(payload.get("session_summary"), dict) else {}
+    if not proposals and not summary:
+        return {}
+
+    head = proposals[0] if proposals else {}
+    decision = head.get("fusion_decision") if isinstance(head.get("fusion_decision"), dict) else {}
+    report = head.get("medical_report") if isinstance(head.get("medical_report"), dict) else {}
+    meta = head.get("metadata") if isinstance(head.get("metadata"), dict) else {}
+
+    requires_review = decision.get("requires_supervisor_review")
+    if requires_review is None:
+        requires_review = summary.get("requires_supervisor_review")
+
+    return {
+        "decision_label": decision.get("decision_label") or summary.get("overall_decision"),
+        "final_diagnosis": decision.get("final_diagnosis"),
+        "confidence_level": decision.get("confidence_level"),
+        "urgency_level": decision.get("urgency_level"),
+        "requires_supervisor_review": requires_review,
+        "safety_flags": decision.get("safety_flags") or summary.get("safety_flags") or [],
+        "summary": report.get("summary"),
+        "recommendation": report.get("recommendation"),
+        "report_text": report.get("report_text"),
+        "model_versions": meta.get("model_versions"),
+        "proposed_cases": proposals,
     }

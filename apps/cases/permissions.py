@@ -2,6 +2,7 @@
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
 from apps.accounts.models import Role
+from medismile.utils.scoping import get_user_university_id, same_university
 from .models import Case, CaseSession
 
 
@@ -33,14 +34,26 @@ def is_public_case_for_student(user, case: Case) -> bool:
 def is_same_university(user, case: Case) -> bool:
     """
     Check if user belongs to the same university as the case.
-    Used mainly for University Admin scope.
+    ``None`` never matches (an admin without a university must not see
+    every unscoped case).
     """
-    try:
-        profile = user.universityadminprofile_profile
-    except Exception:
-        return False
+    return same_university(user, case.university_id)
 
-    return profile.university_id == case.university_id
+
+def is_in_user_scope(user, case: Case) -> bool:
+    """
+    Scope used for staff actions on a case:
+    - scoped case: same university as the user;
+    - unscoped case (``university`` still NULL, e.g. fresh AI cases): only the
+      university the *patient* chose — never "any university".
+    """
+    user_university_id = get_user_university_id(user)
+    if not user_university_id:
+        return False
+    if case.university_id:
+        return case.university_id == user_university_id
+    patient_university_id = get_user_university_id(case.patient) if case.patient_id else None
+    return patient_university_id == user_university_id
 
 
 # ============================================================
@@ -142,11 +155,8 @@ class CanManageCaseStatus(BasePermission):
         if role_name == Role.SUPERVISOR and is_case_supervisor(user, obj):
             return True
 
-        if role_name == Role.UNIVERSITY_ADMIN:
-            if obj.university_id is None:
-                return True
-            if is_same_university(user, obj):
-                return True
+        if role_name == Role.UNIVERSITY_ADMIN and is_in_user_scope(user, obj):
+            return True
 
         return False
 
@@ -167,18 +177,13 @@ class CanAssignSupervisor(BasePermission):
             return True
 
         if role_name == Role.UNIVERSITY_ADMIN:
-            if obj.university_id is None:
-                return True
-            return is_same_university(user, obj)
+            return is_in_user_scope(user, obj)
 
         if role_name == Role.SUPERVISOR:
-            # supervisor can claim only if unclaimed and not tied to another university
+            # supervisor can claim only if unclaimed and within their university scope
             if obj.supervisor_id and obj.supervisor_id != user.id:
                 return False
-            supervisor_univ_id = getattr(getattr(user, "supervisorprofile_profile", None), "university_id", None)
-            if obj.university_id and obj.university_id != supervisor_univ_id:
-                return False
-            return True
+            return is_in_user_scope(user, obj)
 
         return False
 

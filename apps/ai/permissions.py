@@ -1,6 +1,7 @@
 # apps/ai/permissions.py
 from rest_framework.permissions import BasePermission
 from apps.accounts.models import Role
+from medismile.utils.scoping import same_university
 
 
 class CanRequestAIDiagnosis(BasePermission):
@@ -30,7 +31,7 @@ class CanAccessAIDiagnosis(BasePermission):
         role = getattr(getattr(user, "role", None), "name", None)
 
         if role == Role.TECH_SUPPORT:
-            return True
+            return False
 
         if role == Role.PATIENT:
             return obj.patient_id == user.id
@@ -46,7 +47,7 @@ class CanAccessAIDiagnosis(BasePermission):
             return getattr(case, "supervisor_id", None) == user.id
 
         if role == Role.UNIVERSITY_ADMIN:
-            return getattr(case, "university_id", None) == getattr(user, "university_id", None)
+            return same_university(user, getattr(case, "university_id", None))
 
         return False
 

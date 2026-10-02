@@ -105,9 +105,26 @@ class UniversityCreateView(generics.CreateAPIView):
 
 
 class UniversityDetailView(generics.RetrieveUpdateAPIView):
-    queryset = University.objects.all()
+    """
+    Retrieve a university (any authenticated user; inactive ones are hidden
+    from everyone except IT Support).
+    Update it: IT Support (any) or University Admin (own university only).
+    """
     serializer_class = UniversityDetailSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanManageUniversity]
+
+    def get_queryset(self):
+        role_name = getattr(getattr(self.request.user, "role", None), "name", None)
+        if role_name == "tech_support":
+            return University.objects.all()
+        return University.objects.filter(is_active=True)
+
+    def check_object_permissions(self, request, obj):
+        # Reads are open to authenticated users; only writes go through
+        # CanManageUniversity's ownership check.
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return
+        super().check_object_permissions(request, obj)
 
 
 class UniversityUpdateView(generics.UpdateAPIView):
@@ -126,6 +143,7 @@ class UniversityDeleteView(generics.DestroyAPIView):
     🔐 Only IT Support.
     """
     queryset = University.objects.all()
+    serializer_class = UniversityDetailSerializer  # schema only; DELETE returns 204
     permission_classes = [IsAuthenticated, IsTechSupport]
 
     def perform_destroy(self, instance):

@@ -6,6 +6,7 @@ from django.db import transaction
 from apps.accounts.models import User, Role
 from apps.universities.models import University
 from medismile.utils.auth import resolve_request_user
+from medismile.utils.scoping import same_university
 
 from .models import Case, CaseHistory, CaseAssignmentRequest, CaseSession, AIAnalysisSession, AIProposedCase
 from .services import assign_case
@@ -252,6 +253,27 @@ class CaseCreateSerializer(serializers.Serializer):
         return attrs
 
 
+class AICriticalCaseCreateSerializer(serializers.Serializer):
+    """Patient routes a *server-owned* AI diagnosis to a university."""
+
+    university_id = serializers.UUIDField()
+    diagnosis_id = serializers.UUIDField(required=True)
+    title = serializers.CharField(required=False, allow_blank=True, max_length=200)
+    description = serializers.CharField(required=False, allow_blank=True, max_length=5000)
+
+    def validate(self, attrs):
+        # Reject rather than ignore the legacy client-authored diagnosis field.
+        # DRF otherwise drops unknown fields silently, which hides unsafe
+        # client behaviour during a migration.
+        if "ai_report" in self.initial_data:
+            raise serializers.ValidationError({"ai_report": _("Client-authored AI reports are not accepted.")})
+        university = University.objects.filter(id=attrs["university_id"], is_active=True).first()
+        if not university:
+            raise serializers.ValidationError({"university_id": _("University not found or inactive.")})
+        attrs["university"] = university
+        return attrs
+
+
 # ============================================================
 # Case Update
 # ============================================================
@@ -358,7 +380,9 @@ class CaseStatusUpdateSerializer(serializers.ModelSerializer):
 # Assignment Request Decision (Supervisor)
 # ============================================================
 class CaseAssignmentRequestDecisionSerializer(serializers.ModelSerializer):
-    decision = serializers.ChoiceField(choices=["accept", "reject"])
+    # write_only: "decision" is not a model attribute, so rendering it in the
+    # response raised AttributeError and turned every successful decision into a 500.
+    decision = serializers.ChoiceField(choices=["accept", "reject"], write_only=True)
     supervisor_response = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     class Meta:
@@ -377,6 +401,9 @@ class CaseAssignmentRequestDecisionSerializer(serializers.ModelSerializer):
 
         if assignment.case.supervisor_id and assignment.case.supervisor_id != user.id:
             raise serializers.ValidationError(_("You are not the supervisor of this case."))
+
+        if not same_university(user, assignment.case.university_id):
+            raise serializers.ValidationError(_("This case does not belong to your university."))
 
         return attrs
 

@@ -68,7 +68,10 @@ def _build_configurations() -> AIEnginesConfig:
             key="fusion",
             label="fusion engine",
             setting_names=["AI_FUSION_URL", "AI_ENGINE_BASE_URL"],
-            default_path="analyze-case",
+            # The fusion service mounts its router under /fusion (app/main.py).
+            # build_url() de-duplicates, so AI_FUSION_URL may be the bare host,
+            # ".../fusion" or the full ".../fusion/analyze-case".
+            default_path="fusion/analyze-case",
         ),
     ]
 

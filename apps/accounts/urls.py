@@ -8,6 +8,8 @@ from .views import (
     SupervisorLoginView,
     UniversityAdminLoginView,
     TechSupportLoginView,
+    RefreshSessionView,
+    LogoutView,
 
     # Registration / Creation
     PatientRegisterView,
@@ -54,6 +56,8 @@ urlpatterns = [
         TechSupportLoginView.as_view(),
         name="login-tech-support",
     ),
+    path("token/refresh/", RefreshSessionView.as_view(), name="token-refresh"),
+    path("logout/", LogoutView.as_view(), name="logout"),
 
     # =====================================================
     # REGISTRATION / CREATION

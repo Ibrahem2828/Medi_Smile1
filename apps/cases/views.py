@@ -10,6 +10,9 @@ from rest_framework.views import APIView
 
 from apps.accounts.models import Role
 from apps.accounts.permissions import IsAuthenticatedAndActive
+from drf_spectacular.utils import OpenApiResponse, extend_schema
+from medismile.openapi import ErrorEnvelope, GenericSuccess, success_envelope
+from medismile.utils.scoping import get_user_university_id
 
 from .models import Case, CaseAssignmentRequest, CaseHistory, CaseSession, AIAnalysisSession, AIProposedCase
 from .serializers import (
@@ -27,6 +30,7 @@ from .serializers import (
     AIProposalBatchSerializer,
     AIProposalDecisionSerializer,
     AIProposalNextSerializer,
+    AICriticalCaseCreateSerializer,
     SupervisorCaseDecisionSerializer,
     AssignmentDecisionSerializer,
 )
@@ -40,7 +44,7 @@ from .permissions import (
     CanCreateSession,
     CanReviewSession,
 )
-from .services import create_case, create_case_from_proposal, request_case_assignment
+from .services import create_ai_critical_case, create_case, create_case_from_proposal, request_case_assignment
 from django.core.exceptions import ValidationError
 import logging
 import traceback
@@ -241,10 +245,25 @@ class CaseAssignmentRequestDecisionView(generics.UpdateAPIView):
     Supervisor accepts/rejects a student's assignment request.
     """
 
-    queryset = CaseAssignmentRequest.objects.all()
     serializer_class = CaseAssignmentRequestDecisionSerializer
     permission_classes = [IsAuthenticatedAndActive]
     http_method_names = ["patch"]
+
+    def get_queryset(self):
+        # Scope to the supervisor's own university (and to cases they already
+        # supervise, if any) so a supervisor elsewhere gets 404, not a takeover.
+        user = self.request.user
+        if getattr(getattr(user, "role", None), "name", None) != Role.SUPERVISOR:
+            return CaseAssignmentRequest.objects.none()
+        sup_univ = get_user_university_id(user)
+        if not sup_univ:
+            return CaseAssignmentRequest.objects.none()
+        return (
+            CaseAssignmentRequest.objects
+            .select_related("case", "student")
+            .filter(case__university_id=sup_univ)
+            .filter(models.Q(case__supervisor__isnull=True) | models.Q(case__supervisor=user))
+        )
 
 
 # ============================================================
@@ -268,6 +287,13 @@ class CaseSessionListView(generics.ListAPIView):
 
         elif user.role.name == Role.SUPERVISOR:
             qs = qs.filter(supervisor=user)
+
+        elif user.role.name == Role.UNIVERSITY_ADMIN:
+            university_id = get_user_university_id(user)
+            qs = qs.filter(case__university_id=university_id) if university_id else qs.none()
+
+        elif user.role.name != Role.TECH_SUPPORT:
+            qs = qs.none()
 
         return qs
 
@@ -298,59 +324,75 @@ class AIProposalIngestView(generics.CreateAPIView):
     serializer_class = AIProposalBatchSerializer
     permission_classes = [IsAuthenticatedAndActive]
 
-    def perform_create(self, serializer):
-        serializer.save()
-
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        return Response(
+            {
+                "detail": "This legacy endpoint is disabled. Route a server-generated diagnosis_id through /api/cases/ai/create/.",
+            },
+            status=status.HTTP_410_GONE,
+        )
 
+
+_CaseEnvelope = success_envelope("CaseEnvelope", CaseSerializer())
+
+
+class AICriticalCaseCreateView(APIView):
+    """
+    POST /api/cases/ai/create/ — patient submits their AI analysis to a
+    university. Promotes the case auto-created by /api/ai/diagnose/ (if still
+    NEW and unscoped) or creates a new one. The case then appears in
+    /api/cases/supervisor/new/ for that university's supervisors.
+    """
+
+    permission_classes = [IsAuthenticatedAndActive, CanCreateCase]
+
+    @extend_schema(
+        request=AICriticalCaseCreateSerializer,
+        responses={
+            200: OpenApiResponse(_CaseEnvelope, description="Existing auto-created case promoted."),
+            201: OpenApiResponse(_CaseEnvelope, description="New case created."),
+            400: ErrorEnvelope,
+        },
+        tags=["cases"],
+    )
+    def post(self, request):
+        serializer = AICriticalCaseCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
         try:
-            self.perform_create(serializer)
+            case, created = create_ai_critical_case(
+                patient=request.user,
+                university=data["university"],
+                title=data.get("title") or "",
+                description=data.get("description") or "",
+                diagnosis_id=data["diagnosis_id"],
+            )
         except ValidationError as exc:
             return Response(
                 {
                     "status": "error",
-                    "message": "Invalid request",
+                    "message": "Invalid data",
                     "errors": getattr(exc, "message_dict", None) or getattr(exc, "messages", None) or str(exc),
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        except Exception as exc:
-            logger.exception("AI proposal ingest failed", exc_info=exc)
-            errors = None
-            if getattr(settings, "EXPOSE_ERROR_DETAILS", False):
-                errors = {
-                    "type": exc.__class__.__name__,
-                    "message": str(exc),
-                    "traceback": traceback.format_exc(),
-                }
-            return Response(
-                {"status": "error", "message": "Unexpected error. See errors for details.", "errors": errors},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-        session = serializer.instance
-        proposals_count = session.proposals.count() if session else 0
-        next_path = f"/api/cases/ai/proposals/{session.id}/next/" if session else None
         return Response(
             {
                 "status": "success",
-                "message": "AI proposals stored. Review the next proposal to create a case.",
-                "data": {
-                    "session_id": str(session.id),
-                    "university": str(session.university_id) if session and session.university_id else None,
-                    "proposals_count": proposals_count,
-                    "next": next_path,
-                },
+                "message": "Case created." if created else "Case submitted to university.",
+                "data": CaseSerializer(case, context={"request": request}).data,
             },
-            status=status.HTTP_201_CREATED,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
 
 
 class AIProposalNextView(APIView):
     permission_classes = [IsAuthenticatedAndActive]
 
+    @extend_schema(
+        responses={200: success_envelope("AIProposalNextEnvelope", AIProposalNextSerializer(allow_null=True)), 404: ErrorEnvelope},
+        tags=["cases"],
+    )
     def get(self, request, session_id):
         session = AIAnalysisSession.objects.filter(id=session_id, patient=request.user).first()
         if not session:
@@ -387,7 +429,22 @@ class AIProposalNextView(APIView):
 class AIProposalDecisionView(APIView):
     permission_classes = [IsAuthenticatedAndActive]
 
+    @extend_schema(
+        request=AIProposalDecisionSerializer,
+        responses={200: GenericSuccess, 400: ErrorEnvelope, 404: ErrorEnvelope},
+        tags=["cases"],
+    )
     def post(self, request, session_id):
+        # Sessions produced by the retired client-ingest route have no
+        # server-verifiable provenance. Never promote their payload into a
+        # medical case; patients must route an AIDiagnosis by diagnosis_id.
+        return Response(
+            {"detail": "Legacy client AI proposals cannot be accepted. Request a server analysis first."},
+            status=status.HTTP_410_GONE,
+        )
+
+        # Kept below temporarily as migration reference for historical data;
+        # it is deliberately unreachable.
         session = AIAnalysisSession.objects.filter(id=session_id, patient=request.user).first()
         if not session:
             return Response({"status": "error", "message": "Session not found or not accessible."}, status=status.HTTP_404_NOT_FOUND)
@@ -472,6 +529,11 @@ class SupervisorNewCasesView(generics.ListAPIView):
 class SupervisorCaseDecisionView(APIView):
     permission_classes = [IsAuthenticatedAndActive]
 
+    @extend_schema(
+        request=SupervisorCaseDecisionSerializer,
+        responses={200: GenericSuccess, 403: ErrorEnvelope, 404: ErrorEnvelope},
+        tags=["cases"],
+    )
     def post(self, request, case_id):
         user = request.user
         if getattr(getattr(user, "role", None), "name", None) != Role.SUPERVISOR:
@@ -506,7 +568,7 @@ class SupervisorCaseDecisionView(APIView):
         else:
             case.status = Case.Status.REJECTED
             case.is_public = False
-        case.save(update_fields=["status", "is_public", "updated_at"])
+        case.save(update_fields=["university", "status", "is_public", "updated_at"])
 
         CaseHistory.objects.create(
             case=case,
@@ -530,13 +592,20 @@ class StudentAvailableCasesView(generics.ListAPIView):
         user = self.request.user
         if getattr(getattr(user, "role", None), "name", None) != Role.STUDENT:
             return Case.objects.none()
-        stu_univ = getattr(getattr(user, "studentprofile_profile", None), "university_id", None)
+        stu_univ = get_user_university_id(user)
+        if not stu_univ:
+            return Case.objects.none()
         return Case.objects.filter(status=Case.Status.ACCEPTED, university_id=stu_univ, student__isnull=True, is_public=True)
 
 
 class StudentRequestAssignmentView(APIView):
     permission_classes = [IsAuthenticatedAndActive, CanRequestAssignment]
 
+    @extend_schema(
+        request=StudentAssignmentRequestSerializer,
+        responses={200: GenericSuccess, 400: ErrorEnvelope},
+        tags=["cases"],
+    )
     def post(self, request, case_id):
         serializer = StudentAssignmentRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -570,7 +639,9 @@ class SupervisorAssignmentRequestsView(generics.ListAPIView):
         user = self.request.user
         if getattr(getattr(user, "role", None), "name", None) != Role.SUPERVISOR:
             return CaseAssignmentRequest.objects.none()
-        sup_univ = getattr(getattr(user, "supervisorprofile_profile", None), "university_id", None)
+        sup_univ = get_user_university_id(user)
+        if not sup_univ:
+            return CaseAssignmentRequest.objects.none()
         return CaseAssignmentRequest.objects.filter(
             status=CaseAssignmentRequest.Status.PENDING,
             case__status=Case.Status.NEEDS_ASSIGNMENT_APPROVAL,
@@ -581,13 +652,25 @@ class SupervisorAssignmentRequestsView(generics.ListAPIView):
 class SupervisorAssignmentDecisionView(APIView):
     permission_classes = [IsAuthenticatedAndActive]
 
+    @extend_schema(
+        request=AssignmentDecisionSerializer,
+        responses={200: GenericSuccess, 400: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope},
+        tags=["cases"],
+    )
     @transaction.atomic
     def post(self, request, case_id):
         user = request.user
         if getattr(getattr(user, "role", None), "name", None) != Role.SUPERVISOR:
             return Response({"status": "error", "message": "Only supervisors allowed."}, status=status.HTTP_403_FORBIDDEN)
-        sup_univ = getattr(getattr(user, "supervisorprofile_profile", None), "university_id", None)
-        case = Case.objects.select_for_update().filter(id=case_id, status=Case.Status.NEEDS_ASSIGNMENT_APPROVAL, university_id=sup_univ).first()
+        sup_univ = get_user_university_id(user)
+        if not sup_univ:
+            return Response({"status": "error", "message": "Supervisor university not set."}, status=status.HTTP_403_FORBIDDEN)
+        case = (
+            Case.objects.select_for_update()
+            .filter(id=case_id, status=Case.Status.NEEDS_ASSIGNMENT_APPROVAL, university_id=sup_univ)
+            .filter(models.Q(supervisor__isnull=True) | models.Q(supervisor=user))
+            .first()
+        )
         if not case:
             return Response({"status": "error", "message": "Case not found or not pending assignment approval."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -601,6 +684,10 @@ class SupervisorAssignmentDecisionView(APIView):
 
         if decision == "approve":
             case.student = req.student
+            # The approving supervisor supervises the treatment; without this the
+            # case never shows up in supervisor-scoped lists, sessions or AI review.
+            if not case.supervisor_id:
+                case.supervisor = user
             case.status = Case.Status.ASSIGNED
             case.is_public = False
             req.status = CaseAssignmentRequest.Status.ACCEPTED
@@ -621,7 +708,7 @@ class SupervisorAssignmentDecisionView(APIView):
                 performed_by=user,
             )
 
-        case.save(update_fields=["student", "status", "is_public", "updated_at"])
+        case.save(update_fields=["student", "supervisor", "status", "is_public", "updated_at"])
         req.save(update_fields=["status", "updated_at"])
 
         return Response({"status": "success", "message": "Assignment decision saved.", "data": {"status": case.status, "student": str(case.student_id) if case.student_id else None}})

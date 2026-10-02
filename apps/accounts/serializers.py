@@ -4,6 +4,7 @@ from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.db import transaction
 from django.db import IntegrityError
+from django.utils.translation import gettext_lazy as _
 
 from rest_framework import serializers
 
