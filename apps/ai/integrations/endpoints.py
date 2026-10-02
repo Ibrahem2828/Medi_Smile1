@@ -40,6 +40,11 @@ def _pick_first_configured_url(setting_names: List[str]) -> str:
     return ""
 
 
+def _auth_token(key: str) -> str:
+    """Optional bearer token for an engine (settings.AI_<KEY>_AUTH_TOKEN)."""
+    return (getattr(settings, f"AI_{key.upper()}_AUTH_TOKEN", "") or "").strip()
+
+
 def _build_configurations() -> AIEnginesConfig:
     """
     Returns concrete configs for the three external engines:
@@ -94,13 +99,22 @@ def _build_configurations() -> AIEnginesConfig:
     # Map back using labels to keep the loop readable above
     return AIEnginesConfig(
         symptoms=AIEngineConfig(
-            base_url=urls["symptoms"], timeout_seconds=timeout, default_path=default_paths["symptoms"]
+            base_url=urls["symptoms"],
+            timeout_seconds=timeout,
+            default_path=default_paths["symptoms"],
+            auth_token=_auth_token("symptoms"),
         ),
         vision=AIEngineConfig(
-            base_url=urls["vision"], timeout_seconds=timeout, default_path=default_paths["vision"]
+            base_url=urls["vision"],
+            timeout_seconds=timeout,
+            default_path=default_paths["vision"],
+            auth_token=_auth_token("vision"),
         ),
         fusion=AIEngineConfig(
-            base_url=urls["fusion"], timeout_seconds=timeout, default_path=default_paths["fusion"]
+            base_url=urls["fusion"],
+            timeout_seconds=timeout,
+            default_path=default_paths["fusion"],
+            auth_token=_auth_token("fusion"),
         ),
     )
 

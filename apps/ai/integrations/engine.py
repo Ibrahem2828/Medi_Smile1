@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlparse
@@ -24,6 +24,11 @@ class AIEngineConfig:
     base_url: str
     timeout_seconds: int = 30
     default_path: str = ""
+    # Optional bearer token, needed e.g. for private Hugging Face Spaces.
+    auth_token: str = field(default="", repr=False)
+
+    def request_headers(self) -> Dict[str, str]:
+        return {"Authorization": f"Bearer {self.auth_token}"} if self.auth_token else {}
 
     def build_url(self, path: Optional[str] = None) -> str:
         """
@@ -126,7 +131,13 @@ def _post_multipart(
 ) -> Dict[str, Any]:
     try:
         full_url = config.build_url(path)
-        resp = requests.post(full_url, files=files, data=data or {}, timeout=config.timeout_seconds)
+        resp = requests.post(
+            full_url,
+            files=files,
+            data=data or {},
+            headers=config.request_headers(),
+            timeout=config.timeout_seconds,
+        )
     except requests.RequestException as exc:
         raise AIEngineError(f"{config.base_url}: connection failed ({exc})") from exc
 
@@ -147,7 +158,12 @@ def _post_multipart(
 def _post_json(*, config: AIEngineConfig, path: Optional[str], payload: Dict[str, Any]) -> Dict[str, Any]:
     try:
         full_url = config.build_url(path)
-        resp = requests.post(full_url, json=payload, timeout=config.timeout_seconds)
+        resp = requests.post(
+            full_url,
+            json=payload,
+            headers=config.request_headers(),
+            timeout=config.timeout_seconds,
+        )
     except requests.RequestException as exc:
         raise AIEngineError(f"{config.base_url}: connection failed ({exc})") from exc
 

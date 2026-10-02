@@ -334,6 +334,11 @@ AI_VISION_URL = os.getenv("AI_VISION_URL", "")
 AI_FUSION_URL = os.getenv("AI_FUSION_URL", "")
 AI_ENGINE_BASE_URL = os.getenv("AI_ENGINE_BASE_URL", "")  # Only for local/dev if explicitly set
 AI_ENGINE_TIMEOUT = int(os.getenv("AI_ENGINE_TIMEOUT", "30"))
+# Optional bearer tokens for engines hosted behind authentication (e.g. a private
+# Hugging Face Space). Leave empty for public services.
+AI_SYMPTOMS_AUTH_TOKEN = os.getenv("AI_SYMPTOMS_AUTH_TOKEN", "")
+AI_VISION_AUTH_TOKEN = os.getenv("AI_VISION_AUTH_TOKEN", "")
+AI_FUSION_AUTH_TOKEN = os.getenv("AI_FUSION_AUTH_TOKEN", "")
 
 # Patient image uploads for AI analysis (POST /api/ai/images/, /api/ai/diagnose/)
 AI_IMAGE_MAX_BYTES = int(os.getenv("AI_IMAGE_MAX_BYTES", str(10 * 1024 * 1024)))
