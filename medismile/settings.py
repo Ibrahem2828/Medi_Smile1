@@ -76,10 +76,12 @@ INSTALLED_APPS = [
 # Middleware
 # ============================================================
 MIDDLEWARE = [
+    # CORS must come first so that every response (redirects, static files, errors) carries the
+    # Access-Control-* headers and preflight requests are answered before anything else runs.
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
-    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -363,13 +365,34 @@ if not DEBUG:
 # ============================================================
 # CORS
 # ============================================================
+from corsheaders.defaults import default_headers
+
 CORS_ALLOWED_ORIGINS = _env_list("CORS_ALLOWED_ORIGINS")
+
+# Front-end development on localhost (Vite 5173, CRA/Next 3000, Angular 4200, Live Server 5500, ...).
+# Matches only http(s)://localhost, 127.0.0.1 or [::1] with an optional port, so
+# "http://localhost.evil.com" and "http://localhostevil" are NOT accepted. Enabled by default only
+# when DEBUG=True; switch it on for a shared dev/staging API with CORS_ALLOW_LOCALHOST=true and
+# remove it (false) for production.
+LOCALHOST_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?$"
+CORS_ALLOW_LOCALHOST = _env_bool("CORS_ALLOW_LOCALHOST", default=DEBUG)
+CORS_ALLOWED_ORIGIN_REGEXES = [LOCALHOST_ORIGIN_REGEX] if CORS_ALLOW_LOCALHOST else []
+
+# With DEBUG=True and nothing configured, any origin is accepted (local backend only).
 CORS_ALLOW_ALL_ORIGINS = DEBUG and not CORS_ALLOWED_ORIGINS
 
-if not DEBUG and not CORS_ALLOWED_ORIGINS:
+if not DEBUG and not (CORS_ALLOWED_ORIGINS or CORS_ALLOWED_ORIGIN_REGEXES):
     raise ImproperlyConfigured(
         "CORS_ALLOWED_ORIGINS must be configured when DEBUG=False."
     )
+
+# JWT in the Authorization header, no cookies: credentials stay off (also keeps "*" style rules safe).
+CORS_ALLOW_CREDENTIALS = _env_bool("CORS_ALLOW_CREDENTIALS", default=False)
+CORS_ALLOW_HEADERS = (*default_headers, "accept-language", "x-request-id")
+# Let the browser read the file name of downloads (reports, attachments, backups).
+CORS_EXPOSE_HEADERS = ["Content-Disposition", "X-Request-Id"]
+# Cache the preflight for a day so the browser does not send an OPTIONS before every call.
+CORS_PREFLIGHT_MAX_AGE = int(os.getenv("CORS_PREFLIGHT_MAX_AGE", "86400"))
 
 # ============================================================
 # CSRF / Security (Production)
