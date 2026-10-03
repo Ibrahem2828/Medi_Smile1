@@ -1,5 +1,28 @@
 # ربط الفرونت بالباك أثناء التطوير (localhost)
 
+> ## ⚠️ استخدم `https://` دائماً — وإلا سيظهر خطأ CORS
+> ```
+> Access to XMLHttpRequest at 'http://api.medismile...' from origin 'http://localhost:3000' has been blocked by CORS policy:
+> Response to preflight request doesn't pass access control check: Redirect is not allowed for a preflight request.
+> ```
+> هذا ليس خطأ في إعدادات CORS. الرابط `http://` (بدون `s`) يُحوَّل من السيرفر إلى `https://` (التحويل 307)، والمتصفح **يمنع أي تحويل أثناء الـ preflight**، فيفشل الطلب قبل أن يصل إلى الباك.
+> **الحل: غيّر عنوان الـ API في الفرونت إلى `https://api.medismile.xn--mgbaab0cxheq.tech`** (انظر الأمثلة أدناه). لا يمكن ولا يجب السماح بـ http: كلمة المرور في طلب الدخول ستسير نصاً واضحاً.
+>
+> | الإطار | أين تغيّره |
+> |---|---|
+> | Vite | `.env`: `VITE_API_URL=https://api.medismile.xn--mgbaab0cxheq.tech` |
+> | Create React App | `.env`: `REACT_APP_API_URL=https://api.medismile.xn--mgbaab0cxheq.tech` |
+> | Next.js | `.env.local`: `NEXT_PUBLIC_API_URL=https://api.medismile.xn--mgbaab0cxheq.tech` |
+> | Angular | `environment.ts`: `apiUrl: 'https://api.medismile.xn--mgbaab0cxheq.tech'` |
+> | axios / fetch | `baseURL` / أول جزء من الرابط |
+>
+> بعد تغيير ملف `.env` **أعد تشغيل خادم التطوير** (`npm run dev` / `npm start`) لأن المتغيرات تُقرأ عند البدء فقط، وامسح كاش المتصفح (Ctrl+Shift+R).
+> اختبار سريع من الـ Console داخل صفحة localhost:
+> ```js
+> fetch('https://api.medismile.xn--mgbaab0cxheq.tech/health/').then(r => r.json()).then(console.log)   // {status:'ok',...}
+> ```
+
+
 ## الخيار 1 — اتصال الفرونت المحلي بالـ API المنشور (الأسرع)
 - **Base URL:** `https://api.medismile.xn--mgbaab0cxheq.tech`
 - الـ API يسمح بالأصول `http(s)://localhost[:port]` و`http(s)://127.0.0.1[:port]` و`http://[::1][:port]` (أي منفذ: 3000، 5173، 4200، 5500 ...). غير ذلك يُرفض.
