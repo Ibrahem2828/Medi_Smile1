@@ -23,6 +23,32 @@
 > ```
 
 
+## الحل الأسهل للمطورين: وكيل التطوير (Dev Proxy) — لا CORS ولا تحويلات أصلاً
+بدل أن يتصل المتصفح بالـ API مباشرة من `localhost:3000` (طلب من أصل آخر)، يُرسل الفرونت الطلبات إلى **خادم التطوير نفسه** ويمرّرها هو إلى الـ API عبر `https`.
+فيرى المتصفح أن الطلب من نفس الأصل، فلا يوجد preflight ولا CORS ولا خطأ تحويل. وهو يعمل حتى لو بقي الرابط القديم في أجزاء من الكود. اجعل `baseURL` فارغاً (مسارات نسبية مثل `/api/accounts/login/patient/`).
+
+**Vite** (`vite.config.js`):
+```js
+export default {
+  server: { proxy: { '/api': { target: 'https://api.medismile.xn--mgbaab0cxheq.tech', changeOrigin: true, secure: true } } },
+};
+```
+**Create React App** (ملف `src/setupProxy.js`، بعد `npm i http-proxy-middleware`):
+```js
+const { createProxyMiddleware } = require('http-proxy-middleware');
+module.exports = app => app.use('/api', createProxyMiddleware({ target: 'https://api.medismile.xn--mgbaab0cxheq.tech', changeOrigin: true }));
+```
+**Next.js** (`next.config.js`):
+```js
+module.exports = { async rewrites() { return [{ source: '/api/:path*', destination: 'https://api.medismile.xn--mgbaab0cxheq.tech/api/:path*' }]; } };
+```
+**Angular** (`proxy.conf.json`، ثم `ng serve --proxy-config proxy.conf.json`):
+```json
+{ "/api": { "target": "https://api.medismile.xn--mgbaab0cxheq.tech", "secure": true, "changeOrigin": true } }
+```
+بعد التعديل أعد تشغيل خادم التطوير. هذا للتطوير فقط؛ في الإنتاج يُستخدم الرابط الكامل `https://` ونطاق الموقع المسموح في CORS.
+
+---
 ## الخيار 1 — اتصال الفرونت المحلي بالـ API المنشور (الأسرع)
 - **Base URL:** `https://api.medismile.xn--mgbaab0cxheq.tech`
 - الـ API يسمح بالأصول `http(s)://localhost[:port]` و`http(s)://127.0.0.1[:port]` و`http://[::1][:port]` (أي منفذ: 3000، 5173، 4200، 5500 ...). غير ذلك يُرفض.
